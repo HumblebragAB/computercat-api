@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\DailyContentController;
 use App\Http\Controllers\Api\V1\GameController;
 use App\Http\Controllers\Api\V1\GameEventController;
 use App\Http\Controllers\Api\V1\GameSaveController;
+use App\Http\Controllers\Api\V1\InterestSignupController;
 use App\Http\Controllers\Api\V1\LeaderboardController;
 use App\Http\Controllers\Api\V1\OwnershipController;
 use App\Http\Controllers\Api\V1\PlayerStatsController;
@@ -43,6 +44,18 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         ->group(function () {
             Route::get('/games/{game}/config', [RemoteConfigController::class, 'index']);
         });
+
+    // Intresseanmälan (publik). Bekräftelse och avregistrering sker via
+    // länken i mailet; token är slumpad och lagras bara som hash.
+    Route::middleware([ResolveGame::class, 'throttle:interest'])
+        ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+        ->group(function () {
+            Route::post('/games/{game}/interest', [InterestSignupController::class, 'store']);
+        });
+    Route::get('/interest/{token}/confirm', [InterestSignupController::class, 'confirm'])
+        ->middleware('throttle:30,1')->name('interest.confirm');
+    Route::get('/interest/{token}/unsubscribe', [InterestSignupController::class, 'unsubscribe'])
+        ->middleware('throttle:30,1')->name('interest.unsubscribe');
 
     // RevenueCat webhooks (no auth — signature verified in controller)
     Route::middleware(ResolveGame::class)

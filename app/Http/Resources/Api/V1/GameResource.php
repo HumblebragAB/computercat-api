@@ -14,7 +14,8 @@ class GameResource extends JsonResource
             'slug' => $this->slug,
             'name' => $this->name,
             'description' => $this->description,
-            'settings' => $this->settings,
+            // settings lämnas medvetet ute: fältet bär hemligheter per spel
+            // (t.ex. revenuecat.webhook_secret) och den här resursen är publik.
             'leaderboard_types' => LeaderboardTypeResource::collection(
                 $this->whenLoaded('leaderboardTypes')
             ),

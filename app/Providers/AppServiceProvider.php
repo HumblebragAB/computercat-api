@@ -20,6 +20,15 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(10)->by($request->ip());
         });
 
+        // Intresseanmälan är publik och utan inloggning: få försök per IP och
+        // per adress, så att formuläret inte kan användas för att spamma någon.
+        RateLimiter::for('interest', function (Request $request) {
+            return [
+                Limit::perMinute(5)->by($request->ip()),
+                Limit::perHour(3)->by('interest:'.mb_strtolower((string) $request->input('email'))),
+            ];
+        });
+
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });

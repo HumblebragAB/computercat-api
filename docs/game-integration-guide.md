@@ -11,14 +11,14 @@ Computer Cat is a multi-game backend that provides:
 - **Cloud saves** — store arbitrary JSON blobs with optimistic locking (version-based)
 - **Purchases** — receipt verification for App Store / Google Play (coming soon)
 
-**Base URL:** `https://api.computercat.cc/api/v1`
-**Admin panel:** `https://api.computercat.cc/admin`
+**Base URL:** `https://api.computercat.co/api/v1`
+**Admin panel:** `https://api.computercat.co/admin`
 
 ---
 
 ## Step 1: Create your game in the admin panel
 
-1. Log in at `https://api.computercat.cc/admin`
+1. Log in at `https://api.computercat.co/admin`
 2. Go to **Games** > **Create**
 3. Fill in:
    - **Name**: Your game's display name
@@ -270,3 +270,14 @@ Common status codes:
 | DELETE | `/v1/games/{slug}/saves/{key}` | Yes | Delete save |
 | GET | `/v1/purchases` | Yes | List purchases |
 | POST | `/v1/purchases/verify` | Yes | Verify receipt |
+
+## Intresseanmälan (interest signup)
+
+`POST /api/v1/games/{slug}/interest` (publik, ingen token) med `email` och `language` (`de`, `es`, `fr` eller `other`). Svarar alltid `202` med samma meddelande, oavsett om adressen redan fanns. Begränsat till 5 anrop per minut och IP och 3 per timme och adress.
+
+- Dubbel bekräftelse: ett mail med länkarna `/api/v1/interest/{token}/confirm` och `/unsubscribe` skickas via standardmailaren (Mailgun EU, se `config/services.php`). Står `MAIL_MAILER` på `log` sparas anmälan ändå, men utan mail, och en varning loggas.
+- Obekräftade anmälningar raderas efter 30 dagar av `interest:prune-unconfirmed` (kräver att schemaläggaren kör).
+- Listan finns i admin under Game Data → Interest signups.
+- `site_url` i spelets settings används för länken "Tillbaka till …" efter bekräftelsen.
+
+`GET /api/v1/games` och `/games/{slug}` returnerar inte längre `settings`: fältet bär hemligheter per spel.

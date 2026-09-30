@@ -14,6 +14,15 @@ return [
     |
     */
 
+    // Mailgun EU. Avsändardomänen (MAILGUN_DOMAIN) måste vara verifierad i
+    // Mailgun med SPF och DKIM innan mail går iväg.
+    'mailgun' => [
+        'domain' => env('MAILGUN_DOMAIN'),
+        'secret' => env('MAILGUN_SECRET'),
+        'endpoint' => env('MAILGUN_ENDPOINT', 'api.eu.mailgun.net'),
+        'scheme' => 'https',
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

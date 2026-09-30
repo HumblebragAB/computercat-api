@@ -11,6 +11,15 @@ class GameTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Migreringen add_glosis_game lägger in spelet glosis. Testerna här
+        // räknar spelen de själva skapar och börjar därför från tom tabell.
+        Game::query()->delete();
+    }
+
     // -------------------------------------------------------
     // List games — returns active games
     // -------------------------------------------------------
