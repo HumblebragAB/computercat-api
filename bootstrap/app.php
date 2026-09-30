@@ -4,8 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,6 +18,11 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->throttleApi('60,1');
         $middleware->statefulApi();
+
+        // Avregistreringen postas från API:ts egen sida, och statefulApi()
+        // lägger CSRF-kontroll på anrop från den egna domänen. Den slumpade
+        // token i adressen är behörigheten; en CSRF-token tillför inget.
+        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request) {

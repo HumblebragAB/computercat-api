@@ -273,10 +273,11 @@ Common status codes:
 
 ## Intresseanmälan (interest signup)
 
-`POST /api/v1/games/{slug}/interest` (publik, ingen token) med `email` och `language` (`de`, `es`, `fr` eller `other`). Svarar alltid `202` med samma meddelande, oavsett om adressen redan fanns. Begränsat till 5 anrop per minut och IP och 3 per timme och adress.
+`POST /api/v1/games/{slug}/interest` (publik, ingen token) med `email` och `language` (`de`, `es`, `fr` eller `other`). Svarar alltid `202`, oavsett om adressen redan fanns; `confirmation_sent` säger om ett bekräftelsemail gick iväg, och `message` är formulerat efter det. Begränsat till 3 anrop per timme och adress (och 60 per minut och IP).
 
 - Dubbel bekräftelse: ett mail med länkarna `/api/v1/interest/{token}/confirm` och `/unsubscribe` skickas via standardmailaren (Mailgun EU, se `config/services.php`). Står `MAIL_MAILER` på `log` sparas anmälan ändå, men utan mail, och en varning loggas.
-- Obekräftade anmälningar raderas efter 30 dagar av `interest:prune-unconfirmed` (kräver att schemaläggaren kör).
+- Obekräftade anmälningar raderas 30 dagar efter att bekräftelsemailet skickades, av `interest:prune-unconfirmed` (schemaläggaren kör). Anmälningar som aldrig fått mail raderas inte.
+- Avregistreringslänken visar en knapp (POST); en GET raderar ingenting, eftersom mailklienters länkskannrar öppnar länkar automatiskt.
 - Listan finns i admin under Game Data → Interest signups.
 - `site_url` i spelets settings används för länken "Tillbaka till …" efter bekräftelsen.
 

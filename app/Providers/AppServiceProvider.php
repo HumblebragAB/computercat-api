@@ -20,11 +20,14 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(10)->by($request->ip());
         });
 
-        // Intresseanmälan är publik och utan inloggning: få försök per IP och
-        // per adress, så att formuläret inte kan användas för att spamma någon.
+        // Intresseanmälan är publik och utan inloggning. Gränsen per adress
+        // är det egentliga skyddet mot att spamma någon. Gränsen per IP är
+        // generös med flit: spelens webbplatser (glosis.se) anropar
+        // server-till-server, så alla deras besökare delar en IP, och varje
+        // webbplats begränsar sina besökare själv.
         RateLimiter::for('interest', function (Request $request) {
             return [
-                Limit::perMinute(5)->by($request->ip()),
+                Limit::perMinute(60)->by($request->ip()),
                 Limit::perHour(3)->by('interest:'.mb_strtolower((string) $request->input('email'))),
             ];
         });

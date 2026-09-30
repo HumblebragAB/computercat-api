@@ -30,7 +30,7 @@ class InterestSignupController extends Controller
             'email' => ['required', 'string', 'email:rfc', 'max:254'],
             'language' => ['required', Rule::in(array_keys(InterestSignup::SPRAK))],
             // Honungsfälla: fältet är dolt i formuläret. En bot som fyller i
-            // det får samma svar som alla andra, men inget sparas.
+            // det får ett valideringsfel, och inget sparas.
             'website' => ['nullable', 'max:0'],
         ]);
 
@@ -43,16 +43,14 @@ class InterestSignupController extends Controller
         if ($signup->confirmed_at !== null) {
             $signup->save();
 
-            return $this->tack();
+            return $this->tack(mailSkickat: false);
         }
 
         $token = Str::random(48);
         $signup->token_hash = InterestSignup::hashToken($token);
         $signup->save();
 
-        $this->skickaBekraftelse($signup, $token);
-
-        return $this->tack();
+        return $this->tack(mailSkickat: $this->skickaBekraftelse($signup, $token));
     }
 
     public function confirm(string $token): View
@@ -73,6 +71,18 @@ class InterestSignupController extends Controller
         ]);
     }
 
+    /**
+     * Visar en knapp, raderar ingenting. Mailklienters säkerhetsskannrar
+     * (t.ex. Safe Links) öppnar länkar i mail automatiskt, och en GET som
+     * raderade hade avregistrerat folk som aldrig klickat.
+     */
+    public function unsubscribeForm(string $token): View
+    {
+        $signup = InterestSignup::where('token_hash', InterestSignup::hashToken($token))->first();
+
+        return view('interest.unsubscribe', ['game' => $signup?->game, 'token' => $token, 'finns' => $signup !== null]);
+    }
+
     public function unsubscribe(string $token): View
     {
         $signup = InterestSignup::where('token_hash', InterestSignup::hashToken($token))->first();
@@ -89,7 +99,8 @@ class InterestSignupController extends Controller
         ]);
     }
 
-    private function skickaBekraftelse(InterestSignup $signup, string $token): void
+    /** @return bool om bekräftelsemailet faktiskt skickades */
+    private function skickaBekraftelse(InterestSignup $signup, string $token): bool
     {
         // Mailaren "log" skickar ingenting. Anmälan sparas ändå, men det ska
         // synas: raden får inget confirmation_sent_at och loggen säger varför.
@@ -99,25 +110,37 @@ class InterestSignupController extends Controller
                 'game' => $signup->game->slug,
             ]);
 
-            return;
+            return false;
         }
 
         try {
             Mail::to($signup->email)->send(new InterestConfirmation($signup, $token));
             $signup->forceFill(['confirmation_sent_at' => now()])->save();
+
+            return true;
         } catch (\Throwable $e) {
             // Anmälan finns kvar och kan få ett nytt mail när den skickas igen.
             Log::error('Bekräftelsemail för intresseanmälan gick inte att skicka.', [
                 'signup_id' => $signup->id,
                 'exception' => $e->getMessage(),
             ]);
+
+            return false;
         }
     }
 
-    private function tack(): JsonResponse
+    /**
+     * Svaret säger bara det som faktiskt hände: "kolla din mail" enbart när
+     * ett mail har gått iväg. Samma svar oavsett om adressen redan fanns,
+     * utom just det.
+     */
+    private function tack(bool $mailSkickat): JsonResponse
     {
         return response()->json([
-            'message' => 'Tack! Kolla din mail och bekräfta anmälan.',
+            'message' => $mailSkickat
+                ? 'Tack! Kolla din mail och bekräfta anmälan.'
+                : 'Tack! Vi hör av oss när språket finns.',
+            'confirmation_sent' => $mailSkickat,
         ], 202);
     }
 }

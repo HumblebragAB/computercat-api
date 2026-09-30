@@ -54,8 +54,10 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         });
     Route::get('/interest/{token}/confirm', [InterestSignupController::class, 'confirm'])
         ->middleware('throttle:30,1')->name('interest.confirm');
-    Route::get('/interest/{token}/unsubscribe', [InterestSignupController::class, 'unsubscribe'])
+    Route::get('/interest/{token}/unsubscribe', [InterestSignupController::class, 'unsubscribeForm'])
         ->middleware('throttle:30,1')->name('interest.unsubscribe');
+    Route::post('/interest/{token}/unsubscribe', [InterestSignupController::class, 'unsubscribe'])
+        ->middleware('throttle:30,1')->name('interest.unsubscribe.store');
 
     // RevenueCat webhooks (no auth — signature verified in controller)
     Route::middleware(ResolveGame::class)

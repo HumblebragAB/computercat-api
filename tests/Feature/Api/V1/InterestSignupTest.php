@@ -35,7 +35,9 @@ class InterestSignupTest extends TestCase
 
     public function test_anmalan_sparas_obekraftad_och_bekraftelsemail_skickas(): void
     {
-        $this->anmal()->assertStatus(202)->assertJsonStructure(['message']);
+        $this->anmal()->assertStatus(202)
+            ->assertJsonPath('confirmation_sent', true)
+            ->assertJsonPath('message', 'Tack! Kolla din mail och bekräfta anmälan.');
 
         $rad = InterestSignup::sole();
         $this->assertSame('anna@example.com', $rad->email);
@@ -62,7 +64,13 @@ class InterestSignupTest extends TestCase
         $this->get("/api/v1/interest/{$token}/confirm")->assertOk()->assertSee('Tack, nu är du anmäld!');
         $this->assertNotNull(InterestSignup::sole()->confirmed_at);
 
-        $this->get("/api/v1/interest/{$token}/unsubscribe")->assertOk()->assertSee('Du är avregistrerad');
+        // GET raderar ingenting: länkskannrar i mailklienter öppnar länkar.
+        $this->get("/api/v1/interest/{$token}/unsubscribe")->assertOk()->assertSee('Ta bort min adress');
+        $this->assertSame(1, InterestSignup::count());
+
+        // POST från API:ts egen domän, som i produktion (statefulApi + CSRF).
+        $this->withHeaders(['Origin' => config('app.url'), 'Referer' => config('app.url').'/api/v1/interest/'.$token.'/unsubscribe'])
+            ->post("/api/v1/interest/{$token}/unsubscribe")->assertOk()->assertSee('Du är avregistrerad');
         $this->assertSame(0, InterestSignup::count());
     }
 
@@ -117,11 +125,22 @@ class InterestSignupTest extends TestCase
         config(['mail.default' => 'log']);
         Log::spy();
 
-        $this->anmal()->assertStatus(202);
+        // Svaret lovar inget mail när inget skickades.
+        $this->anmal()->assertStatus(202)
+            ->assertJsonPath('confirmation_sent', false)
+            ->assertJsonPath('message', 'Tack! Vi hör av oss när språket finns.');
 
         $this->assertNull(InterestSignup::sole()->confirmation_sent_at);
         Mail::assertNothingSent();
         Log::shouldHaveReceived('warning')->withArgs(fn ($m) => str_contains($m, 'utan bekräftelsemail'));
+    }
+
+    public function test_manga_olika_adresser_fran_samma_ip_gar_igenom(): void
+    {
+        // glosis.se anropar server-till-server: alla besökare delar en IP.
+        foreach (range(1, 12) as $i) {
+            $this->anmal(['email' => "person{$i}@example.com"])->assertStatus(202);
+        }
     }
 
     public function test_hastighetsbegransning_per_adress(): void
@@ -133,16 +152,30 @@ class InterestSignupTest extends TestCase
         $this->anmal()->assertStatus(429);
     }
 
-    public function test_gallringen_tar_bara_gamla_obekraftade(): void
+    public function test_gallringen_tar_bara_obekraftade_som_fatt_mail_for_lange_sedan(): void
     {
-        $gammal = InterestSignup::create(['game_id' => $this->glosis->id, 'email' => 'gammal@x.se', 'language' => 'de', 'token_hash' => str_repeat('a', 64)]);
-        $bekraftad = InterestSignup::create(['game_id' => $this->glosis->id, 'email' => 'bekraftad@x.se', 'language' => 'de', 'token_hash' => str_repeat('b', 64), 'confirmed_at' => now()]);
-        $ny = InterestSignup::create(['game_id' => $this->glosis->id, 'email' => 'ny@x.se', 'language' => 'de', 'token_hash' => str_repeat('c', 64)]);
-        InterestSignup::whereIn('id', [$gammal->id, $bekraftad->id])->update(['created_at' => now()->subDays(40)]);
+        $skapa = fn (string $e, string $t, array $x = []) => InterestSignup::create(array_merge(
+            ['game_id' => $this->glosis->id, 'email' => $e, 'language' => 'de', 'token_hash' => str_repeat($t, 64)], $x));
+
+        $gammalMailad = $skapa('gammal@x.se', 'a', ['confirmation_sent_at' => now()->subDays(40)]);
+        $bekraftad = $skapa('bekraftad@x.se', 'b', ['confirmation_sent_at' => now()->subDays(40), 'confirmed_at' => now()->subDays(39)]);
+        $nyMailad = $skapa('ny@x.se', 'c', ['confirmation_sent_at' => now()->subDays(2)]);
+        // Anmäld för länge sedan men aldrig mailad (t.ex. innan mailen fanns):
+        // har inte kunnat bekräfta och får inte försvinna.
+        $aldrigMailad = $skapa('aldrig@x.se', 'd');
+        InterestSignup::query()->update(['created_at' => now()->subDays(60)]);
 
         $this->artisan('interest:prune-unconfirmed', ['--days' => 30])->assertSuccessful();
 
-        $this->assertEqualsCanonicalizing([$bekraftad->id, $ny->id], InterestSignup::pluck('id')->all());
+        $this->assertEqualsCanonicalizing([$bekraftad->id, $nyMailad->id, $aldrigMailad->id], InterestSignup::pluck('id')->all());
+        $this->assertFalse(InterestSignup::whereKey($gammalMailad->id)->exists());
+    }
+
+    public function test_game_serialiserar_aldrig_settings(): void
+    {
+        $this->glosis->update(['settings' => ['revenuecat' => ['webhook_secret' => 'hemligt']]]);
+
+        $this->assertArrayNotHasKey('settings', $this->glosis->fresh()->toArray());
     }
 
     public function test_publika_spelsvaret_saknar_settings(): void

@@ -15,6 +15,10 @@ class Game extends Model
         'is_active',
     ];
 
+    // Bär hemligheter per spel (t.ex. revenuecat.webhook_secret). Ska aldrig
+    // följa med när en modell serialiseras till ett svar.
+    protected $hidden = ['settings'];
+
     protected function casts(): array
     {
         return [
