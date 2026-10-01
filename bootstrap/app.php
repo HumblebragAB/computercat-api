@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -22,7 +23,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // Avregistreringen postas från API:ts egen sida, och statefulApi()
         // lägger CSRF-kontroll på anrop från den egna domänen. Den slumpade
         // token i adressen är behörigheten; en CSRF-token tillför inget.
-        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe']);
+        //
+        // Glosis fotoskanning: Capacitor på Android har origin https://localhost,
+        // som Sanctum räknar som "stateful" och då kräver CSRF. Anropet har
+        // ingen session; köpbeviset i anropet är behörigheten.
+        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
@@ -34,6 +39,20 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json([
                     'message' => 'Resource not found.',
                 ], 404);
+            }
+        });
+
+        // Glosis-appens kontrakt för 429 gäller både den globala API-gränsen
+        // och glosis-scan-gränsen per IP.
+        $exceptions->render(function (ThrottleRequestsException $e, Request $request) {
+            if ($request->is('api/v1/games/glosis/scan')) {
+                $retryAfter = (int) ($e->getHeaders()['Retry-After'] ?? 60);
+
+                return response()->json([
+                    'error' => 'rate_limited',
+                    'message' => 'För många försök just nu. Vänta en stund och försök igen.',
+                    'retry_after' => $retryAfter,
+                ], 429, $e->getHeaders());
             }
         });
 

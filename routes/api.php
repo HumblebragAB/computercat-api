@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\DailyContentController;
 use App\Http\Controllers\Api\V1\GameController;
 use App\Http\Controllers\Api\V1\GameEventController;
 use App\Http\Controllers\Api\V1\GameSaveController;
+use App\Http\Controllers\Api\V1\GlosisScanController;
 use App\Http\Controllers\Api\V1\InterestSignupController;
 use App\Http\Controllers\Api\V1\LeaderboardController;
 use App\Http\Controllers\Api\V1\OwnershipController;
@@ -58,6 +59,14 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         ->middleware('throttle:30,1')->name('interest.unsubscribe');
     Route::post('/interest/{token}/unsubscribe', [InterestSignupController::class, 'unsubscribe'])
         ->middleware('throttle:30,1')->name('interest.unsubscribe.store');
+
+    // Glosis: fota läxan. Inga konton; rätten bevisas med ett StoreKit-köp
+    // av Guld i anropet. Gränsen per köp och dygn ligger i controllern.
+    Route::middleware([ResolveGame::class, 'throttle:glosis-scan'])
+        ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+        ->group(function () {
+            Route::post('/games/{game}/scan', GlosisScanController::class)->where('game', 'glosis');
+        });
 
     // RevenueCat webhooks (no auth — signature verified in controller)
     Route::middleware(ResolveGame::class)
