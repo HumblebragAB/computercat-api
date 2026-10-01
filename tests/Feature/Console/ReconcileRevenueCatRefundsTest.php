@@ -32,7 +32,8 @@ class ReconcileRevenueCatRefundsTest extends TestCase
             'product_id' => 'tocco.pack.animals',
             'store' => 'apple',
             'transaction_id' => $tx,
-            'receipt_data' => $receipt === null ? null : json_encode($receipt),
+            // Webhooken sparar hela händelsen, med radens transaction_id.
+            'receipt_data' => $receipt === null ? null : json_encode($receipt + ['transaction_id' => $tx]),
             'status' => $status,
             'purchased_at' => now(),
         ]);
@@ -48,6 +49,7 @@ class ReconcileRevenueCatRefundsTest extends TestCase
             'suspect' => $this->purchase('tx-suspect', 'pending', ['type' => 'NON_RENEWING_PURCHASE', 'expiration_at_ms' => null]),
             'manual' => $this->purchase('tx-manual', 'pending', null),
             'garbage' => $this->purchase('tx-garbage', 'pending', null),
+            'verified_manual' => $this->purchase('tx-verified-manual', 'verified', null),
         ];
     }
 
@@ -99,6 +101,20 @@ class ReconcileRevenueCatRefundsTest extends TestCase
             ->assertSuccessful();
 
         $this->assertSame('pending', $p['suspect']->fresh()->status);
+    }
+
+    public function test_lists_verify_created_pending_rows_without_changing_them(): void
+    {
+        $p = $this->seedPurchases();
+
+        $this->artisan('revenuecat:reconcile-refunds', ['--apply' => true])
+            ->expectsOutputToContain('Pending utan webhook (räknas inte som ägda, ändras inte): 2')
+            ->expectsOutputToContain('tx-manual')
+            ->expectsOutputToContain('tx-garbage')
+            ->assertSuccessful();
+
+        $this->assertSame('pending', $p['manual']->fresh()->status);
+        $this->assertSame('pending', $p['garbage']->fresh()->status);
     }
 
     public function test_apply_and_dry_run_together_is_rejected(): void

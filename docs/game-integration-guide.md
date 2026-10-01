@@ -269,7 +269,6 @@ Common status codes:
 | PUT | `/v1/games/{slug}/saves/{key}` | Yes | Save/update with version lock |
 | DELETE | `/v1/games/{slug}/saves/{key}` | Yes | Delete save |
 | GET | `/v1/purchases` | Yes | List purchases |
-| POST | `/v1/purchases/verify` | Yes | Verify receipt |
 
 ## Intresseanmälan (interest signup)
 

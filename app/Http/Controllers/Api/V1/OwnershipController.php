@@ -28,7 +28,9 @@ class OwnershipController extends Controller
 
         $purchasedIds = Purchase::where('user_id', $request->user()->id)
             ->where('game_id', $game->id)
-            ->where('status', '!=', 'refunded')
+            ->whereIn('status', ['verified', 'pending'])
+            ->get()
+            ->filter(fn (Purchase $purchase) => $purchase->grantsAccess())
             ->pluck('product_id')
             ->toArray();
 

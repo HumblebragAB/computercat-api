@@ -237,6 +237,81 @@ class RevenueCatWebhookTest extends TestCase
         $this->assertSame([], $this->ownedPacks());
     }
 
+    private function storedPurchase(string $tx, string $status, ?string $receipt): Purchase
+    {
+        return Purchase::create([
+            'user_id' => $this->user->id,
+            'game_id' => $this->game->id,
+            'product_id' => 'tocco.pack.animals',
+            'store' => 'apple',
+            'transaction_id' => $tx,
+            'receipt_data' => $receipt,
+            'status' => $status,
+            'purchased_at' => now(),
+        ]);
+    }
+
+    public function test_ownership_ignores_pending_rows_not_from_webhook(): void
+    {
+        // Rader som skapats av det borttagna /purchases/verify: klientens
+        // egna uppgifter, aldrig verifierade.
+        $this->storedPurchase('verify-empty', 'pending', '');
+        $this->storedPurchase('verify-null', 'pending', null);
+        $this->storedPurchase('verify-junk', 'pending', 'MIIT...base64receipt');
+
+        $this->assertSame([], $this->ownedPacks());
+    }
+
+    public function test_ownership_ignores_pending_row_with_forged_event_for_other_transaction(): void
+    {
+        $this->storedPurchase('verify-forged', 'pending', json_encode([
+            'type' => 'NON_RENEWING_PURCHASE',
+            'transaction_id' => 'something-else',
+        ]));
+
+        $this->assertSame([], $this->ownedPacks());
+    }
+
+    public function test_ownership_counts_pending_subscription_from_webhook(): void
+    {
+        $sub = [
+            'type' => 'INITIAL_PURCHASE',
+            'transaction_id' => 'sub-3',
+            'original_transaction_id' => 'sub-3',
+            'expiration_at_ms' => 1602022566000,
+        ];
+        $this->postEvent($this->nonRenewingEvent($sub))->assertOk();
+        $this->postEvent($this->cancellationEvent('UNSUBSCRIBE', $sub))->assertOk();
+
+        $this->assertDatabaseHas('purchases', ['transaction_id' => 'sub-3', 'status' => 'pending']);
+        $this->assertSame(['animals'], $this->ownedPacks());
+    }
+
+    public function test_ownership_ignores_failed_purchases(): void
+    {
+        $this->storedPurchase('failed-tx', 'failed', json_encode([
+            'type' => 'NON_RENEWING_PURCHASE',
+            'transaction_id' => 'failed-tx',
+        ]));
+
+        $this->assertSame([], $this->ownedPacks());
+    }
+
+    public function test_purchase_verify_endpoint_is_gone(): void
+    {
+        Sanctum::actingAs($this->user);
+
+        $this->postJson('/api/v1/purchases/verify', [
+            'game_id' => $this->game->id,
+            'product_id' => 'tocco.pack.animals',
+            'store' => 'apple',
+            'transaction_id' => 'free-unlock',
+        ])->assertNotFound();
+
+        $this->assertDatabaseMissing('purchases', ['transaction_id' => 'free-unlock']);
+        $this->assertSame([], $this->ownedPacks());
+    }
+
     // -------------------------------------------------------
     // TRANSFER
     // -------------------------------------------------------

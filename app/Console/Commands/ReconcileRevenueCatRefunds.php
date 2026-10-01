@@ -67,8 +67,22 @@ class ReconcileRevenueCatRefunds extends Command
                 }
             });
 
+        // Rader från det borttagna /purchases/verify: pending utan
+        // webhook-händelse. Ägarskapet räknar dem inte längre; de listas så
+        // att de kan stämmas av, men ändras inte här.
+        $unverified = [];
+        Purchase::where('status', 'pending')
+            ->orderBy('id')
+            ->lazyById(500)
+            ->each(function (Purchase $purchase) use (&$unverified) {
+                if (! $purchase->isFromWebhook()) {
+                    $unverified[] = $purchase;
+                }
+            });
+
         $this->info('Att markera som refunded: '.count($toRefund));
         $this->info('Misstänkta (ändras inte): '.count($suspects));
+        $this->info('Pending utan webhook (räknas inte som ägda, ändras inte): '.count($unverified));
 
         $rows = fn (array $purchases) => array_map(fn (Purchase $p) => [
             $p->id, $p->game_id, $p->user_id, $p->product_id, $p->transaction_id, $p->status,
@@ -83,6 +97,11 @@ class ReconcileRevenueCatRefunds extends Command
         if ($suspects) {
             $this->line('Misstänkta: webhook-engångsköp som står på pending. Stäm av mot RevenueCat innan något ändras.');
             $this->table($headers, $rows($suspects));
+        }
+
+        if ($unverified) {
+            $this->line('Pending utan webhook, skapade av det borttagna /purchases/verify:');
+            $this->table($headers, $rows($unverified));
         }
 
         if (! $apply) {

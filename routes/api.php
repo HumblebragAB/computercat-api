@@ -111,6 +111,5 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
     // Purchases (authenticated)
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/purchases', [PurchaseController::class, 'index']);
-        Route::post('/purchases/verify', [PurchaseController::class, 'verify']);
     });
 });

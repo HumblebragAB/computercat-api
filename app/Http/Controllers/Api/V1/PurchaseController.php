@@ -10,9 +10,8 @@ use Illuminate\Http\Request;
 /**
  * Purchase management endpoints.
  *
- * Receipt verification is handled by RevenueCat webhooks, not here.
- * The /verify endpoint remains as a manual fallback (e.g. for web
- * purchases or support tools) and records unverified pending purchases.
+ * Köp registreras bara av RevenueCat-webhooken. Det gamla
+ * /purchases/verify lät klienten skapa egna köp utan kvitto och är borttaget.
  */
 class PurchaseController extends Controller
 {
@@ -30,43 +29,5 @@ class PurchaseController extends Controller
                 'purchased_at' => $p->purchased_at,
             ]),
         ]);
-    }
-
-    /**
-     * Manual purchase recording. Normally RevenueCat webhooks populate
-     * the purchases table automatically — this endpoint is a fallback
-     * for web purchases or admin/support use.
-     *
-     * Records the purchase as 'pending' without any receipt verification.
-     * For real verification use the RevenueCat webhook pipeline.
-     */
-    public function verify(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'game_id' => 'required|exists:games,id',
-            'product_id' => 'required|string|max:100',
-            'store' => 'required|in:apple,google,web',
-            'transaction_id' => 'required|string|max:255|unique:purchases,transaction_id',
-            'receipt_data' => 'nullable|string',
-        ]);
-
-        $purchase = Purchase::create([
-            'user_id' => $request->user()->id,
-            'game_id' => $validated['game_id'],
-            'product_id' => $validated['product_id'],
-            'store' => $validated['store'],
-            'transaction_id' => $validated['transaction_id'],
-            'receipt_data' => $validated['receipt_data'] ?? null,
-            'status' => 'pending',
-            'purchased_at' => now(),
-        ]);
-
-        return response()->json([
-            'data' => [
-                'product_id' => $purchase->product_id,
-                'status' => $purchase->status,
-                'purchased_at' => $purchase->purchased_at,
-            ],
-        ], 201);
     }
 }
