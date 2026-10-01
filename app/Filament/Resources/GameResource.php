@@ -205,6 +205,31 @@ class GameResource extends Resource
                             : 'Save the game first to generate the URL'),
                 ]),
 
+            Forms\Components\Section::make('Anthropic (Claude)')
+                ->description('API key used server-side by features that call Claude, e.g. Glosis photo scan (POST /api/v1/games/{slug}/scan). Never sent to the app.')
+                ->collapsed()
+                ->schema([
+                    Forms\Components\TextInput::make('settings.anthropic.api_key')
+                        ->label('Anthropic API key')
+                        ->password()
+                        ->revealable()
+                        ->helperText('Leave blank to keep the existing key. Stored encrypted; the stored value is never shown here.')
+                        // Always show empty on load — never echo back the stored key
+                        ->formatStateUsing(fn () => null)
+                        ->dehydrateStateUsing(function ($state, ?Game $record) {
+                            if (filled($state)) {
+                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                            }
+
+                            return $record?->settings['anthropic']['api_key'] ?? null;
+                        }),
+                    Forms\Components\Placeholder::make('anthropic_api_key_status')
+                        ->label('Status')
+                        ->content(fn (?Game $record) => filled($record?->settings['anthropic']['api_key'] ?? null)
+                            ? 'A key is stored.'
+                            : 'No key stored — photo scan answers 503 scan_unavailable.'),
+                ]),
+
             Forms\Components\Section::make('Advanced Settings')
                 ->description('Raw settings JSON for anything not covered above.')
                 ->collapsed()
