@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use App\Models\InterestSignup;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -16,7 +17,11 @@ class InterestConfirmation extends Mailable
 
     public function envelope(): Envelope
     {
+        // Avsändaradressen är gemensam (MAIL_FROM_ADDRESS, på den
+        // Mailgun-verifierade domänen); namnet är spelets, så att mottagaren
+        // känner igen vem det kommer från.
         return new Envelope(
+            from: new Address(config('mail.from.address'), $this->signup->game->name),
             subject: 'Bekräfta din anmälan till '.$this->signup->game->name,
         );
     }

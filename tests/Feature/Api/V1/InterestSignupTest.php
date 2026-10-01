@@ -44,7 +44,8 @@ class InterestSignupTest extends TestCase
         $this->assertSame('de', $rad->language);
         $this->assertNull($rad->confirmed_at);
         $this->assertNotNull($rad->confirmation_sent_at);
-        Mail::assertSent(InterestConfirmation::class, fn ($m) => $m->hasTo('anna@example.com'));
+        Mail::assertSent(InterestConfirmation::class, fn ($m) => $m->hasTo('anna@example.com')
+            && $m->hasFrom(config('mail.from.address'), 'Glosis'));
     }
 
     public function test_lanken_i_mailet_bekraftar_och_avregistrerar(): void
