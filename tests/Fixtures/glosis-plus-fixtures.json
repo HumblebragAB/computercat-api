@@ -1,0 +1,132 @@
+{
+  "_comment": "Gemensamma testfall för Guldstjärnans giltighet. Läses av packages/core och ska läsas av computercat-api (PHP). En produkt per läsår på båda plattformarna: glosis_guld_<start>_<slut två siffror> gäller till 30 juni slutåret. Giltigheten följer bara av produkt-id:t, aldrig av köpdatumet. Det köp som ger senast until vinner; since = det köpets datum i Europe/Stockholm. Aktiv t.o.m. until 23:59:59 Stockholm. validUntil = vilket läsår ett köp vid en viss tidpunkt ska gälla (från 1 maj nästa läsår), och styr vilken produkt som erbjuds.",
+  "productIdPrefix": "glosis_guld_",
+  "productIds": [
+    { "productId": "glosis_guld_2026_27", "expectedUntil": "2027-06-30" },
+    { "productId": "glosis_guld_2027_28", "expectedUntil": "2028-06-30" },
+    { "productId": "glosis_guld_2099_00", "expectedUntil": "2100-06-30", "note": "sekelskifte" },
+    { "productId": "glosis_guld_2026_28", "expectedUntil": null, "note": "slutåret hänger inte ihop" },
+    { "productId": "glosis_guld_2026_26", "expectedUntil": null },
+    { "productId": "GLOSIS_GULD_2026_27", "expectedUntil": null, "note": "versaler" },
+    { "productId": "glosis_guld_2026_27x", "expectedUntil": null, "note": "extra tecken" },
+    { "productId": " glosis_guld_2026_27", "expectedUntil": null, "note": "inledande mellanslag" },
+    { "productId": "glosis_guld_2026_2027", "expectedUntil": null },
+    { "productId": "glosis_guld_26_27", "expectedUntil": null },
+    { "productId": "glosis_guld_1999_00", "expectedUntil": null, "note": "före 2000-talet" },
+    { "productId": "glosis_guldstjarnan_lasar", "expectedUntil": null, "note": "fas 1:s produkt-id gäller inte" },
+    { "productId": "", "expectedUntil": null }
+  ],
+  "validUntil": [
+    { "purchaseDate": "2026-04-30T21:59:00Z", "expectedUntil": "2026-06-30", "note": "23:59 i Stockholm, april" },
+    { "purchaseDate": "2026-04-30T22:30:00Z", "expectedUntil": "2027-06-30", "note": "1 maj 00:30 i Stockholm" },
+    { "purchaseDate": "2026-04-30T22:00:00Z", "expectedUntil": "2027-06-30", "note": "exakt midnatt 1 maj i Stockholm" },
+    { "purchaseDate": "2026-04-30T21:59:59.999Z", "expectedUntil": "2026-06-30", "note": "sista millisekunden i april" },
+    { "purchaseDate": "2026-04-30T23:59:59+02:00", "expectedUntil": "2026-06-30", "note": "med offset" },
+    { "purchaseDate": "2026-05-01T00:00:00+02:00", "expectedUntil": "2027-06-30", "note": "med offset" },
+    { "purchaseDate": "2026-01-15T12:00:00Z", "expectedUntil": "2026-06-30" },
+    { "purchaseDate": "2026-06-30T10:00:00Z", "expectedUntil": "2027-06-30" },
+    { "purchaseDate": "2026-12-31T12:00:00Z", "expectedUntil": "2027-06-30" },
+    { "purchaseDate": "2026-12-31T23:30:00Z", "expectedUntil": "2027-06-30", "note": "1 januari 00:30 i Stockholm" },
+    { "purchaseDate": "2026-03-29T01:30:00Z", "expectedUntil": "2026-06-30", "note": "sommartidsdygnet" },
+    { "purchaseDate": "2026-10-25T00:30:00Z", "expectedUntil": "2027-06-30", "note": "vintertidsdygnet" }
+  ],
+  "offeredProduct": [
+    { "now": "2026-10-01T10:00:00Z", "expected": "glosis_guld_2026_27" },
+    { "now": "2027-04-30T21:59:00Z", "expected": "glosis_guld_2026_27", "note": "30 april 23:59 i Stockholm" },
+    { "now": "2027-04-30T22:30:00Z", "expected": "glosis_guld_2027_28", "note": "30 april 22:30 UTC = 1 maj i Stockholm" },
+    { "now": "2026-04-30T22:30:00Z", "expected": "glosis_guld_2026_27", "note": "köp 30 april 22:30 UTC 2026 gäller läsåret 2026/27" },
+    { "now": "2027-06-15T10:00:00Z", "expected": "glosis_guld_2027_28" }
+  ],
+  "plusStatus": [
+    {
+      "note": "inga köp",
+      "purchases": [],
+      "now": "2026-10-01T10:00:00Z",
+      "expectedActive": false, "expectedUntil": null, "expectedSince": null
+    },
+    {
+      "note": "ett läsår",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-09-01T10:00:00Z", "source": "store" }],
+      "now": "2026-10-01T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2026-09-01"
+    },
+    {
+      "note": "köpdatumet påverkar inte giltigheten",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2027-05-20T10:00:00Z", "source": "store" }],
+      "now": "2027-06-01T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2027-05-20"
+    },
+    {
+      "note": "nästa läsår köpt i maj: senast until vinner, since = det köpets datum",
+      "purchases": [
+        { "productId": "glosis_guld_2026_27", "purchaseDate": "2026-09-01T10:00:00Z", "source": "store" },
+        { "productId": "glosis_guld_2027_28", "purchaseDate": "2027-05-10T10:00:00Z", "source": "store" }
+      ],
+      "now": "2027-06-15T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2028-06-30", "expectedSince": "2027-05-10"
+    },
+    {
+      "note": "omvänd ordning i listan",
+      "purchases": [
+        { "productId": "glosis_guld_2027_28", "purchaseDate": "2027-05-10T10:00:00Z", "source": "store" },
+        { "productId": "glosis_guld_2026_27", "purchaseDate": "2026-09-01T10:00:00Z", "source": "store" }
+      ],
+      "now": "2027-07-15T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2028-06-30", "expectedSince": "2027-05-10"
+    },
+    {
+      "note": "senare köpdatum på äldre läsår vinner inte",
+      "purchases": [
+        { "productId": "glosis_guld_2027_28", "purchaseDate": "2027-05-10T10:00:00Z", "source": "store" },
+        { "productId": "glosis_guld_2026_27", "purchaseDate": "2027-05-20T10:00:00Z", "source": "store" }
+      ],
+      "now": "2027-07-15T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2028-06-30", "expectedSince": "2027-05-10"
+    },
+    {
+      "note": "sista dagen 23:00 i Stockholm",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-05-10T10:00:00Z", "source": "store" }],
+      "now": "2027-06-30T21:00:00Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2026-05-10"
+    },
+    {
+      "note": "sista sekunden 23:59:59 i Stockholm",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-05-10T10:00:00Z", "source": "store" }],
+      "now": "2027-06-30T21:59:59Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2026-05-10"
+    },
+    {
+      "note": "midnatt 1 juli i Stockholm",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-05-10T10:00:00Z", "source": "store" }],
+      "now": "2027-06-30T22:00:00Z",
+      "expectedActive": false, "expectedUntil": "2027-06-30", "expectedSince": "2026-05-10"
+    },
+    {
+      "note": "since räknas i Stockholm: 30 april 23:30 UTC = 1 maj",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-04-30T23:30:00Z", "source": "store" }],
+      "now": "2027-03-01T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2026-05-01"
+    },
+    {
+      "note": "fas 1:s produkt-id ger inget pass",
+      "purchases": [{ "productId": "glosis_guldstjarnan_lasar", "purchaseDate": "2026-09-01T10:00:00Z", "source": "store" }],
+      "now": "2026-10-01T10:00:00Z",
+      "expectedActive": false, "expectedUntil": null, "expectedSince": null
+    },
+    {
+      "note": "ogiltigt id ignoreras bredvid ett giltigt",
+      "purchases": [
+        { "productId": "glosis_guld_2025_26", "purchaseDate": "2025-09-01T10:00:00Z", "source": "store" },
+        { "productId": "glosis_guld_2026_28", "purchaseDate": "2026-09-01T10:00:00Z", "source": "store" }
+      ],
+      "now": "2026-10-01T10:00:00Z",
+      "expectedActive": false, "expectedUntil": "2026-06-30", "expectedSince": "2025-09-01"
+    },
+    {
+      "note": "testkod räknas som köp",
+      "purchases": [{ "productId": "glosis_guld_2026_27", "purchaseDate": "2026-09-01T10:00:00Z", "source": "test-code" }],
+      "now": "2026-10-01T10:00:00Z",
+      "expectedActive": true, "expectedUntil": "2027-06-30", "expectedSince": "2026-09-01"
+    }
+  ]
+}
