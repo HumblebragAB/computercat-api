@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Game;
+use App\Models\RevokedStoreTransaction;
 use App\Services\Glosis\AppleTransactionVerifier;
 use App\Services\Glosis\GuldStatus;
 use App\Services\Glosis\HomeworkScanner;
@@ -38,7 +39,30 @@ class GlosisScanController extends Controller
 
     public const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 
+    /**
+     * Claude API: högst 10 MB per bild, base64-kodad
+     * (https://platform.claude.com/docs/en/build-with-claude/vision#request-limits).
+     * MAX_IMAGE_BYTES (5 MB rått, ~6,7 MB base64) håller sig under det; kontrollen
+     * nedan gör gränsen uttrycklig om MAX_IMAGE_BYTES någon gång höjs.
+     */
+    public const MAX_IMAGE_BASE64_BYTES = 10 * 1024 * 1024;
+
+    /** Riktiga köp. Sandbox-köp: config('services.glosis.sandbox_daily_scans'). */
     public const DAILY_SCANS_PER_TRANSACTION = 30;
+
+    public static function dailyLimitKey(string $originalTransactionId, \DateTimeInterface $now): string
+    {
+        $day = CarbonImmutable::instance($now)->setTimezone(GuldStatus::TIME_ZONE)->format('Y-m-d');
+
+        return 'glosis-scan:tx:'.hash('sha256', $originalTransactionId).':'.$day;
+    }
+
+    private static function dailyLimit(string $environment): int
+    {
+        return $environment === 'Production'
+            ? self::DAILY_SCANS_PER_TRANSACTION
+            : max(0, (int) config('services.glosis.sandbox_daily_scans', 5));
+    }
 
     public function __invoke(Request $request, Game $game, AppleTransactionVerifier $verifier, HomeworkScanner $scanner): JsonResponse
     {
@@ -73,13 +97,17 @@ class GlosisScanController extends Controller
         }
         $txHash = substr(hash('sha256', $transaction->originalTransactionId), 0, 16);
 
-        // 4. Guld för ett läsår som fortfarande gäller
-        if ($transaction->isRevoked() || ! GuldStatus::isActive($transaction->productId, now())) {
+        // 4. Guld för ett läsår som fortfarande gäller, och inte återbetalt.
+        // Återbetalningen syns i JWS:ens revocationDate bara om appen hämtat en
+        // ny; spärrlistan från RevenueCat-webhooken fångar ett gammalt bevis.
+        $denylisted = RevokedStoreTransaction::isRevoked($game, $transaction->originalTransactionId);
+        if ($transaction->isRevoked() || $denylisted || ! GuldStatus::isActive($transaction->productId, now())) {
             Log::info('Glosis scan: inget giltigt Guld', [
                 'environment' => $transaction->environment,
                 'tx' => $txHash,
                 'product_id' => $transaction->productId,
                 'revoked' => $transaction->isRevoked(),
+                'denylisted' => $denylisted,
             ]);
 
             return $this->error(402, 'guld_required', 'Att fota läxan ingår i Guldstjärnan. Be en vuxen att titta på det.');
@@ -94,11 +122,15 @@ class GlosisScanController extends Controller
             ], 503);
         }
 
-        // 6. Högst 30 skanningar per köp och Stockholmsdygn
+        // 6. Dagsgräns per köp och Stockholmsdygn (30, sandbox lägre). Räknas
+        // först och avgörs på värdet hit() returnerar: cachens increment är
+        // atomisk (databas-store: lockForUpdate i en transaktion), så parallella
+        // anrop kan inte alla se en räknare under gränsen. Räknas bara när
+        // indata och köp redan godkänts.
         $nowStockholm = CarbonImmutable::now(GuldStatus::TIME_ZONE);
         $secondsToMidnight = max(1, (int) ceil($nowStockholm->diffInSeconds($nowStockholm->addDay()->startOfDay())));
-        $limitKey = 'glosis-scan:tx:'.hash('sha256', $transaction->originalTransactionId).':'.$nowStockholm->format('Y-m-d');
-        if (RateLimiter::tooManyAttempts($limitKey, self::DAILY_SCANS_PER_TRANSACTION)) {
+        $hits = RateLimiter::hit(self::dailyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMidnight + 60);
+        if ($hits > self::dailyLimit($transaction->environment)) {
             Log::info('Glosis scan: dagsgränsen nådd', ['environment' => $transaction->environment, 'tx' => $txHash]);
 
             return response()->json([
@@ -107,7 +139,6 @@ class GlosisScanController extends Controller
                 'retry_after' => $secondsToMidnight,
             ], 429, ['Retry-After' => (string) $secondsToMidnight]);
         }
-        RateLimiter::hit($limitKey, $secondsToMidnight + 60);
 
         // 7. Claude
         $started = microtime(true);
@@ -155,6 +186,9 @@ class GlosisScanController extends Controller
 
         $bytes = file_get_contents($file->getRealPath(), length: self::MAX_IMAGE_BYTES + 1);
         if ($bytes === false || $bytes === '' || strlen($bytes) > self::MAX_IMAGE_BYTES) {
+            return null;
+        }
+        if (4 * (int) ceil(strlen($bytes) / 3) > self::MAX_IMAGE_BASE64_BYTES) {
             return null;
         }
 

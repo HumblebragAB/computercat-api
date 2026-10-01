@@ -37,6 +37,12 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // Glosis fotoskanning. Sandbox-köp (TestFlight) kostar inget och gäller
+    // hela läsåret, så de får en lägre dagsgräns än riktiga köp (30).
+    'glosis' => [
+        'sandbox_daily_scans' => (int) env('GLOSIS_SANDBOX_DAILY_SCANS', 5),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

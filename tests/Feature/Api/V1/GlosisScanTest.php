@@ -3,7 +3,9 @@
 namespace Tests\Feature\Api\V1;
 
 use Anthropic\Core\Exceptions\APIConnectionException;
+use App\Http\Controllers\Api\V1\GlosisScanController;
 use App\Models\Game;
+use App\Models\RevokedStoreTransaction;
 use App\Services\Glosis\AppleTransactionVerifier;
 use App\Services\Glosis\GuldStatus;
 use App\Services\Glosis\HomeworkScanner;
@@ -16,6 +18,7 @@ use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FakeAppleChain;
@@ -312,10 +315,10 @@ class GlosisScanTest extends TestCase
 
     // ---- 429 -----------------------------------------------------------
 
-    public function test_thirty_scans_per_purchase_and_stockholm_day(): void
+    public function test_thirty_scans_per_production_purchase_and_stockholm_day(): void
     {
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
-        $proof = $this->iosProof();
+        $proof = $this->iosProof(['environment' => 'Production']);
 
         for ($i = 0; $i < 30; $i++) {
             $this->scan($proof)->assertOk();
@@ -330,11 +333,124 @@ class GlosisScanTest extends TestCase
         $this->assertCount(30, $this->claude->requests);
 
         // Ett annat köp har sin egen gräns.
-        $this->scan($this->iosProof(['originalTransactionId' => '2000000999999999']))->assertOk();
+        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000999999999']))->assertOk();
 
         // Nytt dygn i Stockholm.
         Carbon::setTestNow(now()->addHours(10));
-        $this->scan($this->iosProof())->assertOk();
+        $this->scan($this->iosProof(['environment' => 'Production']))->assertOk();
+    }
+
+    public function test_sandbox_purchases_get_five_scans_per_day_by_default(): void
+    {
+        // Sandbox-köp (TestFlight) kostar inget och gäller hela läsåret.
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        $proof = $this->iosProof(['environment' => 'Sandbox']);
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->scan($proof)->assertOk();
+        }
+        $this->scan($proof)->assertStatus(429)->assertJsonPath('error', 'rate_limited');
+        $this->assertCount(5, $this->claude->requests);
+    }
+
+    public function test_sandbox_daily_cap_is_configurable(): void
+    {
+        config(['services.glosis.sandbox_daily_scans' => 2]);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        $proof = $this->iosProof(['environment' => 'Sandbox']);
+
+        $this->scan($proof)->assertOk();
+        $this->scan($proof)->assertOk();
+        $this->scan($proof)->assertStatus(429);
+
+        // Production påverkas inte av sandbox-gränsen.
+        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
+        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
+        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
+    }
+
+    public function test_daily_cap_counts_before_deciding_so_parallel_requests_cannot_slip_through(): void
+    {
+        // Räknaren står redan på gränsen när anropet kommer, och en
+        // kontroll-före-räkning skulle se en äldre siffra (som vid parallella
+        // anrop). Bara värdet som hit() returnerar får avgöra.
+        $limiter = new class(app('cache')->store()) extends \Illuminate\Cache\RateLimiter
+        {
+            public function tooManyAttempts($key, $maxAttempts)
+            {
+                return str_starts_with($key, 'glosis-scan:tx:') ? false : parent::tooManyAttempts($key, $maxAttempts);
+            }
+        };
+        $limiter->for('glosis-scan', app(\Illuminate\Cache\RateLimiter::class)->limiter('glosis-scan'));
+        $this->app->instance(\Illuminate\Cache\RateLimiter::class, $limiter);
+        RateLimiter::swap($limiter);
+        RateLimiter::increment(GlosisScanController::dailyLimitKey('2000000111111111', now()), 3600, 30);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->iosProof(['environment' => 'Production']))
+            ->assertStatus(429)
+            ->assertJsonPath('error', 'rate_limited');
+        $this->assertCount(0, $this->claude->requests);
+    }
+
+    public function test_rejected_input_does_not_use_up_the_daily_cap(): void
+    {
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        $proof = $this->iosProof(['environment' => 'Sandbox']);
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->scan($proof, UploadedFile::fake()->createWithContent('x.jpg', 'inte en bild'))->assertStatus(422);
+        }
+
+        $this->scan($proof)->assertOk();
+    }
+
+    public function test_max_upload_stays_within_anthropics_base64_limit(): void
+    {
+        // Claude API: högst 10 MB per bild, base64-kodad
+        // (https://platform.claude.com/docs/en/build-with-claude/vision#request-limits).
+        $base64 = 4 * (int) ceil(GlosisScanController::MAX_IMAGE_BYTES / 3);
+
+        $this->assertLessThanOrEqual(GlosisScanController::MAX_IMAGE_BASE64_BYTES, $base64);
+        $this->assertSame(10 * 1024 * 1024, GlosisScanController::MAX_IMAGE_BASE64_BYTES);
+    }
+
+    // ---- Återbetalda köp -----------------------------------------------
+
+    public function test_refunded_transaction_on_denylist_returns_402(): void
+    {
+        RevokedStoreTransaction::create([
+            'game_id' => $this->game->id,
+            'store' => 'apple',
+            'original_transaction_id' => '2000000111111111',
+            'transaction_id' => '2000000123456789',
+            'reason' => 'CUSTOMER_SUPPORT',
+            'revoked_at' => now(),
+        ]);
+
+        $this->scan($this->iosProof(['environment' => 'Production']))
+            ->assertStatus(402)->assertJsonPath('error', 'guld_required');
+        $this->assertCount(0, $this->claude->requests);
+
+        // Ett annat köp påverkas inte.
+        $this->claude->push(FakeClaudeTransport::json($this->goodWords()));
+        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000999999999']))->assertOk();
+    }
+
+    public function test_denylist_is_per_game(): void
+    {
+        $tocco = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true]);
+        RevokedStoreTransaction::create([
+            'game_id' => $tocco->id,
+            'store' => 'apple',
+            'original_transaction_id' => '2000000111111111',
+            'transaction_id' => '2000000111111111',
+            'reason' => 'CUSTOMER_SUPPORT',
+            'revoked_at' => now(),
+        ]);
+        $this->claude->push(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->iosProof(['environment' => 'Production']))->assertOk();
     }
 
     public function test_sixty_requests_per_hour_and_ip(): void

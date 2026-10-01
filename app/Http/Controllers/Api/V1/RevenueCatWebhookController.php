@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Game;
 use App\Models\Purchase;
+use App\Models\RevokedStoreTransaction;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -198,6 +199,7 @@ class RevenueCatWebhookController extends Controller
         $reason = $event['cancel_reason'] ?? null;
 
         if ($type === 'REFUND_REVERSED') {
+            $this->unrecordRevocation($game, $transactionId, $event);
             $updated = (clone $query)->where('status', 'refunded')->update(['status' => 'verified']);
             Log::info('RevenueCat refund reversed', ['transaction_id' => $transactionId, 'updated' => $updated]);
 
@@ -213,6 +215,7 @@ class RevenueCatWebhookController extends Controller
             && ($reason === 'CUSTOMER_SUPPORT' || $isOneTime);
 
         if ($revoke) {
+            $this->recordRevocation($game, $transactionId, $event);
             $updated = (clone $query)->update(['status' => 'refunded']);
             Log::info('RevenueCat purchase revoked', [
                 'transaction_id' => $transactionId,
@@ -221,7 +224,7 @@ class RevenueCatWebhookController extends Controller
                 'updated' => $updated,
             ]);
 
-            if ($updated === 0) {
+            if ($updated === 0 && ! in_array($game->slug, self::DENYLIST_GAMES, true)) {
                 Log::warning('RevenueCat revocation matched no purchase', ['game' => $game->slug, 'transaction_id' => $transactionId]);
             }
 
@@ -232,6 +235,60 @@ class RevenueCatWebhookController extends Controller
         // användaren hade åtkomst under perioden. Ett återbetalt köp får
         // inte bli 'pending' (ägt) igen den här vägen.
         (clone $query)->where('status', '!=', 'refunded')->update(['status' => 'pending']);
+    }
+
+    /**
+     * Spel utan konton (Glosis) har inga Purchase-rader att markera, eftersom
+     * app_user_id är anonymt. För dem spärras köpet i stället per
+     * original_transaction_id, som fotoskanningen kontrollerar.
+     */
+    private const DENYLIST_GAMES = ['glosis'];
+
+    private function recordRevocation(Game $game, string $transactionId, array $event): void
+    {
+        if (! in_array($game->slug, self::DENYLIST_GAMES, true)) {
+            return;
+        }
+
+        $original = $this->originalTransactionId($transactionId, $event);
+        $revokedAt = isset($event['event_timestamp_ms'])
+            ? now()->createFromTimestampMs((int) $event['event_timestamp_ms'])
+            : now();
+
+        RevokedStoreTransaction::updateOrCreate(
+            ['game_id' => $game->id, 'original_transaction_id' => $original],
+            [
+                'store' => $this->mapStore($event['store'] ?? null),
+                'transaction_id' => $transactionId,
+                'reason' => is_string($event['cancel_reason'] ?? null) ? $event['cancel_reason'] : null,
+                'revoked_at' => $revokedAt,
+            ],
+        );
+        Log::info('RevenueCat: köp spärrat', ['game' => $game->slug, 'cancel_reason' => $event['cancel_reason'] ?? null]);
+    }
+
+    private function unrecordRevocation(Game $game, string $transactionId, array $event): void
+    {
+        if (! in_array($game->slug, self::DENYLIST_GAMES, true)) {
+            return;
+        }
+
+        $removed = RevokedStoreTransaction::where('game_id', $game->id)
+            ->where('original_transaction_id', $this->originalTransactionId($transactionId, $event))
+            ->delete();
+        Log::info('RevenueCat: spärr hävd efter REFUND_REVERSED', ['game' => $game->slug, 'removed' => $removed]);
+    }
+
+    private function originalTransactionId(string $transactionId, array $event): string
+    {
+        $original = $event['original_transaction_id'] ?? null;
+        if (is_string($original) && $original !== '') {
+            return $original;
+        }
+
+        Log::warning('RevenueCat event saknar original_transaction_id, använder transaction_id', ['event_id' => $event['id'] ?? null]);
+
+        return $transactionId;
     }
 
     /**
