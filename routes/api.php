@@ -71,7 +71,7 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
 
     // Glosis studioröst. Samma köpbevis som skanningen; gränserna för nya ord
     // och månadsbudgeten ligger i StudioVoice. Ljudet hämtas med en signerad
-    // adress (24 h) från prepare; signaturen är behörigheten. Ljudet har en egen,
+    // adress (absolut https, 24 h) från prepare; signaturen är behörigheten. Ljudet har en egen,
     // högre gräns i stället för den globala (60/min), eftersom en lektion hämtar
     // upp till 40 filer och en skolklass delar IP.
     Route::middleware([ResolveGame::class, 'throttle:glosis-tts'])
@@ -81,7 +81,7 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         });
     Route::get('/games/glosis/tts/audio/{hash}', [GlosisTtsController::class, 'audio'])
         ->where('hash', '[0-9a-f]{64}')
-        ->middleware(['signed:relative', 'throttle:glosis-tts-audio'])
+        ->middleware(['signed', 'throttle:glosis-tts-audio'])
         ->withoutMiddleware('throttle:60,1')
         ->name(\App\Services\Glosis\StudioVoice::AUDIO_ROUTE);
 

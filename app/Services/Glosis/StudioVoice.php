@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Normalizer;
 
@@ -95,9 +94,20 @@ class StudioVoice
         return $hash.'.mp3';
     }
 
+    /**
+     * Absolut https-adress, signerad över hela adressen (appen godtar bara
+     * absoluta https-adresser). Roten tas från APP_URL, inte från förfrågans
+     * Host-huvud, och schemat är alltid https. Signaturen kontrolleras av
+     * middleware "signed" mot adressen förfrågan faktiskt kom på; i drift
+     * terminerar nginx TLS direkt (ingen proxy), så den ser https och rätt värd.
+     */
     public static function signedUrl(string $hash): string
     {
-        return url(URL::temporarySignedRoute(self::AUDIO_ROUTE, now()->addHours(self::URL_TTL_HOURS), ['hash' => $hash], absolute: false));
+        $generator = clone app('url');
+        $generator->forceRootUrl(preg_replace('#^http://#', 'https://', rtrim((string) config('app.url'), '/')));
+        $generator->forceScheme('https');
+
+        return $generator->temporarySignedRoute(self::AUDIO_ROUTE, now()->addHours(self::URL_TTL_HOURS), ['hash' => $hash]);
     }
 
     /**

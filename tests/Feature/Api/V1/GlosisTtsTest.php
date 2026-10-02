@@ -62,6 +62,8 @@ class GlosisTtsTest extends TestCase
         self::$chain ??= new FakeAppleChain;
         $this->app->instance(AppleTransactionVerifier::class, new AppleTransactionVerifier(self::$chain->rootDer()));
 
+        // Som i drift. Adresserna ska byggas från APP_URL, alltid https.
+        config(['app.url' => 'https://api.computercat.co']);
         Storage::fake(StudioVoice::DISK);
         Http::preventStrayRequests();
         $this->elevenLabsAnswer = fn () => Http::response(self::MP3, 200, ['Content-Type' => 'audio/mpeg']);
@@ -163,8 +165,8 @@ class GlosisTtsTest extends TestCase
         $this->assertSame('0.000120', $usage->est_cost_usd); // 3 tecken × $0.04/1000
         $this->assertSame(120, (int) Cache::get(AiBudget::monthKey($this->game, now())));
 
-        // Absolut, signerad adress till ljudet.
-        $this->assertStringStartsWith(config('app.url').'/api/v1/games/glosis/tts/audio/'.$hash.'?expires=', $url);
+        // Absolut https-adress från APP_URL, signerad.
+        $this->assertStringStartsWith('https://api.computercat.co/api/v1/games/glosis/tts/audio/'.$hash.'?expires=', $url);
         $this->assertStringContainsString('&signature=', $url);
 
         $audio = $this->get($url);
@@ -595,6 +597,28 @@ class GlosisTtsTest extends TestCase
         $this->get($url)->assertOk();
         Carbon::setTestNow(now()->addHours(24)->addSecond());
         $this->get($url)->assertForbidden();
+    }
+
+    public function test_urls_use_app_url_and_https_even_if_request_host_or_scheme_differ(): void
+    {
+        $this->cache('dog');
+
+        // Förfrågan kommer på http och med ett annat Host-huvud.
+        $url = $this->prepare(['dog'], headers: ['Host' => 'evil.example'])->assertOk()->json('urls.dog');
+        $this->assertStringStartsWith('https://api.computercat.co/', $url);
+
+        config(['app.url' => 'http://api.computercat.co/']);
+        $this->assertStringStartsWith('https://api.computercat.co/api/v1/', $this->prepare(['dog'])->json('urls.dog'));
+    }
+
+    public function test_signature_covers_host_and_scheme(): void
+    {
+        $this->cache('dog');
+        $url = $this->prepare(['dog'])->json('urls.dog');
+
+        $this->get($url)->assertOk();
+        $this->get(str_replace('https://api.computercat.co', 'https://evil.example', $url))->assertForbidden();
+        $this->get(str_replace('https://', 'http://', $url))->assertForbidden();
     }
 
     public function test_audio_for_missing_file_is_404(): void
