@@ -24,10 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // lägger CSRF-kontroll på anrop från den egna domänen. Den slumpade
         // token i adressen är behörigheten; en CSRF-token tillför inget.
         //
-        // Glosis fotoskanning: Capacitor på Android har origin https://localhost,
+        // Glosis fotoskanning och studioröst: Capacitor på Android har origin https://localhost,
         // som Sanctum räknar som "stateful" och då kräver CSRF. Anropet har
         // ingen session; köpbeviset i anropet är behörigheten.
-        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan']);
+        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare']);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
@@ -43,9 +43,9 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         // Glosis-appens kontrakt för 429 gäller både den globala API-gränsen
-        // och glosis-scan-gränsen per IP.
+        // och glosis-scan- och glosis-tts-gränserna per IP.
         $exceptions->render(function (ThrottleRequestsException $e, Request $request) {
-            if ($request->is('api/v1/games/glosis/scan')) {
+            if ($request->is('api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare')) {
                 $retryAfter = (int) ($e->getHeaders()['Retry-After'] ?? 60);
 
                 return response()->json([

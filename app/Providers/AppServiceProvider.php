@@ -41,6 +41,17 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perHour(60)->by('glosis-scan:'.$request->ip());
         });
 
+        // Glosis studioröst: prepare anropas en gång per lektion (högst 40 ord).
+        // Gränserna för nya ord och budgeten ligger i StudioVoice.
+        RateLimiter::for('glosis-tts', function (Request $request) {
+            return Limit::perMinute(30)->by('glosis-tts:'.$request->ip());
+        });
+
+        // Ljudfilerna (signerade adresser). Ersätter den globala API-gränsen.
+        RateLimiter::for('glosis-tts-audio', function (Request $request) {
+            return Limit::perMinute(600)->by('glosis-tts-audio:'.$request->ip());
+        });
+
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });

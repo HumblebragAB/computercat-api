@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\GameController;
 use App\Http\Controllers\Api\V1\GameEventController;
 use App\Http\Controllers\Api\V1\GameSaveController;
 use App\Http\Controllers\Api\V1\GlosisScanController;
+use App\Http\Controllers\Api\V1\GlosisTtsController;
 use App\Http\Controllers\Api\V1\InterestSignupController;
 use App\Http\Controllers\Api\V1\LeaderboardController;
 use App\Http\Controllers\Api\V1\OwnershipController;
@@ -67,6 +68,22 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         ->group(function () {
             Route::post('/games/{game}/scan', GlosisScanController::class)->where('game', 'glosis');
         });
+
+    // Glosis studioröst. Samma köpbevis som skanningen; gränserna för nya ord
+    // och månadsbudgeten ligger i StudioVoice. Ljudet hämtas med en signerad
+    // adress (24 h) från prepare; signaturen är behörigheten. Ljudet har en egen,
+    // högre gräns i stället för den globala (60/min), eftersom en lektion hämtar
+    // upp till 40 filer och en skolklass delar IP.
+    Route::middleware([ResolveGame::class, 'throttle:glosis-tts'])
+        ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+        ->group(function () {
+            Route::post('/games/{game}/tts/prepare', [GlosisTtsController::class, 'prepare'])->where('game', 'glosis');
+        });
+    Route::get('/games/glosis/tts/audio/{hash}', [GlosisTtsController::class, 'audio'])
+        ->where('hash', '[0-9a-f]{64}')
+        ->middleware(['signed:relative', 'throttle:glosis-tts-audio'])
+        ->withoutMiddleware('throttle:60,1')
+        ->name(\App\Services\Glosis\StudioVoice::AUDIO_ROUTE);
 
     // RevenueCat webhooks (no auth — signature verified in controller)
     Route::middleware(ResolveGame::class)

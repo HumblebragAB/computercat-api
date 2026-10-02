@@ -38,6 +38,17 @@ return [
             'report' => false,
         ],
 
+        // Glosis studioröst: genererade MP3-filer, serveras bara via signerad
+        // adress (GlosisTtsController::audio). Måste ligga i den storage/ som
+        // delas mellan releaser, annars genereras (och betalas) allt om vid deploy.
+        'glosis-tts' => [
+            'driver' => 'local',
+            'root' => storage_path('app/glosis-tts'),
+            'visibility' => 'private',
+            'throw' => false,
+            'report' => true,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
