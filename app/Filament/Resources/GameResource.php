@@ -30,6 +30,7 @@ class GameResource extends Resource
         'revenuecat.webhook_secret',
         'anthropic.api_key',
         'elevenlabs.api_key',
+        'google_play.service_account_json',
     ];
 
     /**
@@ -213,7 +214,7 @@ class GameResource extends Resource
                     Forms\Components\Placeholder::make('webhook_url')
                         ->label('Webhook URL (for RevenueCat dashboard)')
                         ->content(fn ($record) => $record
-                            ? rtrim(config('app.url'), '/') . "/api/v1/webhooks/revenuecat/{$record->slug}"
+                            ? rtrim(config('app.url'), '/')."/api/v1/webhooks/revenuecat/{$record->slug}"
                             : 'Save the game first to generate the URL'),
                 ]),
 
@@ -242,6 +243,49 @@ class GameResource extends Resource
                             : 'No key stored — photo scan answers 503 scan_unavailable.'),
                 ]),
 
+            Forms\Components\Section::make('Google Play: köpkontroll')
+                ->description('Tjänstekontot som frågar Google Play Developer API om Android-köp av Guldstjärnan (fotoskanning, studioröst). Utan det svarar Android 501 platform_not_supported.')
+                ->collapsed()
+                ->visible(fn (?Game $record) => $record?->slug === 'glosis')
+                ->schema([
+                    Forms\Components\Textarea::make('settings.google_play.service_account_json')
+                        ->label('Tjänstekontots JSON-nyckel')
+                        ->rows(5)
+                        ->helperText('Klistra in hela JSON-filen från Google Cloud (IAM → Service accounts → Keys). Kontot behöver "'.\App\Services\Glosis\GooglePurchaseVerifier::REQUIRED_PERMISSION.'" för appen i Play Console. Sparas krypterad och visas aldrig. Tomt fält behåller den sparade.')
+                        // Visa aldrig det sparade värdet
+                        ->formatStateUsing(fn () => null)
+                        ->rule(fn () => function (string $attribute, mixed $value, \Closure $fail) {
+                            if (filled($value) && (! is_string($value) || GlosisSettings::parseServiceAccountJson(trim($value)) === null)) {
+                                $fail('Det här är inte JSON-nyckeln för ett service account (type, client_email och private_key krävs).');
+                            }
+                        })
+                        ->dehydrateStateUsing(function ($state, ?Game $record) {
+                            if (filled($state)) {
+                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                            }
+
+                            return $record?->settings['google_play']['service_account_json'] ?? null;
+                        }),
+                    Forms\Components\TextInput::make('settings.google_play.package_name')
+                        ->label('Paketnamn')
+                        ->placeholder(GlosisSettings::DEFAULT_GOOGLE_PLAY_PACKAGE)
+                        ->regex('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/')
+                        ->dehydrateStateUsing(fn ($state) => filled($state) ? trim($state) : null)
+                        ->helperText('Tomt = '.GlosisSettings::DEFAULT_GOOGLE_PLAY_PACKAGE.'.'),
+                    Forms\Components\Placeholder::make('google_play_status')
+                        ->label('Status')
+                        ->content(function (?Game $record) {
+                            if (! filled($record?->settings['google_play']['service_account_json'] ?? null)) {
+                                return 'Inget tjänstekonto: Android-köp svarar 501 platform_not_supported.';
+                            }
+                            $account = GlosisSettings::for($record)->googlePlayServiceAccount();
+
+                            return $account === null
+                                ? 'Sparat värde går inte att läsa. Klistra in nyckeln igen.'
+                                : 'Tjänstekonto sparat: '.$account['client_email'].'.';
+                        }),
+                ]),
+
             Forms\Components\Section::make('Glosis: AI-kostnader')
                 ->description('Gränser för fotoskanningen och studiorösten, och en gemensam månadsbudget för alla betalda AI-anrop. Tomt fält = standardvärdet. Användningen syns under AI-användning.')
                 ->collapsed()
@@ -258,7 +302,7 @@ class GameResource extends Resource
                         ->integer()
                         ->minValue(0)
                         ->placeholder((string) GlosisSettings::DEFAULT_SCAN_SANDBOX_WEEKLY_LIMIT)
-                        ->helperText('TestFlight-köp. Tomt = '.GlosisSettings::DEFAULT_SCAN_SANDBOX_WEEKLY_LIMIT.'.'),
+                        ->helperText('TestFlight-köp och Google Plays testköp (licenstestare). Tomt = '.GlosisSettings::DEFAULT_SCAN_SANDBOX_WEEKLY_LIMIT.'.'),
                     Forms\Components\TextInput::make('settings.ai.monthly_budget_usd')
                         ->label('Månadsbudget för AI (USD)')
                         ->numeric()

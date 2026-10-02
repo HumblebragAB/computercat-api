@@ -15,15 +15,17 @@ use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
- * Glosis studioröst (iOS, Guldstjärnan).
+ * Glosis studioröst (Guldstjärnan, iOS och Android).
  *
  * POST /api/v1/games/glosis/tts/prepare
- *   {"proof": {"platform": "ios", "jws": "..."}, "speed": "normal"|"slow", "words": ["dog", ...],
+ *   {"proof": {"platform": "ios", "jws": "..."} eller
+ *             {"platform": "android", "productId": "...", "purchaseToken": "..."}, "speed": "normal"|"slow", "words": ["dog", ...],
  *    "language": "en"|"de"|"es"|"fr" (valfritt, standard "en")}
  *   Rösten är den som är vald för språket på sidan Röster i Filament.
  *   200 {"urls": {"<ord som skickats>": "<signerad adress>"}, "skipped": [{"word": "...", "reason": "invalid|limit|unavailable"}]}
  *   Fel i skanningens form: 402 guld_required, 422 invalid_proof|invalid_request,
- *   429 rate_limited, 501 platform_not_supported, 503 tts_unavailable|budget_exhausted.
+ *   429 rate_limited, 501 platform_not_supported (Android när Google Play inte är
+ *   inställt), 503 tts_unavailable|budget_exhausted.
  *
  * GET /api/v1/games/glosis/tts/audio/{hash} (signerad, 24 h) → audio/mpeg.
  */
@@ -38,7 +40,7 @@ class GlosisTtsController extends Controller
             $body = json_decode($request->getContent(), true, 16);
             $body = is_array($body) ? $body : [];
 
-            $jws = $gate->parse($body['proof'] ?? null, GuldGate::FEATURE_TTS);
+            $proof = $gate->parse($body['proof'] ?? null, GuldGate::FEATURE_TTS);
 
             $speed = $body['speed'] ?? null;
             $words = $body['words'] ?? null;
@@ -49,7 +51,7 @@ class GlosisTtsController extends Controller
                 throw new GlosisRejection(422, 'invalid_request', 'Något blev fel med studiorösten. Appen använder telefonens röst så länge.');
             }
 
-            $transaction = $gate->verify($jws, $game, GuldGate::FEATURE_TTS);
+            $transaction = $gate->verify($proof, $game, GuldGate::FEATURE_TTS);
             $result = $voice->prepare($game, $transaction, $speed, $words, $language);
         } catch (GlosisRejection $e) {
             return $e->toResponse();

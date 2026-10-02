@@ -25,9 +25,9 @@ use Throwable;
 /**
  * POST /api/v1/games/glosis/scan
  *
- * Glosis har inga konton. Rätten att skanna bevisas med ett StoreKit
- * 2-köpbevis för ett giltigt Guld-läsår (GuldGate), gränsen räknas per
- * originalTransactionId och ISO-vecka i Stockholm, och varje anrop till Claude
+ * Glosis har inga konton. Rätten att skanna bevisas med ett köpbevis från
+ * App Store (StoreKit 2) eller Google Play för ett giltigt Guld-läsår
+ * (GuldGate), gränsen räknas per originalTransactionId (Google: orderId) och ISO-vecka i Stockholm, och varje anrop till Claude
  * bokförs i ai_usage mot en global månadsbudget (AiBudget).
  *
  * Integritet: bilden läses bara in i minnet från PHP:s tillfälliga
@@ -73,7 +73,7 @@ class GlosisScanController extends Controller
         // 1. Köpbevisets form (multipart: beviset är en JSON-sträng)
         $rawProof = $request->input('proof');
         $proof = is_string($rawProof) && strlen($rawProof) <= 20_000 ? json_decode($rawProof, true) : null;
-        $jws = $gate->parse($proof, GuldGate::FEATURE_SCAN);
+        $storeProof = $gate->parse($proof, GuldGate::FEATURE_SCAN);
 
         // 2. Bilden
         $image = $this->readImage($request->file('image'));
@@ -82,8 +82,8 @@ class GlosisScanController extends Controller
         }
         [$imageBytes, $mime] = $image;
 
-        // 3–4. Köpet hos Apple (offline), Guld-läsår som gäller, inte återbetalt
-        $transaction = $gate->verify($jws, $game, GuldGate::FEATURE_SCAN);
+        // 3–4. Köpet hos Apple (offline) eller Google Play, Guld-läsår som gäller, inte återbetalt
+        $transaction = $gate->verify($storeProof, $game, GuldGate::FEATURE_SCAN);
         $txHash = GuldGate::txHash($transaction);
 
         // 5. API-nyckeln

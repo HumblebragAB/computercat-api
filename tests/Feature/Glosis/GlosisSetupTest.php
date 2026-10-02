@@ -5,6 +5,7 @@ namespace Tests\Feature\Glosis;
 use App\Filament\Resources\GameResource\Pages\EditGame;
 use App\Models\Game;
 use App\Models\User;
+use App\Services\Glosis\GlosisSettings;
 use Database\Seeders\GlosisGameSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
@@ -67,6 +68,43 @@ class GlosisSetupTest extends TestCase
 
         $this->assertSame('sk-ant-hemlig', Crypt::decryptString($game->refresh()->settings['anthropic']['api_key']));
         // Nycklar utan fält i formuläret får inte försvinna när nyckeln sparas.
+        $this->assertSame('https://glosis.se', $game->settings['site_url']);
+    }
+
+    public function test_filament_stores_google_play_service_account_encrypted_and_never_shows_it(): void
+    {
+        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $game = Game::where('slug', 'glosis')->firstOrFail();
+        $json = \Tests\Support\FakeGooglePlay::serviceAccountJson();
+        $keyLine = explode("\n", json_decode($json, true)['private_key'])[1];
+
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->fillForm(['settings.google_play.service_account_json' => '{"type":"authorized_user"}'])
+            ->call('save')
+            ->assertHasFormErrors(['settings.google_play.service_account_json']);
+        $this->assertNull($game->refresh()->settings['google_play'] ?? null);
+
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->assertFormSet(['settings.google_play.service_account_json' => null])
+            ->fillForm(['settings.google_play.service_account_json' => "  {$json}\n", 'settings.google_play.package_name' => 'se.computercat.glosis'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $stored = $game->refresh()->settings['google_play']['service_account_json'];
+        $this->assertStringNotContainsString($keyLine, $stored);
+        $this->assertSame($json, Crypt::decryptString($stored));
+        $this->assertSame(\Tests\Support\FakeGooglePlay::EMAIL, GlosisSettings::for($game)->googlePlayServiceAccount()['client_email']);
+
+        // Laddas om: fältet är tomt, nyckeln syns inte, och sparas tomt behålls den.
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->assertFormSet(['settings.google_play.service_account_json' => null])
+            ->assertDontSee($keyLine)
+            ->assertDontSee($stored)
+            ->assertSee(\Tests\Support\FakeGooglePlay::EMAIL)
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame($json, Crypt::decryptString($game->refresh()->settings['google_play']['service_account_json']));
         $this->assertSame('https://glosis.se', $game->settings['site_url']);
     }
 

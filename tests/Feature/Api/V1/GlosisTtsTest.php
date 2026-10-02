@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FakeAppleChain;
+use Tests\Support\FakeGooglePlay;
 use Tests\TestCase;
 
 class GlosisTtsTest extends TestCase
@@ -411,10 +412,53 @@ class GlosisTtsTest extends TestCase
         $this->assertCount(40, $this->prepare($words)->assertOk()->json('urls'));
     }
 
-    public function test_android_returns_501(): void
+    private function androidProof(): array
     {
-        $this->prepare(['dog'], proof: ['platform' => 'android', 'productId' => 'glosis_guld_2026_27', 'purchaseToken' => 'tok'])
+        return ['platform' => 'android', 'productId' => $this->product, 'purchaseToken' => FakeGooglePlay::PURCHASE_TOKEN];
+    }
+
+    private function enableGooglePlay(): FakeGooglePlay
+    {
+        $this->setSettings(['google_play' => ['service_account_json' => Crypt::encryptString(FakeGooglePlay::serviceAccountJson())]]);
+        $google = new FakeGooglePlay;
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase($this->product));
+        $google->fake();
+
+        return $google;
+    }
+
+    public function test_android_without_google_play_settings_returns_501(): void
+    {
+        $this->prepare(['dog'], proof: $this->androidProof())
             ->assertStatus(501)->assertJsonPath('error', 'platform_not_supported')->assertJsonStructure(['error', 'message']);
+        $this->assertCount(0, $this->elevenLabs);
+    }
+
+    public function test_android_purchase_gets_studio_voice(): void
+    {
+        $google = $this->enableGooglePlay();
+
+        $this->prepare(['dog'], proof: $this->androidProof())->assertOk()->assertJsonStructure(['urls' => ['dog']]);
+        $this->assertCount(1, $google->purchaseRequests);
+        $this->assertSame('Production', AiUsage::sole()->environment);
+    }
+
+    public function test_cancelled_android_purchase_returns_402(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase($this->product, ['purchaseStateContext' => ['purchaseState' => 'CANCELLED']]));
+
+        $this->prepare(['dog'], proof: $this->androidProof())->assertStatus(402)->assertJsonPath('error', 'guld_required');
+        $this->assertCount(0, $this->elevenLabs);
+    }
+
+    public function test_google_permission_error_returns_503_tts_unavailable(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(['error' => ['code' => 403]], 403);
+
+        $this->prepare(['dog'], proof: $this->androidProof())->assertStatus(503)->assertJsonPath('error', 'tts_unavailable');
+        $this->assertCount(0, $this->elevenLabs);
     }
 
     public function test_other_games_have_no_tts_route(): void

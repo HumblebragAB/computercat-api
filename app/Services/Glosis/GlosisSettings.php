@@ -25,6 +25,9 @@ final class GlosisSettings
     /** Nya ord per köp och Stockholmsdygn. Cachade ord räknas inte. */
     public const TTS_DAILY_NEW_PER_PURCHASE = 100;
 
+    /** Glosis paketnamn på Google Play (applicationId). */
+    public const DEFAULT_GOOGLE_PLAY_PACKAGE = 'se.computercat.glosis';
+
     /** Språk som studiorösten kan ha en egen röst för (ISO 639-1 => namn i Filament). */
     public const LANGUAGES = ['en' => 'Engelska', 'de' => 'Tyska', 'es' => 'Spanska', 'fr' => 'Franska'];
 
@@ -63,6 +66,71 @@ final class GlosisSettings
     public function elevenLabsKey(): ?string
     {
         return $this->secret('elevenlabs.api_key', 'ElevenLabs-nyckel');
+    }
+
+    /**
+     * Tjänstekontot som frågar Google Play Developer API om köp:
+     * settings.google_play.service_account_json, krypterat. Null (med fel i
+     * loggen) om det saknas eller inte går att läsa.
+     *
+     * @return array{client_email: string, private_key: string, private_key_id: string|null}|null
+     */
+    public function googlePlayServiceAccount(): ?array
+    {
+        $json = $this->secret('google_play.service_account_json', 'nyckel för Google Play-tjänstekontot');
+        if ($json === null) {
+            return null;
+        }
+        $account = self::parseServiceAccountJson($json);
+        if ($account === null) {
+            Log::error("Glosis: Google Play-tjänstekontot för {$this->slug} har fel form (ska vara JSON-nyckeln för ett service account)");
+        }
+
+        return $account;
+    }
+
+    /** settings.google_play.package_name, standard se.computercat.glosis. */
+    public function googlePlayPackageName(): string
+    {
+        $name = data_get($this->settings, 'google_play.package_name');
+        if ($name === null || $name === '') {
+            return self::DEFAULT_GOOGLE_PLAY_PACKAGE;
+        }
+        // Namnet hamnar i adressen till Google.
+        if (! self::validPackageName($name)) {
+            Log::warning("Glosis: ogiltigt värde i settings.google_play.package_name för {$this->slug}, använder ".self::DEFAULT_GOOGLE_PLAY_PACKAGE);
+
+            return self::DEFAULT_GOOGLE_PLAY_PACKAGE;
+        }
+
+        return $name;
+    }
+
+    public static function validPackageName(mixed $name): bool
+    {
+        return is_string($name) && preg_match('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+\z/', $name) === 1 && strlen($name) <= 255;
+    }
+
+    /**
+     * Läser JSON-nyckeln som Google Cloud ger för ett tjänstekonto.
+     *
+     * @return array{client_email: string, private_key: string, private_key_id: string|null}|null
+     */
+    public static function parseServiceAccountJson(string $json): ?array
+    {
+        $data = json_decode($json, true, 8);
+        if (! is_array($data) || ($data['type'] ?? null) !== 'service_account') {
+            return null;
+        }
+        $email = $data['client_email'] ?? null;
+        $key = $data['private_key'] ?? null;
+        if (! is_string($email) || filter_var($email, FILTER_VALIDATE_EMAIL) === false
+            || ! is_string($key) || ! str_contains($key, '-----BEGIN PRIVATE KEY-----')) {
+            return null;
+        }
+        $keyId = $data['private_key_id'] ?? null;
+
+        return ['client_email' => $email, 'private_key' => $key, 'private_key_id' => is_string($keyId) && $keyId !== '' ? $keyId : null];
     }
 
     /**

@@ -158,6 +158,7 @@ final class AppleTransactionVerifier
             productId: $payload['productId'],
             environment: $environment,
             revocationDate: $revocationDate,
+            purchaseDate: is_int($payload['purchaseDate'] ?? null) ? $payload['purchaseDate'] : null,
         );
     }
 

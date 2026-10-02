@@ -10,23 +10,27 @@ use App\Models\RevokedStoreTransaction;
 use App\Services\Glosis\AiBudget;
 use App\Services\Glosis\AiCost;
 use App\Services\Glosis\AppleTransactionVerifier;
+use App\Services\Glosis\GooglePurchaseVerifier;
 use App\Services\Glosis\GuldStatus;
 use App\Services\Glosis\HomeworkScanner;
 use Carbon\CarbonImmutable;
 use GuzzleHttp\Psr7\Request as Psr7Request;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use Tests\Support\FakeAppleChain;
 use Tests\Support\FakeClaudeTransport;
+use Tests\Support\FakeGooglePlay;
 use Tests\TestCase;
 
 class GlosisScanTest extends TestCase
@@ -637,11 +641,169 @@ class GlosisScanTest extends TestCase
 
     // ---- 501 / 502 / 503 ----------------------------------------------
 
-    public function test_android_is_explicitly_not_supported_yet(): void
+    public function test_android_without_google_play_settings_returns_501_and_logs(): void
     {
-        $proof = json_encode(['platform' => 'android', 'productId' => 'glosis_guld_2026_27', 'purchaseToken' => 'tok']);
+        $logged = $this->captureLogs();
 
-        $this->scan($proof)->assertStatus(501)->assertJsonPath('error', 'platform_not_supported')->assertJsonStructure(['error', 'message']);
+        $this->scan($this->androidProof())->assertStatus(501)->assertJsonPath('error', 'platform_not_supported')->assertJsonStructure(['error', 'message']);
+        $this->assertCount(0, $this->claude->requests);
+        $this->assertTrue(collect($logged())->contains(fn (MessageLogged $m) => $m->level === 'error' && str_contains($m->message, 'Google Play')));
+    }
+
+    // ---- Android (Google Play) -------------------------------------------
+
+    private function enableGooglePlay(): FakeGooglePlay
+    {
+        $this->setSettings(['google_play' => ['service_account_json' => Crypt::encryptString(FakeGooglePlay::serviceAccountJson())]]);
+        Http::preventStrayRequests();
+        $google = new FakeGooglePlay;
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase($this->product));
+        $google->fake();
+
+        return $google;
+    }
+
+    private function androidProof(?string $product = null, string $token = FakeGooglePlay::PURCHASE_TOKEN): string
+    {
+        return json_encode(['platform' => 'android', 'productId' => $product ?? $this->product, 'purchaseToken' => $token]);
+    }
+
+    public function test_android_purchase_is_verified_with_google_play(): void
+    {
+        $google = $this->enableGooglePlay();
+        $this->claude->push(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->androidProof())->assertOk()->assertJsonPath('title', 'Vecka 40');
+
+        $this->assertSame(FakeGooglePlay::purchaseUrl(), $google->purchaseRequests[0]->url());
+        $this->assertSame('Production', AiUsage::sole()->environment);
+        // Veckogränsen räknas per orderId, samma id som RevenueCat spärrar på.
+        $this->assertSame(1, RateLimiter::attempts(GlosisScanController::weeklyLimitKey(FakeGooglePlay::ORDER_ID, CarbonImmutable::now('Europe/Stockholm'))));
+    }
+
+    public function test_android_package_name_comes_from_settings(): void
+    {
+        $google = $this->enableGooglePlay();
+        $this->setSettings(['google_play' => ['package_name' => 'se.computercat.glosis.beta']]);
+        $this->claude->push(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->androidProof())->assertOk();
+        $this->assertSame(FakeGooglePlay::purchaseUrl('se.computercat.glosis.beta'), $google->purchaseRequests[0]->url());
+    }
+
+    public function test_android_test_purchase_gets_the_sandbox_cap(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase($this->product, ['testPurchaseContext' => ['fopType' => 'TEST']]));
+        $this->setSettings(['scan' => ['weekly_limit' => 10, 'sandbox_weekly_limit' => 1]]);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->androidProof())->assertOk();
+        $this->scan($this->androidProof())->assertStatus(429)->assertJsonPath('error', 'rate_limited');
+        $this->assertSame('Sandbox', AiUsage::sole()->environment);
+        // Åtkomsttoken hämtades en gång.
+        $this->assertCount(1, $google->tokenRequests);
+    }
+
+    public static function androidWithoutGuld(): array
+    {
+        return [
+            'makulerat' => [['purchaseStateContext' => ['purchaseState' => 'CANCELLED']], []],
+            'väntande' => [['purchaseStateContext' => ['purchaseState' => 'PENDING']], []],
+            'förbrukat' => [[], ['consumptionState' => 'CONSUMPTION_STATE_CONSUMED']],
+            'återbetalt' => [[], ['refundableQuantity' => 0]],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('androidWithoutGuld')]
+    public function test_android_purchase_that_gives_nothing_returns_402(array $overrides, array $offer): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase($this->product, $overrides, $offer));
+
+        $this->scan($this->androidProof())->assertStatus(402)->assertJsonPath('error', 'guld_required');
+        $this->assertCount(0, $this->claude->requests);
+    }
+
+    public function test_android_expired_school_year_returns_402(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase('glosis_guld_2020_21'));
+
+        $this->scan($this->androidProof('glosis_guld_2020_21'))->assertStatus(402)->assertJsonPath('error', 'guld_required');
+    }
+
+    public function test_android_proof_for_other_product_than_google_says_returns_422(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(FakeGooglePlay::purchase('glosis_guld_2020_21'));
+
+        $this->scan($this->androidProof())->assertStatus(422)->assertJsonPath('error', 'invalid_proof');
+    }
+
+    public function test_android_unknown_token_returns_422(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(['error' => ['code' => 404, 'message' => 'not found']], 404);
+
+        $this->scan($this->androidProof())->assertStatus(422)->assertJsonPath('error', 'invalid_proof');
+    }
+
+    public static function malformedAndroidProofs(): array
+    {
+        return [
+            'utan token' => ['{"platform":"android","productId":"glosis_guld_2026_27"}'],
+            'tom token' => ['{"platform":"android","productId":"glosis_guld_2026_27","purchaseToken":""}'],
+            'utan produkt' => ['{"platform":"android","purchaseToken":"abc"}'],
+            'token som tal' => ['{"platform":"android","productId":"glosis_guld_2026_27","purchaseToken":123}'],
+            'token med snedstreck' => ['{"platform":"android","productId":"glosis_guld_2026_27","purchaseToken":"a/../b"}'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedAndroidProofs')]
+    public function test_malformed_android_proof_returns_422(string $proof): void
+    {
+        $google = $this->enableGooglePlay();
+
+        $this->scan($proof)->assertStatus(422)->assertJsonPath('error', 'invalid_proof');
+        $this->assertSame([], $google->purchaseRequests);
+    }
+
+    public function test_android_purchase_refunded_through_revenuecat_returns_402(): void
+    {
+        $this->enableGooglePlay();
+        $this->setSettings(['revenuecat' => ['webhook_secret' => Crypt::encryptString('rc-secret')]]);
+
+        // RevenueCat skickar Googles orderId som transaction_id/original_transaction_id.
+        $this->postJson('/api/v1/webhooks/revenuecat/glosis', ['event' => [
+            'id' => 'evt-1', 'type' => 'CANCELLATION', 'cancel_reason' => 'CUSTOMER_SUPPORT',
+            'app_user_id' => '$RCAnonymousID:abc', 'product_id' => $this->product,
+            'transaction_id' => FakeGooglePlay::ORDER_ID, 'original_transaction_id' => FakeGooglePlay::ORDER_ID,
+            'expiration_at_ms' => null, 'store' => 'PLAY_STORE', 'environment' => 'PRODUCTION',
+        ]], ['Authorization' => 'Bearer rc-secret'])->assertOk();
+
+        $this->scan($this->androidProof())->assertStatus(402)->assertJsonPath('error', 'guld_required');
+        $this->assertCount(0, $this->claude->requests);
+    }
+
+    public function test_google_permission_error_returns_503_and_logs_the_permission(): void
+    {
+        $logged = $this->captureLogs();
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => Http::response(['error' => ['code' => 403, 'message' => 'The current user has insufficient permissions']], 403);
+
+        $this->scan($this->androidProof())->assertStatus(503)->assertJsonPath('error', 'scan_unavailable')->assertJsonStructure(['error', 'message']);
+        $this->assertCount(0, $this->claude->requests);
+        $this->assertTrue(collect($logged())->contains(fn (MessageLogged $m) => $m->level === 'error' && str_contains($m->message, GooglePurchaseVerifier::REQUIRED_PERMISSION)));
+        $this->assertStringNotContainsString(FakeGooglePlay::PURCHASE_TOKEN, json_encode(collect($logged())->map(fn ($m) => [$m->message, $m->context])));
+    }
+
+    public function test_google_network_error_returns_503(): void
+    {
+        $google = $this->enableGooglePlay();
+        $google->purchaseAnswer = fn () => throw new ConnectionException('timeout');
+
+        $this->scan($this->androidProof())->assertStatus(503)->assertJsonPath('error', 'scan_unavailable');
     }
 
     public function test_refusal_returns_502(): void
