@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\GameResource\Pages;
 use App\Filament\Resources\GameResource\RelationManagers;
 use App\Models\Game;
+use App\Services\Glosis\GlosisSettings;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
@@ -19,6 +20,17 @@ class GameResource extends Resource
     protected static ?string $navigationIcon = 'heroicon-o-puzzle-piece';
 
     protected static ?int $navigationSort = 1;
+
+    /**
+     * Krypterade värden i settings. Visas aldrig i formuläret; ett tomt fält
+     * behåller det sparade värdet.
+     */
+    public const SECRET_SETTINGS = [
+        'app_store_connect.private_key',
+        'revenuecat.webhook_secret',
+        'anthropic.api_key',
+        'elevenlabs.api_key',
+    ];
 
     /**
      * Anti-cheat presets — named configurations that Mattias can pick from a dropdown.
@@ -228,6 +240,62 @@ class GameResource extends Resource
                         ->content(fn (?Game $record) => filled($record?->settings['anthropic']['api_key'] ?? null)
                             ? 'A key is stored.'
                             : 'No key stored — photo scan answers 503 scan_unavailable.'),
+                ]),
+
+            Forms\Components\Section::make('Glosis: AI-kostnader')
+                ->description('Gränser för fotoskanningen och studiorösten, och en gemensam månadsbudget för alla betalda AI-anrop. Tomt fält = standardvärdet. Användningen syns under AI-användning.')
+                ->collapsed()
+                ->visible(fn (?Game $record) => $record?->slug === 'glosis')
+                ->schema([
+                    Forms\Components\TextInput::make('settings.scan.weekly_limit')
+                        ->label('Skanningar per köp och vecka')
+                        ->integer()
+                        ->minValue(0)
+                        ->placeholder((string) GlosisSettings::DEFAULT_SCAN_WEEKLY_LIMIT)
+                        ->helperText('Riktiga köp. ISO-vecka i Stockholm. Tomt = '.GlosisSettings::DEFAULT_SCAN_WEEKLY_LIMIT.'.'),
+                    Forms\Components\TextInput::make('settings.scan.sandbox_weekly_limit')
+                        ->label('Skanningar per sandbox-köp och vecka')
+                        ->integer()
+                        ->minValue(0)
+                        ->placeholder((string) GlosisSettings::DEFAULT_SCAN_SANDBOX_WEEKLY_LIMIT)
+                        ->helperText('TestFlight-köp. Tomt = '.GlosisSettings::DEFAULT_SCAN_SANDBOX_WEEKLY_LIMIT.'.'),
+                    Forms\Components\TextInput::make('settings.ai.monthly_budget_usd')
+                        ->label('Månadsbudget för AI (USD)')
+                        ->numeric()
+                        ->minValue(0)
+                        ->step(0.01)
+                        ->placeholder((string) GlosisSettings::DEFAULT_MONTHLY_BUDGET_USD)
+                        ->helperText('Skanning och studioröst tillsammans, kalendermånad i Stockholm. När den är slut svarar API:t 503 budget_exhausted. Tomt = '.GlosisSettings::DEFAULT_MONTHLY_BUDGET_USD.'.'),
+                    Forms\Components\TextInput::make('settings.tts.daily_new_limit')
+                        ->label('Nya studioröst-ord per dygn (alla köp)')
+                        ->integer()
+                        ->minValue(0)
+                        ->placeholder((string) GlosisSettings::DEFAULT_TTS_DAILY_NEW_LIMIT)
+                        ->helperText('Ord som redan finns sparade räknas inte. Per köp gäller högst '.GlosisSettings::TTS_DAILY_NEW_PER_PURCHASE.' nya ord per dygn. Tomt = '.GlosisSettings::DEFAULT_TTS_DAILY_NEW_LIMIT.'.'),
+                    Forms\Components\TextInput::make('settings.elevenlabs.api_key')
+                        ->label('ElevenLabs API key')
+                        ->password()
+                        ->revealable()
+                        ->helperText('Leave blank to keep the existing key. Stored encrypted; the stored value is never shown here.')
+                        // Always show empty on load — never echo back the stored key
+                        ->formatStateUsing(fn () => null)
+                        ->dehydrateStateUsing(function ($state, ?Game $record) {
+                            if (filled($state)) {
+                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                            }
+
+                            return $record?->settings['elevenlabs']['api_key'] ?? null;
+                        }),
+                    Forms\Components\TextInput::make('settings.elevenlabs.voice_id')
+                        ->label('ElevenLabs voice ID')
+                        ->regex('/^[A-Za-z0-9]{1,64}$/')
+                        ->dehydrateStateUsing(fn ($state) => filled($state) ? trim($state) : null)
+                        ->helperText('Studiorösten (brittisk engelska). Byts rösten genereras alla ord på nytt.'),
+                    Forms\Components\Placeholder::make('elevenlabs_status')
+                        ->label('Studioröst')
+                        ->content(fn (?Game $record) => filled($record?->settings['elevenlabs']['api_key'] ?? null) && filled($record?->settings['elevenlabs']['voice_id'] ?? null)
+                            ? 'Nyckel och röst är sparade.'
+                            : 'Nyckel eller röst saknas: nya ord svarar 503 tts_unavailable, appen använder telefonens röst.'),
                 ]),
 
             Forms\Components\Section::make('Advanced Settings')

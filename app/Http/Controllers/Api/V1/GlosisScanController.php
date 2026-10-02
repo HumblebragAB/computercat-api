@@ -3,18 +3,21 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\AiUsage;
 use App\Models\Game;
-use App\Models\RevokedStoreTransaction;
-use App\Services\Glosis\AppleTransactionVerifier;
+use App\Services\Glosis\AiBudget;
+use App\Services\Glosis\AiCost;
+use App\Services\Glosis\BudgetReservation;
+use App\Services\Glosis\GlosisRejection;
+use App\Services\Glosis\GlosisSettings;
+use App\Services\Glosis\GuldGate;
 use App\Services\Glosis\GuldStatus;
 use App\Services\Glosis\HomeworkScanner;
-use App\Services\Glosis\InvalidProofException;
 use App\Services\Glosis\ScanFailedException;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Throwable;
@@ -23,8 +26,9 @@ use Throwable;
  * POST /api/v1/games/glosis/scan
  *
  * Glosis har inga konton. Rätten att skanna bevisas med ett StoreKit
- * 2-köpbevis för ett giltigt Guld-läsår, och gränsen räknas per
- * originalTransactionId och Stockholmsdygn.
+ * 2-köpbevis för ett giltigt Guld-läsår (GuldGate), gränsen räknas per
+ * originalTransactionId och ISO-vecka i Stockholm, och varje anrop till Claude
+ * bokförs i ai_usage mot en global månadsbudget (AiBudget).
  *
  * Integritet: bilden läses bara in i minnet från PHP:s tillfälliga
  * uppladdningsfil, sparas aldrig och loggas aldrig. Loggarna får bara
@@ -47,38 +51,29 @@ class GlosisScanController extends Controller
      */
     public const MAX_IMAGE_BASE64_BYTES = 10 * 1024 * 1024;
 
-    /** Riktiga köp. Sandbox-köp: config('services.glosis.sandbox_daily_scans'). */
-    public const DAILY_SCANS_PER_TRANSACTION = 30;
-
-    public static function dailyLimitKey(string $originalTransactionId, \DateTimeInterface $now): string
+    public static function weeklyLimitKey(string $originalTransactionId, \DateTimeInterface $now): string
     {
-        $day = CarbonImmutable::instance($now)->setTimezone(GuldStatus::TIME_ZONE)->format('Y-m-d');
+        // ISO-år (o) så att t.ex. 2026-12-31 hamnar i 2026-W53 och 2027-01-01 också.
+        $week = CarbonImmutable::instance($now)->setTimezone(GuldStatus::TIME_ZONE)->format('o-\WW');
 
-        return 'glosis-scan:tx:'.hash('sha256', $originalTransactionId).':'.$day;
+        return 'glosis-scan:tx:'.hash('sha256', $originalTransactionId).':'.$week;
     }
 
-    private static function dailyLimit(string $environment): int
+    public function __invoke(Request $request, Game $game, GuldGate $gate, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
     {
-        return $environment === 'Production'
-            ? self::DAILY_SCANS_PER_TRANSACTION
-            : max(0, (int) config('services.glosis.sandbox_daily_scans', 5));
+        try {
+            return $this->scan($request, $game, $gate, $scanner, $budget);
+        } catch (GlosisRejection $e) {
+            return $e->toResponse();
+        }
     }
 
-    public function __invoke(Request $request, Game $game, AppleTransactionVerifier $verifier, HomeworkScanner $scanner): JsonResponse
+    private function scan(Request $request, Game $game, GuldGate $gate, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
     {
-        // 1. Köpbevisets form
+        // 1. Köpbevisets form (multipart: beviset är en JSON-sträng)
         $rawProof = $request->input('proof');
         $proof = is_string($rawProof) && strlen($rawProof) <= 20_000 ? json_decode($rawProof, true) : null;
-        if (! is_array($proof)) {
-            return $this->error(422, 'invalid_proof', 'Vi kunde inte kontrollera köpet av Guldstjärnan. Försök igen.');
-        }
-        $platform = $proof['platform'] ?? null;
-        if ($platform === 'android') {
-            return $this->error(501, 'platform_not_supported', 'Att fota läxan fungerar inte på Android än. Skriv in orden själv så länge.');
-        }
-        if ($platform !== 'ios' || ! is_string($proof['jws'] ?? null) || $proof['jws'] === '') {
-            return $this->error(422, 'invalid_proof', 'Vi kunde inte kontrollera köpet av Guldstjärnan. Försök igen.');
-        }
+        $jws = $gate->parse($proof, GuldGate::FEATURE_SCAN);
 
         // 2. Bilden
         $image = $this->readImage($request->file('image'));
@@ -87,73 +82,65 @@ class GlosisScanController extends Controller
         }
         [$imageBytes, $mime] = $image;
 
-        // 3. Verifiera köpet hos Apple (offline, mot Apple Root CA - G3)
-        try {
-            $transaction = $verifier->verify($proof['jws']);
-        } catch (InvalidProofException $e) {
-            Log::warning('Glosis scan: köpbevis avvisat', ['reason' => $e->getMessage()]);
-
-            return $this->error(422, 'invalid_proof', 'Vi kunde inte kontrollera köpet av Guldstjärnan. Försök igen.');
-        }
-        $txHash = substr(hash('sha256', $transaction->originalTransactionId), 0, 16);
-
-        // 4. Guld för ett läsår som fortfarande gäller, och inte återbetalt.
-        // Återbetalningen syns i JWS:ens revocationDate bara om appen hämtat en
-        // ny; spärrlistan från RevenueCat-webhooken fångar ett gammalt bevis.
-        $denylisted = RevokedStoreTransaction::isRevoked($game, $transaction->originalTransactionId);
-        if ($transaction->isRevoked() || $denylisted || ! GuldStatus::isActive($transaction->productId, now())) {
-            Log::info('Glosis scan: inget giltigt Guld', [
-                'environment' => $transaction->environment,
-                'tx' => $txHash,
-                'product_id' => $transaction->productId,
-                'revoked' => $transaction->isRevoked(),
-                'denylisted' => $denylisted,
-            ]);
-
-            return $this->error(402, 'guld_required', 'Att fota läxan ingår i Guldstjärnan. Be en vuxen att titta på det.');
-        }
+        // 3–4. Köpet hos Apple (offline), Guld-läsår som gäller, inte återbetalt
+        $transaction = $gate->verify($jws, $game, GuldGate::FEATURE_SCAN);
+        $txHash = GuldGate::txHash($transaction);
 
         // 5. API-nyckeln
-        $apiKey = $this->apiKey($game);
+        $apiKey = GlosisSettings::for($game)->anthropicKey();
         if ($apiKey === null) {
-            return response()->json([
-                'error' => 'scan_unavailable',
-                'message' => 'Att fota läxan fungerar inte just nu. Skriv in orden själv så länge.',
-            ], 503);
+            return $this->error(503, 'scan_unavailable', 'Att fota läxan fungerar inte just nu. Skriv in orden själv så länge.');
         }
 
-        // 6. Dagsgräns per köp och Stockholmsdygn (30, sandbox lägre). Räknas
-        // först och avgörs på värdet hit() returnerar: cachens increment är
-        // atomisk (databas-store: lockForUpdate i en transaktion), så parallella
-        // anrop kan inte alla se en räknare under gränsen. Räknas bara när
-        // indata och köp redan godkänts.
+        // 6. Månadsbudgeten: reservera en övre uppskattning, rättas efter svaret.
+        $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN);
+        if ($reservation === null) {
+            return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
+        }
+
+        // 7. Veckogräns per köp och ISO-vecka i Stockholm (Filament:
+        // settings.scan.weekly_limit, sandbox lägre). Räknas först och avgörs på
+        // värdet hit() returnerar: cachens increment är atomisk (databas-store:
+        // lockForUpdate i en transaktion), så parallella anrop kan inte alla se
+        // en räknare under gränsen. Räknas bara när indata och köp godkänts.
         $nowStockholm = CarbonImmutable::now(GuldStatus::TIME_ZONE);
-        $secondsToMidnight = max(1, (int) ceil($nowStockholm->diffInSeconds($nowStockholm->addDay()->startOfDay())));
-        $hits = RateLimiter::hit(self::dailyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMidnight + 60);
-        if ($hits > self::dailyLimit($transaction->environment)) {
-            Log::info('Glosis scan: dagsgränsen nådd', ['environment' => $transaction->environment, 'tx' => $txHash]);
+        $secondsToMonday = max(1, (int) ceil($nowStockholm->diffInSeconds($nowStockholm->startOfWeek(CarbonImmutable::MONDAY)->addWeek())));
+        $hits = RateLimiter::hit(self::weeklyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMonday + 60);
+        if ($hits > GlosisSettings::for($game)->scanWeeklyLimit($transaction->environment)) {
+            $budget->release($reservation);
+            Log::info('Glosis scan: veckogränsen nådd', ['environment' => $transaction->environment, 'tx' => $txHash]);
 
-            return response()->json([
-                'error' => 'rate_limited',
-                'message' => 'Du har fotat många läxor i dag. Försök igen i morgon!',
-                'retry_after' => $secondsToMidnight,
-            ], 429, ['Retry-After' => (string) $secondsToMidnight]);
+            throw new GlosisRejection(429, 'rate_limited', 'Du har fotat många läxor den här veckan. Försök igen på måndag!',
+                ['retry_after' => $secondsToMonday], ['Retry-After' => (string) $secondsToMonday]);
         }
 
-        // 7. Claude
+        // 8. Claude
         $started = microtime(true);
         try {
             $result = $scanner->scan($apiKey, $imageBytes, $mime);
         } catch (ScanFailedException $e) {
+            if ($e->wasBilled()) {
+                $this->recordUsage($game, $budget, $reservation, $transaction->environment, (string) $e->model, $e->inputTokens, $e->outputTokens);
+            } else {
+                $budget->release($reservation);
+            }
             Log::warning('Glosis scan: avläsningen misslyckades', [
                 'environment' => $transaction->environment,
                 'tx' => $txHash,
                 'reason' => $e->getMessage(),
                 'duration_ms' => (int) round((microtime(true) - $started) * 1000),
+                'input_tokens' => $e->inputTokens,
+                'output_tokens' => $e->outputTokens,
             ]);
 
             return $this->error(502, 'scan_failed', 'Jag kunde inte läsa bilden. Ta en ny bild rakt ovanifrån i bra ljus och försök igen.');
+        } catch (Throwable $e) {
+            $budget->release($reservation);
+
+            throw $e;
         }
+
+        $this->recordUsage($game, $budget, $reservation, $transaction->environment, $result->model, $result->inputTokens, $result->outputTokens);
 
         Log::info('Glosis scan: klar', [
             'environment' => $transaction->environment,
@@ -166,6 +153,19 @@ class GlosisScanController extends Controller
         ]);
 
         return response()->json($result->toResponse());
+    }
+
+    private function recordUsage(Game $game, AiBudget $budget, BudgetReservation $reservation, string $environment, string $model, int $inputTokens, int $outputTokens): void
+    {
+        if ($model !== AiCost::SCAN_MODEL) {
+            // Reservmodell (server-side fallback): priset är inte inlagt.
+            Log::warning('Glosis scan: modellen saknas i prislistan, räknar med '.AiCost::SCAN_MODEL.'s pris', ['model' => $model]);
+        }
+
+        $budget->record($game, $reservation, AiUsage::FEATURE_SCAN, $environment, AiCost::scan($inputTokens, $outputTokens), [
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+        ]);
     }
 
     /**
@@ -204,26 +204,6 @@ class GlosisScanController extends Controller
         }
 
         return [$bytes, $mime];
-    }
-
-    private function apiKey(Game $game): ?string
-    {
-        $encrypted = $game->settings['anthropic']['api_key'] ?? null;
-        if (! is_string($encrypted) || $encrypted === '') {
-            Log::error("Glosis scan: ingen Anthropic-nyckel för {$game->slug}");
-
-            return null;
-        }
-
-        try {
-            $key = Crypt::decryptString($encrypted);
-        } catch (Throwable) {
-            Log::error("Glosis scan: Anthropic-nyckeln för {$game->slug} går inte att dekryptera");
-
-            return null;
-        }
-
-        return $key !== '' ? $key : null;
     }
 
     private function error(int $status, string $code, string $message): JsonResponse

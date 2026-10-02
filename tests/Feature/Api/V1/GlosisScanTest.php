@@ -4,8 +4,11 @@ namespace Tests\Feature\Api\V1;
 
 use Anthropic\Core\Exceptions\APIConnectionException;
 use App\Http\Controllers\Api\V1\GlosisScanController;
+use App\Models\AiUsage;
 use App\Models\Game;
 use App\Models\RevokedStoreTransaction;
+use App\Services\Glosis\AiBudget;
+use App\Services\Glosis\AiCost;
 use App\Services\Glosis\AppleTransactionVerifier;
 use App\Services\Glosis\GuldStatus;
 use App\Services\Glosis\HomeworkScanner;
@@ -16,6 +19,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
@@ -315,32 +319,45 @@ class GlosisScanTest extends TestCase
 
     // ---- 429 -----------------------------------------------------------
 
-    public function test_thirty_scans_per_production_purchase_and_stockholm_day(): void
+    private function secondsToNextMonday(): int
+    {
+        $now = CarbonImmutable::now('Europe/Stockholm');
+
+        return $now->startOfWeek(CarbonImmutable::MONDAY)->addWeek()->getTimestamp() - $now->getTimestamp();
+    }
+
+    public function test_fifteen_scans_per_production_purchase_and_iso_week(): void
     {
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
         $proof = $this->iosProof(['environment' => 'Production']);
 
-        for ($i = 0; $i < 30; $i++) {
+        for ($i = 0; $i < 15; $i++) {
             $this->scan($proof)->assertOk();
         }
 
-        // 14:00 i Stockholm: 10 h kvar till midnatt.
+        $retry = $this->secondsToNextMonday();
         $this->scan($proof)
             ->assertStatus(429)
             ->assertJsonPath('error', 'rate_limited')
-            ->assertJsonPath('retry_after', 10 * 3600)
-            ->assertHeader('Retry-After', (string) (10 * 3600));
-        $this->assertCount(30, $this->claude->requests);
+            ->assertJsonPath('retry_after', $retry)
+            ->assertHeader('Retry-After', (string) $retry);
+        $this->assertCount(15, $this->claude->requests);
 
         // Ett annat köp har sin egen gräns.
         $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000999999999']))->assertOk();
 
-        // Nytt dygn i Stockholm.
-        Carbon::setTestNow(now()->addHours(10));
+        // Samma vecka, ett dygn senare: fortfarande stopp (gränsen är per vecka, inte dygn).
+        if (CarbonImmutable::now('Europe/Stockholm')->addDay()->isoWeek() === CarbonImmutable::now('Europe/Stockholm')->isoWeek()) {
+            Carbon::setTestNow(now()->addDay());
+            $this->scan($this->iosProof(['environment' => 'Production']))->assertStatus(429);
+        }
+
+        // Ny ISO-vecka i Stockholm (måndag 00:00).
+        Carbon::setTestNow(CarbonImmutable::now('Europe/Stockholm')->startOfWeek(CarbonImmutable::MONDAY)->addWeek()->utc());
         $this->scan($this->iosProof(['environment' => 'Production']))->assertOk();
     }
 
-    public function test_sandbox_purchases_get_five_scans_per_day_by_default(): void
+    public function test_sandbox_purchases_get_five_scans_per_week_by_default(): void
     {
         // Sandbox-köp (TestFlight) kostar inget och gäller hela läsåret.
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
@@ -353,23 +370,53 @@ class GlosisScanTest extends TestCase
         $this->assertCount(5, $this->claude->requests);
     }
 
-    public function test_sandbox_daily_cap_is_configurable(): void
+    public function test_weekly_limits_come_from_game_settings(): void
     {
-        config(['services.glosis.sandbox_daily_scans' => 2]);
+        $this->setSettings(['scan' => ['weekly_limit' => '3', 'sandbox_weekly_limit' => 1]]);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+
+        $sandbox = $this->iosProof(['environment' => 'Sandbox']);
+        $this->scan($sandbox)->assertOk();
+        $this->scan($sandbox)->assertStatus(429);
+
+        $production = $this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']);
+        for ($i = 0; $i < 3; $i++) {
+            $this->scan($production)->assertOk();
+        }
+        $this->scan($production)->assertStatus(429);
+    }
+
+    public function test_invalid_weekly_limit_setting_falls_back_to_default_and_logs(): void
+    {
+        $this->setSettings(['scan' => ['sandbox_weekly_limit' => 'många']]);
+        $logged = $this->captureLogs();
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
         $proof = $this->iosProof(['environment' => 'Sandbox']);
 
-        $this->scan($proof)->assertOk();
-        $this->scan($proof)->assertOk();
+        for ($i = 0; $i < 5; $i++) {
+            $this->scan($proof)->assertOk();
+        }
         $this->scan($proof)->assertStatus(429);
-
-        // Production påverkas inte av sandbox-gränsen.
-        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
-        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
-        $this->scan($this->iosProof(['environment' => 'Production', 'originalTransactionId' => '2000000777777777']))->assertOk();
+        $this->assertTrue(collect($logged())->contains(fn (MessageLogged $m) => $m->level === 'warning' && str_contains($m->message, 'settings.scan.sandbox_weekly_limit')));
     }
 
-    public function test_daily_cap_counts_before_deciding_so_parallel_requests_cannot_slip_through(): void
+    public function test_week_key_uses_the_iso_year_in_stockholm(): void
+    {
+        $key = fn (string $time) => GlosisScanController::weeklyLimitKey('2000000111111111', CarbonImmutable::parse($time, 'Europe/Stockholm'));
+
+        // Måndag 30 december 2024 tillhör ISO-vecka 2025-W01 (format "Y-W" gav 2024-W01).
+        $this->assertSame($key('2024-12-30 08:00'), $key('2025-01-05 23:59'));
+        $this->assertStringEndsWith(':2025-W01', $key('2024-12-30 08:00'));
+        // 2026 har 53 ISO-veckor; nyårsafton och nyårsdagen är samma vecka.
+        $this->assertSame($key('2026-12-31 12:00'), $key('2027-01-01 12:00'));
+        $this->assertNotSame($key('2027-01-03 23:59'), $key('2027-01-04 00:00'));
+        // Söndag 23:30 i Stockholm är fortfarande samma vecka trots att UTC-tiden är 22:30.
+        $this->assertSame($key('2026-10-04 23:30'), $key('2026-09-28 00:00'));
+        // Köp-id:t står aldrig i klartext i nyckeln.
+        $this->assertStringNotContainsString('2000000111111111', $key('2026-10-04 23:30'));
+    }
+
+    public function test_weekly_cap_counts_before_deciding_so_parallel_requests_cannot_slip_through(): void
     {
         // Räknaren står redan på gränsen när anropet kommer, och en
         // kontroll-före-räkning skulle se en äldre siffra (som vid parallella
@@ -384,16 +431,18 @@ class GlosisScanTest extends TestCase
         $limiter->for('glosis-scan', app(\Illuminate\Cache\RateLimiter::class)->limiter('glosis-scan'));
         $this->app->instance(\Illuminate\Cache\RateLimiter::class, $limiter);
         RateLimiter::swap($limiter);
-        RateLimiter::increment(GlosisScanController::dailyLimitKey('2000000111111111', now()), 3600, 30);
+        RateLimiter::increment(GlosisScanController::weeklyLimitKey('2000000111111111', now()), 3600, 15);
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
 
         $this->scan($this->iosProof(['environment' => 'Production']))
             ->assertStatus(429)
             ->assertJsonPath('error', 'rate_limited');
         $this->assertCount(0, $this->claude->requests);
+        // Den nekade skanningen lämnar ingen reservation kvar i budgeten.
+        $this->assertSame(0, (int) Cache::get(AiBudget::monthKey($this->game, now())));
     }
 
-    public function test_rejected_input_does_not_use_up_the_daily_cap(): void
+    public function test_rejected_input_does_not_use_up_the_weekly_cap(): void
     {
         $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
         $proof = $this->iosProof(['environment' => 'Sandbox']);
@@ -403,6 +452,123 @@ class GlosisScanTest extends TestCase
         }
 
         $this->scan($proof)->assertOk();
+    }
+
+    // ---- Användning och månadsbudget -----------------------------------
+
+    public function test_successful_scan_is_recorded_with_tokens_and_cost(): void
+    {
+        $this->claude->push(FakeClaudeTransport::json($this->goodWords()));
+
+        $this->scan($this->iosProof(['environment' => 'Production']))->assertOk();
+
+        $usage = AiUsage::sole();
+        $this->assertSame($this->game->id, $usage->game_id);
+        $this->assertSame('scan', $usage->feature);
+        $this->assertSame('Production', $usage->environment);
+        $this->assertSame(1, $usage->units);
+        $this->assertSame(1800, $usage->input_tokens);
+        $this->assertSame(240, $usage->output_tokens);
+        $this->assertNull($usage->characters);
+        // 1800 × $2/MTok + 240 × $10/MTok = $0.0036 + $0.0024
+        $this->assertSame('0.006000', $usage->est_cost_usd);
+        // Invariant: budgeträknaren = summan i ai_usage när inget anrop pågår.
+        $this->assertSame(6000, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+        $this->assertSame(6000, AiBudget::spentMicroUsd($this->game, now()));
+    }
+
+    public function test_billed_failure_is_recorded_and_network_failure_is_not(): void
+    {
+        $this->claude->push(FakeClaudeTransport::message([], 'refusal', ['type' => 'refusal', 'category' => 'general_harms', 'explanation' => null]));
+        $this->scan()->assertStatus(502);
+
+        $this->claude->push(new APIConnectionException(new Psr7Request('POST', 'https://api.anthropic.com/v1/messages'), new \RuntimeException('timeout')));
+        $this->scan()->assertStatus(502);
+
+        $this->claude->push(FakeClaudeTransport::message([['type' => 'text', 'text' => 'inte json']]));
+        $this->scan()->assertStatus(502);
+
+        $this->assertSame(2, AiUsage::count());
+        $this->assertSame(12000, AiBudget::spentMicroUsd($this->game, now()));
+        $this->assertSame(12000, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+    }
+
+    public function test_exhausted_monthly_budget_returns_503_without_calling_claude(): void
+    {
+        // Reservationen per skanning är $0.06, verklig kostnad $0.006.
+        $this->setSettings(['ai' => ['monthly_budget_usd' => '0.07']]);
+        $logged = $this->captureLogs();
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        $proof = $this->iosProof(['environment' => 'Production']);
+
+        $this->scan($proof)->assertOk();   // 0 + 0.06 ≤ 0.07, bokförs 0.006
+        $this->scan($proof)->assertOk();   // 0.006 + 0.06 ≤ 0.07, bokförs 0.006
+        $this->scan($proof)                // 0.012 + 0.06 > 0.07
+            ->assertStatus(503)
+            ->assertExactJson(['error' => 'budget_exhausted', 'message' => 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.']);
+
+        $this->assertCount(2, $this->claude->requests);
+        $this->assertSame(2, AiUsage::count());
+        $this->assertSame(12000, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+        $this->assertTrue(collect($logged())->contains(fn (MessageLogged $m) => $m->level === 'warning' && str_contains($m->message, 'månadsbudgeten')));
+
+        // Budgetstoppet tar inte av veckogränsen: med höjd budget går det igen.
+        $this->setSettings(['ai' => ['monthly_budget_usd' => 50]]);
+        for ($i = 0; $i < 13; $i++) {
+            $this->scan($proof)->assertOk();
+        }
+        $this->scan($proof)->assertStatus(429);
+    }
+
+    public function test_budget_counts_what_is_already_in_ai_usage_when_the_cache_is_empty(): void
+    {
+        $this->setSettings(['ai' => ['monthly_budget_usd' => 1]]);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        AiUsage::create(['game_id' => $this->game->id, 'feature' => 'tts', 'environment' => 'Production', 'est_cost_usd' => '0.950000']);
+        // Förra månaden (Stockholm) räknas inte.
+        $lastMonth = AiUsage::create(['game_id' => $this->game->id, 'feature' => 'scan', 'environment' => 'Production', 'est_cost_usd' => '40.000000']);
+        $lastMonth->forceFill(['created_at' => CarbonImmutable::now('Europe/Stockholm')->startOfMonth()->subSecond()->utc()])->save();
+        // Ett annat spel räknas inte.
+        $tocco = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true]);
+        AiUsage::create(['game_id' => $tocco->id, 'feature' => 'scan', 'environment' => 'Production', 'est_cost_usd' => '40.000000']);
+
+        $this->scan()->assertStatus(503)->assertJsonPath('error', 'budget_exhausted');
+        $this->assertCount(0, $this->claude->requests);
+
+        $this->setSettings(['ai' => ['monthly_budget_usd' => 1.02]]);
+        $this->scan()->assertOk();
+    }
+
+    public function test_last_scans_under_parallel_load_are_decided_on_the_incremented_value(): void
+    {
+        // Räknaren står strax under budgeten, som om andra anrop just reserverat:
+        // bara det värde increment returnerar får avgöra.
+        $this->setSettings(['ai' => ['monthly_budget_usd' => 1]]);
+        $this->claude->always(FakeClaudeTransport::json($this->goodWords()));
+        Cache::put(AiBudget::monthKey($this->game, now()), 1_000_000 - AiCost::SCAN_RESERVE_MICRO_USD + 1, 3600);
+
+        $this->scan()->assertStatus(503)->assertJsonPath('error', 'budget_exhausted');
+        $this->assertCount(0, $this->claude->requests);
+        $this->assertSame(1_000_000 - AiCost::SCAN_RESERVE_MICRO_USD + 1, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+
+        Cache::put(AiBudget::monthKey($this->game, now()), 1_000_000 - AiCost::SCAN_RESERVE_MICRO_USD, 3600);
+        $this->scan()->assertOk();
+        $this->assertSame(1_000_000 - AiCost::SCAN_RESERVE_MICRO_USD + 6000, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+    }
+
+    public function test_budget_month_follows_stockholm(): void
+    {
+        $key = fn (string $time) => AiBudget::monthKey($this->game, CarbonImmutable::parse($time, 'Europe/Stockholm'));
+
+        // 00:30 den 1 november i Stockholm är 23:30 den 31 oktober i UTC.
+        $this->assertStringEndsWith(':2026-11', $key('2026-11-01 00:30'));
+        $this->assertNotSame($key('2026-10-31 23:59'), $key('2026-11-01 00:00'));
+    }
+
+    private function setSettings(array $settings): void
+    {
+        $this->game->refresh();
+        $this->game->update(['settings' => array_replace_recursive($this->game->settings ?? [], $settings)]);
     }
 
     public function test_max_upload_stays_within_anthropics_base64_limit(): void

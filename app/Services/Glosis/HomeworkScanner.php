@@ -119,7 +119,12 @@ PROMPT;
             throw new ScanFailedException('Claude-anropet misslyckades: '.$e::class.': '.mb_substr($e->getMessage(), 0, 500), previous: $e);
         }
 
-        return $this->parse($message);
+        try {
+            return $this->parse($message);
+        } catch (ScanFailedException $e) {
+            // Svaret debiterades även om det inte gick att använda.
+            throw $e->withUsage($message->model, $message->usage->inputTokens, $message->usage->outputTokens);
+        }
     }
 
     private function parse(BetaMessage $message): ScanResult

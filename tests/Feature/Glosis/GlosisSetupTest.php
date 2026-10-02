@@ -69,4 +69,105 @@ class GlosisSetupTest extends TestCase
         // Nycklar utan fält i formuläret får inte försvinna när nyckeln sparas.
         $this->assertSame('https://glosis.se', $game->settings['site_url']);
     }
+
+    public function test_filament_stores_ai_limits_and_elevenlabs_settings(): void
+    {
+        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $game = Game::where('slug', 'glosis')->firstOrFail();
+        $game->update(['settings' => ['site_url' => 'https://glosis.se']]);
+
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->assertFormSet(['settings.elevenlabs.api_key' => null])
+            ->fillForm([
+                'settings.scan.weekly_limit' => 20,
+                'settings.scan.sandbox_weekly_limit' => 3,
+                'settings.ai.monthly_budget_usd' => 75.5,
+                'settings.tts.daily_new_limit' => 500,
+                'settings.elevenlabs.api_key' => ' xi-hemlig ',
+                'settings.elevenlabs.voice_id' => 'JBFqnCBsd6RMkjVDRZzb',
+            ])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $game->refresh();
+        $settings = \App\Services\Glosis\GlosisSettings::for($game);
+        $this->assertSame(20, $settings->scanWeeklyLimit('Production'));
+        $this->assertSame(3, $settings->scanWeeklyLimit('Sandbox'));
+        $this->assertSame(75_500_000, $settings->monthlyBudgetMicroUsd());
+        $this->assertSame(500, $settings->ttsDailyNewLimit());
+        $this->assertSame('xi-hemlig', $settings->elevenLabsKey());
+        $this->assertNotSame('xi-hemlig', $game->settings['elevenlabs']['api_key']);
+        $this->assertSame('JBFqnCBsd6RMkjVDRZzb', $settings->elevenLabsVoiceId());
+        $this->assertSame('https://glosis.se', $game->settings['site_url']);
+
+        // Laddas om: nyckeln visas aldrig, och sparas tomt behålls den.
+        $stored = $game->settings['elevenlabs']['api_key'];
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->assertFormSet(['settings.elevenlabs.api_key' => null, 'settings.elevenlabs.voice_id' => 'JBFqnCBsd6RMkjVDRZzb'])
+            ->assertDontSee('xi-hemlig')
+            ->assertDontSee($stored)
+            ->call('save')
+            ->assertHasNoFormErrors();
+        $this->assertSame('xi-hemlig', \App\Services\Glosis\GlosisSettings::for($game->refresh())->elevenLabsKey());
+    }
+
+    public function test_filament_rejects_bad_voice_id_and_negative_limits(): void
+    {
+        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $game = Game::where('slug', 'glosis')->firstOrFail();
+
+        Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->fillForm(['settings.elevenlabs.voice_id' => '../v1/voices', 'settings.scan.weekly_limit' => -1])
+            ->call('save')
+            ->assertHasFormErrors(['settings.elevenlabs.voice_id', 'settings.scan.weekly_limit']);
+    }
+
+    public function test_glosis_ai_section_is_hidden_for_other_games(): void
+    {
+        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $tocco = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true, 'settings' => ['scan' => ['weekly_limit' => 7]]]);
+
+        Livewire::test(EditGame::class, ['record' => $tocco->getRouteKey()])
+            ->assertDontSee('Glosis: AI-kostnader')
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame(7, $tocco->refresh()->settings['scan']['weekly_limit']);
+    }
+
+    public function test_edit_form_loads_stored_settings_so_saving_does_not_wipe_them(): void
+    {
+        // Game::$hidden = ['settings'] gjorde att formuläret laddades tomt och
+        // en sparning skrev null över sparade värden.
+        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $game = Game::where('slug', 'glosis')->firstOrFail();
+        $secret = Crypt::encryptString('whsec-hemlig');
+        $game->update(['settings' => [
+            'site_url' => 'https://glosis.se',
+            'revenuecat' => ['ios_public_key' => 'appl_abc', 'webhook_secret' => $secret],
+            'anti_cheat' => ['min_score' => 5],
+            'scan' => ['weekly_limit' => 9],
+            'elevenlabs' => ['voice_id' => 'Voice123'],
+        ]]);
+
+        $page = Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
+            ->assertFormSet([
+                'settings.revenuecat.ios_public_key' => 'appl_abc',
+                'settings.revenuecat.webhook_secret' => null,
+                'settings.scan.weekly_limit' => 9,
+                'settings.elevenlabs.voice_id' => 'Voice123',
+            ])
+            ->assertDontSee($secret)
+            ->assertDontSee('whsec-hemlig');
+        $this->assertStringNotContainsString($secret, json_encode($page->get('data')));
+        $page->call('save')->assertHasNoFormErrors();
+
+        $settings = $game->refresh()->settings;
+        $this->assertSame('appl_abc', $settings['revenuecat']['ios_public_key']);
+        $this->assertSame('whsec-hemlig', Crypt::decryptString($settings['revenuecat']['webhook_secret']));
+        $this->assertEquals(5, $settings['anti_cheat']['min_score']);
+        $this->assertEquals(9, $settings['scan']['weekly_limit']);
+        $this->assertSame('Voice123', $settings['elevenlabs']['voice_id']);
+        $this->assertSame('https://glosis.se', $settings['site_url']);
+    }
 }
