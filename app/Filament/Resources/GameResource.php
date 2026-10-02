@@ -287,15 +287,22 @@ class GameResource extends Resource
                             return $record?->settings['elevenlabs']['api_key'] ?? null;
                         }),
                     Forms\Components\TextInput::make('settings.elevenlabs.voice_id')
-                        ->label('ElevenLabs voice ID')
+                        ->label('ElevenLabs voice ID (reserv för engelska)')
                         ->regex('/^[A-Za-z0-9]{1,64}$/')
                         ->dehydrateStateUsing(fn ($state) => filled($state) ? trim($state) : null)
-                        ->helperText('Studiorösten (brittisk engelska). Byts rösten genereras alla ord på nytt.'),
+                        ->helperText('Används bara när ingen engelsk röst är vald på sidan Röster. Rösterna per språk väljs där.'),
                     Forms\Components\Placeholder::make('elevenlabs_status')
                         ->label('Studioröst')
-                        ->content(fn (?Game $record) => filled($record?->settings['elevenlabs']['api_key'] ?? null) && filled($record?->settings['elevenlabs']['voice_id'] ?? null)
-                            ? 'Nyckel och röst är sparade.'
-                            : 'Nyckel eller röst saknas: nya ord svarar 503 tts_unavailable, appen använder telefonens röst.'),
+                        ->content(function (?Game $record) {
+                            if (! filled($record?->settings['elevenlabs']['api_key'] ?? null)) {
+                                return 'Ingen nyckel: nya ord svarar 503 tts_unavailable, appen använder telefonens röst.';
+                            }
+                            $voices = array_filter(GlosisSettings::for($record)->elevenLabsVoices());
+
+                            return $voices === []
+                                ? 'Nyckel sparad men ingen röst vald: välj röster på sidan Röster.'
+                                : 'Nyckel sparad. Röster för: '.implode(', ', array_map(fn ($code) => GlosisSettings::LANGUAGES[$code], array_keys($voices))).'.';
+                        }),
                 ]),
 
             Forms\Components\Section::make('Advanced Settings')
@@ -330,6 +337,11 @@ class GameResource extends Resource
                     ->label('Dev Kit')
                     ->icon('heroicon-o-command-line')
                     ->url(fn (Game $record) => static::getUrl('devkit', ['record' => $record])),
+                Tables\Actions\Action::make('voices')
+                    ->label('Röster')
+                    ->icon('heroicon-o-speaker-wave')
+                    ->visible(fn (Game $record) => $record->slug === 'glosis')
+                    ->url(fn (Game $record) => static::getUrl('voices', ['record' => $record])),
             ])
             ->bulkActions([
                 Tables\Actions\DeleteBulkAction::make(),
@@ -355,6 +367,7 @@ class GameResource extends Resource
             'create' => Pages\CreateGame::route('/create'),
             'edit' => Pages\EditGame::route('/{record}/edit'),
             'devkit' => Pages\GameDevKit::route('/{record}/devkit'),
+            'voices' => Pages\GameVoices::route('/{record}/voices'),
         ];
     }
 }

@@ -25,6 +25,7 @@ class ElevenLabsClient
 
     public const OUTPUT_FORMAT = 'mp3_44100_64';
 
+    /** Standardspråk. language_code är ISO 639-1 (en, de, es, fr). */
     public const LANGUAGE = 'en';
 
     public const STABILITY = 0.5;
@@ -42,12 +43,12 @@ class ElevenLabsClient
      *
      * @throws TtsFailedException
      */
-    public function synthesize(string $apiKey, string $voiceId, string $text, float $speed): string
+    public function synthesize(string $apiKey, string $voiceId, string $text, float $speed, string $language = self::LANGUAGE): string
     {
         $body = [
             'text' => $text,
             'model_id' => self::MODEL,
-            'language_code' => self::LANGUAGE,
+            'language_code' => $language,
             'voice_settings' => [
                 'stability' => self::STABILITY,
                 'similarity_boost' => self::SIMILARITY_BOOST,

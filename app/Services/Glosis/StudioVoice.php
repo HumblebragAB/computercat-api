@@ -16,8 +16,8 @@ use Illuminate\Support\Str;
 use Normalizer;
 
 /**
- * Studiorösten: engelska glosor upplästa av ElevenLabs, genererade en gång per
- * unikt ord, hastighet och röst och sedan sparade på disken glosis-tts
+ * Studiorösten: glosor upplästa av ElevenLabs med en röst per språk (sidan
+ * Röster i Filament), genererade en gång per unikt ord, hastighet, röst och språk och sedan sparade på disken glosis-tts
  * (storage/app/glosis-tts/{sha256}.mp3). Appen får signerade adresser (24 h)
  * och spelar ljudet med en vanlig <audio src>.
  *
@@ -52,6 +52,19 @@ class StudioVoice
     /** Efter så här lång tid genereras inga fler ord i samma förfrågan. */
     public int $timeBudgetSeconds = 25;
 
+    /** Senaste felet från ElevenLabs i prepare(), för provlyssningen i Filament. */
+    public ?TtsFailedException $lastFailure = null;
+
+    /**
+     * Transaktionen som provlyssningen i Filament räknas på: egen räknare per
+     * dygn, samma globala dygnsgräns och samma månadsbudget som appen.
+     * Bokförs i ai_usage med environment "Admin".
+     */
+    public static function adminTransaction(): VerifiedTransaction
+    {
+        return new VerifiedTransaction('filament-preview', 'filament-preview', 'filament-preview', 'Admin', null);
+    }
+
     public function __construct(
         private readonly ElevenLabsClient $client,
         private readonly AiBudget $budget,
@@ -83,10 +96,20 @@ class StudioVoice
         return $text;
     }
 
-    /** Filnamnets nyckel: sha256(normaliserad text | hastighet | röst-id | modell). */
-    public static function hash(string $normalized, string $speed, string $voiceId): string
+    /**
+     * Filnamnets nyckel: sha256(normaliserad text | hastighet | röst-id | modell),
+     * med språket sist för andra språk än engelska. Engelska saknar språkdelen
+     * så att filerna som redan genererats behåller sina namn. Byts rösten byts
+     * nyckeln, så gammalt ljud serveras aldrig med en ny röst.
+     */
+    public static function hash(string $normalized, string $speed, string $voiceId, string $language = ElevenLabsClient::LANGUAGE): string
     {
-        return hash('sha256', implode('|', [$normalized, sprintf('%.2f', self::SPEEDS[$speed]), $voiceId, ElevenLabsClient::MODEL]));
+        $parts = [$normalized, sprintf('%.2f', self::SPEEDS[$speed]), $voiceId, ElevenLabsClient::MODEL];
+        if ($language !== ElevenLabsClient::LANGUAGE) {
+            $parts[] = $language;
+        }
+
+        return hash('sha256', implode('|', $parts));
     }
 
     public static function fileName(string $hash): string
@@ -112,15 +135,20 @@ class StudioVoice
 
     /**
      * @param  list<string>  $words  ord som appen skickat, i originalform
+     * @param  string  $language  en nyckel i GlosisSettings::LANGUAGES
      * @return array{urls: array<string, string>, skipped: list<array{word: string, reason: string}>, stopped: string|null}
      *         stopped är 'budget' eller 'unavailable' om genereringen stoppades
      *
      * @throws GlosisRejection 503 tts_unavailable när röst-id saknas
      */
-    public function prepare(Game $game, VerifiedTransaction $transaction, string $speed, array $words): array
+    public function prepare(Game $game, VerifiedTransaction $transaction, string $speed, array $words, string $language = ElevenLabsClient::LANGUAGE): array
     {
+        if (! array_key_exists($language, GlosisSettings::LANGUAGES)) {
+            throw new \InvalidArgumentException("Okänt språk: {$language}");
+        }
+        $this->lastFailure = null;
         $settings = GlosisSettings::for($game);
-        $voiceId = $settings->elevenLabsVoiceId();
+        $voiceId = $settings->elevenLabsVoiceId($language);
         if ($voiceId === null) {
             throw new GlosisRejection(503, 'tts_unavailable', 'Studiorösten fungerar inte just nu. Appen använder telefonens röst så länge.');
         }
@@ -146,7 +174,7 @@ class StudioVoice
             }
 
             if (! isset($outcome[$normalized])) {
-                $hash = self::hash($normalized, $speed, $voiceId);
+                $hash = self::hash($normalized, $speed, $voiceId, $language);
                 if ($disk->exists(self::fileName($hash))) {
                     $outcome[$normalized] = 'ok:'.$hash;
                     $stats['cached']++;
@@ -163,7 +191,7 @@ class StudioVoice
                         $stopped = 'unavailable';
                         $outcome[$normalized] = 'unavailable';
                     } else {
-                        $result = $this->generate($game, $transaction, $settings, $disk, $apiKey, $voiceId, $speed, $normalized, $hash);
+                        $result = $this->generate($game, $transaction, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash);
                         $outcome[$normalized] = $result;
                         if ($result === 'ok:'.$hash) {
                             $stats['generated']++;
@@ -190,6 +218,7 @@ class StudioVoice
 
         Log::info('Glosis tts: prepare', [
             'environment' => $transaction->environment,
+            'language' => $language,
             'tx' => GuldGate::txHash($transaction),
             'words' => count($words),
             'cached' => $stats['cached'],
@@ -207,12 +236,12 @@ class StudioVoice
      * Genererar ett nytt ord under lås. Returnerar 'ok:{hash}', 'limit',
      * 'budget', 'failed' eller 'unavailable' (låset gick inte att få).
      */
-    private function generate(Game $game, VerifiedTransaction $transaction, GlosisSettings $settings, Filesystem $disk, string $apiKey, string $voiceId, string $speed, string $normalized, string $hash): string
+    private function generate(Game $game, VerifiedTransaction $transaction, GlosisSettings $settings, Filesystem $disk, string $apiKey, string $voiceId, string $language, string $speed, string $normalized, string $hash): string
     {
         $file = self::fileName($hash);
 
         try {
-            return $this->lock($hash)->block($this->lockWaitSeconds, function () use ($game, $transaction, $settings, $disk, $apiKey, $voiceId, $speed, $normalized, $hash, $file) {
+            return $this->lock($hash)->block($this->lockWaitSeconds, function () use ($game, $transaction, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash, $file) {
                 // En annan förfrågan kan ha genererat ordet medan vi väntade.
                 if ($disk->exists($file)) {
                     return 'ok:'.$hash;
@@ -252,8 +281,9 @@ class StudioVoice
                 }
 
                 try {
-                    $audio = $this->client->synthesize($apiKey, $voiceId, $normalized, self::SPEEDS[$speed]);
+                    $audio = $this->client->synthesize($apiKey, $voiceId, $normalized, self::SPEEDS[$speed], $language);
                 } catch (TtsFailedException $e) {
+                    $this->lastFailure = $e;
                     $undoCounters();
                     $this->budget->release($reservation);
                     Log::warning('Glosis tts: ElevenLabs misslyckades', ['reason' => $e->getMessage()] + $e->context);

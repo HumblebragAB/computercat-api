@@ -25,6 +25,9 @@ final class GlosisSettings
     /** Nya ord per köp och Stockholmsdygn. Cachade ord räknas inte. */
     public const TTS_DAILY_NEW_PER_PURCHASE = 100;
 
+    /** Språk som studiorösten kan ha en egen röst för (ISO 639-1 => namn i Filament). */
+    public const LANGUAGES = ['en' => 'Engelska', 'de' => 'Tyska', 'es' => 'Spanska', 'fr' => 'Franska'];
+
     /** @param array<string, mixed> $settings */
     public function __construct(private readonly array $settings, private readonly string $slug = 'glosis') {}
 
@@ -62,23 +65,65 @@ final class GlosisSettings
         return $this->secret('elevenlabs.api_key', 'ElevenLabs-nyckel');
     }
 
-    public function elevenLabsVoiceId(): ?string
+    /**
+     * Den aktiva studiorösten för ett språk: settings.elevenlabs.voices.{språk}.voice_id,
+     * vald på sidan Röster. För engelska gäller det äldre fältet
+     * settings.elevenlabs.voice_id som reserv när ingen röst är vald där.
+     */
+    public function elevenLabsVoiceId(string $language = 'en'): ?string
     {
-        $voice = data_get($this->settings, 'elevenlabs.voice_id');
+        $voice = data_get($this->settings, "elevenlabs.voices.{$language}.voice_id");
+        $path = "elevenlabs.voices.{$language}.voice_id";
+        if ((! is_string($voice) || trim($voice) === '') && $language === 'en') {
+            $voice = data_get($this->settings, 'elevenlabs.voice_id');
+            $path = 'elevenlabs.voice_id';
+        }
         if (! is_string($voice) || trim($voice) === '') {
-            Log::error("Glosis: inget ElevenLabs voice_id för {$this->slug}");
+            Log::error("Glosis: ingen ElevenLabs-röst för språket {$language} i {$this->slug}");
 
             return null;
         }
         $voice = trim($voice);
         // Röst-id:t hamnar i adressen till ElevenLabs.
-        if (preg_match('/^[A-Za-z0-9]{1,64}\z/', $voice) !== 1) {
-            Log::error("Glosis: ElevenLabs voice_id för {$this->slug} har fel form");
+        if (! self::validVoiceId($voice)) {
+            Log::error("Glosis: settings.{$path} för {$this->slug} har fel form");
 
             return null;
         }
 
         return $voice;
+    }
+
+    /**
+     * Rösterna som visas på sidan Röster, per språk i LANGUAGES.
+     *
+     * @return array<string, array{voice_id: string, name: string|null, category: string|null, source: 'voices'|'legacy'}|null>
+     */
+    public function elevenLabsVoices(): array
+    {
+        $voices = [];
+        foreach (array_keys(self::LANGUAGES) as $language) {
+            $entry = data_get($this->settings, "elevenlabs.voices.{$language}");
+            if (is_array($entry) && is_string($entry['voice_id'] ?? null) && $entry['voice_id'] !== '') {
+                $voices[$language] = [
+                    'voice_id' => $entry['voice_id'],
+                    'name' => is_string($entry['name'] ?? null) ? $entry['name'] : null,
+                    'category' => is_string($entry['category'] ?? null) ? $entry['category'] : null,
+                    'source' => 'voices',
+                ];
+            } elseif ($language === 'en' && is_string($legacy = data_get($this->settings, 'elevenlabs.voice_id')) && trim($legacy) !== '') {
+                $voices[$language] = ['voice_id' => trim($legacy), 'name' => null, 'category' => null, 'source' => 'legacy'];
+            } else {
+                $voices[$language] = null;
+            }
+        }
+
+        return $voices;
+    }
+
+    public static function validVoiceId(mixed $voiceId): bool
+    {
+        return is_string($voiceId) && preg_match('/^[A-Za-z0-9]{1,64}\z/', $voiceId) === 1;
     }
 
     private function number(string $path, int|float $default): int|float

@@ -138,6 +138,74 @@ class GlosisTtsTest extends TestCase
         ], $request->data());
     }
 
+    // ---- Röst per språk ------------------------------------------------
+
+    public function test_language_picks_that_languages_voice_and_language_code(): void
+    {
+        $this->setSettings(['elevenlabs' => ['voices' => [
+            'en' => ['voice_id' => 'EnglishVoice1', 'name' => 'Eldrin'],
+            'de' => ['voice_id' => 'GermanVoice1', 'name' => 'Greta'],
+        ]]]);
+
+        $url = $this->postJson(self::URL, ['proof' => $this->proof(), 'speed' => 'normal', 'words' => ['Hund'], 'language' => 'de'])
+            ->assertOk()->json('urls.Hund');
+
+        $this->assertCount(1, $this->elevenLabs);
+        $this->assertSame('https://api.elevenlabs.io/v1/text-to-speech/GermanVoice1?output_format=mp3_44100_64', $this->elevenLabs[0]->url());
+        $this->assertSame('de', $this->elevenLabs[0]->data()['language_code']);
+        $this->assertSame('hund', $this->elevenLabs[0]->data()['text']);
+        $this->assertStringContainsString(StudioVoice::hash('hund', 'normal', 'GermanVoice1', 'de'), $url);
+
+        // Utan language: engelska och den engelska rösten (inte det äldre fältet).
+        $this->prepare(['dog'])->assertOk();
+        $this->assertSame('https://api.elevenlabs.io/v1/text-to-speech/EnglishVoice1?output_format=mp3_44100_64', $this->elevenLabs[1]->url());
+        $this->assertSame('en', $this->elevenLabs[1]->data()['language_code']);
+    }
+
+    public function test_legacy_voice_id_is_the_fallback_for_english_only(): void
+    {
+        // Bara det äldre settings.elevenlabs.voice_id (som i setUp).
+        $this->prepare(['dog'])->assertOk();
+        $this->assertStringContainsString('/text-to-speech/'.self::VOICE.'?', $this->elevenLabs[0]->url());
+
+        // Inget språk utom engelska faller tillbaka på det.
+        foreach (['de', 'es', 'fr'] as $language) {
+            $this->postJson(self::URL, ['proof' => $this->proof(), 'speed' => 'normal', 'words' => ['dog'], 'language' => $language])
+                ->assertStatus(503)->assertJsonPath('error', 'tts_unavailable');
+        }
+        $this->assertCount(1, $this->elevenLabs);
+    }
+
+    public function test_changing_voice_never_serves_audio_from_the_old_voice(): void
+    {
+        $this->cache('dog');
+        $this->prepare(['dog'])->assertOk();
+        $this->assertCount(0, $this->elevenLabs, 'Med samma röst används den sparade filen');
+
+        $this->setSettings(['elevenlabs' => ['voices' => ['en' => ['voice_id' => 'NewVoice42', 'name' => 'Ny']]]]);
+        $url = $this->prepare(['dog'])->assertOk()->json('urls.dog');
+
+        $this->assertCount(1, $this->elevenLabs, 'Ny röst genererar ordet på nytt');
+        $this->assertStringContainsString('/text-to-speech/NewVoice42?', $this->elevenLabs[0]->url());
+        $newHash = StudioVoice::hash('dog', 'normal', 'NewVoice42');
+        $this->assertNotSame($this->hashFor('dog'), $newHash);
+        $this->assertStringContainsString($newHash, $url);
+        $this->assertStringNotContainsString($this->hashFor('dog'), $url);
+    }
+
+    public function test_hash_includes_voice_and_language_but_english_keeps_its_old_name(): void
+    {
+        // Samma formel som före språkfältet, så att redan genererade engelska filer används.
+        $this->assertSame(
+            hash('sha256', 'dog|1.00|'.self::VOICE.'|eleven_flash_v2_5'),
+            StudioVoice::hash('dog', 'normal', self::VOICE),
+        );
+        $this->assertSame(StudioVoice::hash('dog', 'normal', self::VOICE), StudioVoice::hash('dog', 'normal', self::VOICE, 'en'));
+        $this->assertNotSame(StudioVoice::hash('dog', 'normal', self::VOICE), StudioVoice::hash('dog', 'normal', 'OtherVoice'));
+        $this->assertNotSame(StudioVoice::hash('dog', 'normal', self::VOICE), StudioVoice::hash('dog', 'normal', self::VOICE, 'de'));
+        $this->assertNotSame(StudioVoice::hash('dog', 'normal', self::VOICE, 'de'), StudioVoice::hash('dog', 'normal', self::VOICE, 'fr'));
+    }
+
     public function test_slow_speed_uses_0_7_and_its_own_file(): void
     {
         $this->cache('dog', 'normal');
@@ -321,6 +389,10 @@ class GlosisTtsTest extends TestCase
             'ord som inte är sträng' => [['speed' => 'normal', 'words' => ['dog', 5]]],
             'nästlad lista' => [['speed' => 'normal', 'words' => [['dog']]]],
             '41 ord' => [['speed' => 'normal', 'words' => array_fill(0, 41, 'dog')]],
+            'okänt språk' => [['speed' => 'normal', 'words' => ['dog'], 'language' => 'sv']],
+            'språk med stor bokstav' => [['speed' => 'normal', 'words' => ['dog'], 'language' => 'EN']],
+            'språk som lista' => [['speed' => 'normal', 'words' => ['dog'], 'language' => ['en']]],
+            'språk null' => [['speed' => 'normal', 'words' => ['dog'], 'language' => null]],
         ];
     }
 
