@@ -31,6 +31,11 @@ final class GlosisSettings
     /** Språk som studiorösten kan ha en egen röst för (ISO 639-1 => namn i Filament). */
     public const LANGUAGES = ['en' => 'Engelska', 'de' => 'Tyska', 'es' => 'Spanska', 'fr' => 'Franska'];
 
+    /** Två studioröster per språk (värdet i API:ts "voice" => namn i Filament). */
+    public const GENDERS = ['female' => 'Kvinnlig röst', 'male' => 'Manlig röst'];
+
+    public const DEFAULT_GENDER = 'female';
+
     /** @param array<string, mixed> $settings */
     public function __construct(private readonly array $settings, private readonly string $slug = 'glosis') {}
 
@@ -134,59 +139,143 @@ final class GlosisSettings
     }
 
     /**
-     * Den aktiva studiorösten för ett språk: settings.elevenlabs.voices.{språk}.voice_id,
-     * vald på sidan Röster. För engelska gäller det äldre fältet
-     * settings.elevenlabs.voice_id som reserv när ingen röst är vald där.
+     * Den aktiva studiorösten för ett språk och kön, vald på sidan Röster:
+     * settings.elevenlabs.voices.{språk}.{female|male} = {voice_id, name, category}.
+     * Äldre former läses fortfarande: voices.{språk} = {voice_id, name} (en röst
+     * per språk) räknas som språkets kvinnliga röst, och det äldre fältet
+     * settings.elevenlabs.voice_id som engelsk kvinnlig röst. Null (med fel i
+     * loggen) om rösten saknas eller har fel form.
      */
-    public function elevenLabsVoiceId(string $language = 'en'): ?string
+    public function elevenLabsVoiceId(string $language = 'en', string $gender = self::DEFAULT_GENDER): ?string
     {
-        $voice = data_get($this->settings, "elevenlabs.voices.{$language}.voice_id");
-        $path = "elevenlabs.voices.{$language}.voice_id";
-        if ((! is_string($voice) || trim($voice) === '') && $language === 'en') {
-            $voice = data_get($this->settings, 'elevenlabs.voice_id');
-            $path = 'elevenlabs.voice_id';
-        }
-        if (! is_string($voice) || trim($voice) === '') {
-            Log::error("Glosis: ingen ElevenLabs-röst för språket {$language} i {$this->slug}");
-
-            return null;
-        }
-        $voice = trim($voice);
-        // Röst-id:t hamnar i adressen till ElevenLabs.
-        if (! self::validVoiceId($voice)) {
-            Log::error("Glosis: settings.{$path} för {$this->slug} har fel form");
-
-            return null;
+        $voice = $this->configuredVoiceId($language, $gender);
+        if ($voice === null && ! $this->hasVoiceEntry($language, $gender)) {
+            Log::error("Glosis: ingen ElevenLabs-röst ({$gender}) för språket {$language} i {$this->slug}");
         }
 
         return $voice;
     }
 
     /**
-     * Rösterna som visas på sidan Röster, per språk i LANGUAGES.
+     * Rösten som studiorösten använder: den begärda om den finns, annars
+     * språkets andra röst. Null (med fel i loggen) om språket saknar röst.
      *
-     * @return array<string, array{voice_id: string, name: string|null, category: string|null, source: 'voices'|'legacy'}|null>
+     * @return array{voice_id: string, gender: 'female'|'male'}|null
+     */
+    public function studioVoice(string $language, string $gender = self::DEFAULT_GENDER): ?array
+    {
+        $other = $gender === 'female' ? 'male' : 'female';
+        foreach ([$gender, $other] as $candidate) {
+            $voice = $this->configuredVoiceId($language, $candidate);
+            if ($voice !== null) {
+                return ['voice_id' => $voice, 'gender' => $candidate];
+            }
+        }
+        Log::error("Glosis: ingen ElevenLabs-röst för språket {$language} i {$this->slug}");
+
+        return null;
+    }
+
+    /**
+     * Rösterna som visas på sidan Röster, per språk i LANGUAGES och kön i
+     * GENDERS. source säger var rösten är sparad: 'voices' (nuvarande form),
+     * 'single' (en röst per språk, äldre form) eller 'legacy' (det äldre fältet
+     * elevenlabs.voice_id).
+     *
+     * @return array<string, array<string, array{voice_id: string, name: string|null, category: string|null, source: 'voices'|'single'|'legacy'}|null>>
      */
     public function elevenLabsVoices(): array
     {
         $voices = [];
         foreach (array_keys(self::LANGUAGES) as $language) {
-            $entry = data_get($this->settings, "elevenlabs.voices.{$language}");
-            if (is_array($entry) && is_string($entry['voice_id'] ?? null) && $entry['voice_id'] !== '') {
-                $voices[$language] = [
-                    'voice_id' => $entry['voice_id'],
-                    'name' => is_string($entry['name'] ?? null) ? $entry['name'] : null,
-                    'category' => is_string($entry['category'] ?? null) ? $entry['category'] : null,
-                    'source' => 'voices',
-                ];
-            } elseif ($language === 'en' && is_string($legacy = data_get($this->settings, 'elevenlabs.voice_id')) && trim($legacy) !== '') {
-                $voices[$language] = ['voice_id' => trim($legacy), 'name' => null, 'category' => null, 'source' => 'legacy'];
-            } else {
-                $voices[$language] = null;
+            foreach (array_keys(self::GENDERS) as $gender) {
+                $voices[$language][$gender] = $this->voiceEntry($language, $gender);
             }
         }
 
         return $voices;
+    }
+
+    /**
+     * Språkets sparade röster i nuvarande form, med en röst i den äldre formen
+     * flyttad till female. Används när en röst sparas, så att den andra rösten
+     * finns kvar.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function storedVoicesFor(string $language): array
+    {
+        $entry = data_get($this->settings, "elevenlabs.voices.{$language}");
+        if (! is_array($entry)) {
+            return [];
+        }
+        if (array_key_exists('voice_id', $entry)) {
+            return is_string($entry['voice_id']) && trim($entry['voice_id']) !== ''
+                ? ['female' => array_intersect_key($entry, array_flip(['voice_id', 'name', 'category']))]
+                : [];
+        }
+
+        return array_filter(
+            array_intersect_key($entry, self::GENDERS),
+            fn ($voice) => is_array($voice) && is_string($voice['voice_id'] ?? null) && trim($voice['voice_id']) !== '',
+        );
+    }
+
+    /** @return array{voice_id: string, name: string|null, category: string|null, source: 'voices'|'single'|'legacy'}|null */
+    private function voiceEntry(string $language, string $gender): ?array
+    {
+        $entry = data_get($this->settings, "elevenlabs.voices.{$language}");
+        $voice = null;
+        $source = null;
+        if (is_array($entry) && is_array($entry[$gender] ?? null)) {
+            [$voice, $source] = [$entry[$gender], 'voices'];
+        } elseif ($gender === 'female' && is_array($entry) && array_key_exists('voice_id', $entry)) {
+            [$voice, $source] = [$entry, 'single'];
+        }
+        if ($voice !== null && is_string($voice['voice_id'] ?? null) && trim($voice['voice_id']) !== '') {
+            return [
+                'voice_id' => trim($voice['voice_id']),
+                'name' => is_string($voice['name'] ?? null) ? $voice['name'] : null,
+                'category' => is_string($voice['category'] ?? null) ? $voice['category'] : null,
+                'source' => $source,
+            ];
+        }
+        $legacy = data_get($this->settings, 'elevenlabs.voice_id');
+        if ($language === 'en' && $gender === 'female' && is_string($legacy) && trim($legacy) !== '') {
+            return ['voice_id' => trim($legacy), 'name' => null, 'category' => null, 'source' => 'legacy'];
+        }
+
+        return null;
+    }
+
+    private function hasVoiceEntry(string $language, string $gender): bool
+    {
+        return $this->voiceEntry($language, $gender) !== null;
+    }
+
+    /** Röst-id:t för platsen, eller null om det saknas eller har fel form (fel i loggen). */
+    private function configuredVoiceId(string $language, string $gender): ?string
+    {
+        if (! array_key_exists($gender, self::GENDERS)) {
+            return null;
+        }
+        $entry = $this->voiceEntry($language, $gender);
+        if ($entry === null) {
+            return null;
+        }
+        // Röst-id:t hamnar i adressen till ElevenLabs.
+        if (! self::validVoiceId($entry['voice_id'])) {
+            $path = match ($entry['source']) {
+                'voices' => "elevenlabs.voices.{$language}.{$gender}.voice_id",
+                'single' => "elevenlabs.voices.{$language}.voice_id",
+                'legacy' => 'elevenlabs.voice_id',
+            };
+            Log::error("Glosis: settings.{$path} för {$this->slug} har fel form");
+
+            return null;
+        }
+
+        return $entry['voice_id'];
     }
 
     public static function validVoiceId(mixed $voiceId): bool

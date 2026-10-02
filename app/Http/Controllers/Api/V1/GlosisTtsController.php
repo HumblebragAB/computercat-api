@@ -20,9 +20,12 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
  * POST /api/v1/games/glosis/tts/prepare
  *   {"proof": {"platform": "ios", "jws": "..."} eller
  *             {"platform": "android", "productId": "...", "purchaseToken": "..."}, "speed": "normal"|"slow", "words": ["dog", ...],
- *    "language": "en"|"de"|"es"|"fr" (valfritt, standard "en")}
- *   Rösten är den som är vald för språket på sidan Röster i Filament.
- *   200 {"urls": {"<ord som skickats>": "<signerad adress>"}, "skipped": [{"word": "...", "reason": "invalid|limit|unavailable"}]}
+ *    "language": "en"|"de"|"es"|"fr" (valfritt, standard "en"),
+ *    "voice": "female"|"male" (valfritt, standard "female")}
+ *   Rösterna är de som är valda för språket på sidan Röster i Filament. Saknar
+ *   språket den begärda rösten används den andra; voice_used säger vilken.
+ *   200 {"urls": {"<ord som skickats>": "<signerad adress>"}, "skipped": [{"word": "...", "reason": "invalid|limit|unavailable"}],
+ *        "voice_used": "female"|"male"}
  *   Fel i skanningens form: 402 guld_required, 422 invalid_proof|invalid_request,
  *   429 rate_limited, 501 platform_not_supported (Android när Google Play inte är
  *   inställt), 503 tts_unavailable|budget_exhausted.
@@ -46,13 +49,16 @@ class GlosisTtsController extends Controller
             $words = $body['words'] ?? null;
             // Valfritt; saknas det gäller engelska (appar före språkfältet).
             $language = array_key_exists('language', $body) ? $body['language'] : ElevenLabsClient::LANGUAGE;
+            // Valfritt; saknas det gäller kvinnlig röst (appar före röstvalet).
+            $gender = array_key_exists('voice', $body) ? $body['voice'] : GlosisSettings::DEFAULT_GENDER;
             if (! is_string($speed) || ! array_key_exists($speed, StudioVoice::SPEEDS) || ! self::validWords($words)
-                || ! is_string($language) || ! array_key_exists($language, GlosisSettings::LANGUAGES)) {
+                || ! is_string($language) || ! array_key_exists($language, GlosisSettings::LANGUAGES)
+                || ! is_string($gender) || ! array_key_exists($gender, GlosisSettings::GENDERS)) {
                 throw new GlosisRejection(422, 'invalid_request', 'Något blev fel med studiorösten. Appen använder telefonens röst så länge.');
             }
 
             $transaction = $gate->verify($proof, $game, GuldGate::FEATURE_TTS);
-            $result = $voice->prepare($game, $transaction, $speed, $words, $language);
+            $result = $voice->prepare($game, $transaction, $speed, $words, $language, $gender);
         } catch (GlosisRejection $e) {
             return $e->toResponse();
         }
@@ -67,7 +73,7 @@ class GlosisTtsController extends Controller
         }
 
         // (object): en tom lista ska vara {} i JSON, inte [].
-        return response()->json(['urls' => (object) $result['urls'], 'skipped' => $result['skipped']]);
+        return response()->json(['urls' => (object) $result['urls'], 'skipped' => $result['skipped'], 'voice_used' => $result['voice_used']]);
     }
 
     public function audio(string $hash): BinaryFileResponse

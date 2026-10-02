@@ -177,13 +177,107 @@ class GlosisTtsTest extends TestCase
         $this->assertCount(1, $this->elevenLabs);
     }
 
+    // ---- Kvinnlig och manlig röst --------------------------------------
+
+    private function prepareVoice(array $body): TestResponse
+    {
+        return $this->postJson(self::URL, ['proof' => $this->proof(), 'speed' => 'normal', 'words' => ['dog']] + $body);
+    }
+
+    public function test_voice_picks_the_female_or_male_voice_with_separate_files(): void
+    {
+        $this->setSettings(['elevenlabs' => ['voices' => ['de' => [
+            'female' => ['voice_id' => 'GermanFemale1', 'name' => 'Greta'],
+            'male' => ['voice_id' => 'GermanMale1', 'name' => 'Hans'],
+        ]]]]);
+
+        $female = $this->prepareVoice(['language' => 'de', 'voice' => 'female'])->assertOk()
+            ->assertJsonPath('voice_used', 'female')->json('urls.dog');
+        $male = $this->prepareVoice(['language' => 'de', 'voice' => 'male'])->assertOk()
+            ->assertJsonPath('voice_used', 'male')->json('urls.dog');
+
+        $this->assertCount(2, $this->elevenLabs, 'Samma ord genereras en gång per röst');
+        $this->assertStringContainsString('/text-to-speech/GermanFemale1?', $this->elevenLabs[0]->url());
+        $this->assertStringContainsString('/text-to-speech/GermanMale1?', $this->elevenLabs[1]->url());
+
+        $femaleHash = StudioVoice::hash('dog', 'normal', 'GermanFemale1', 'de');
+        $maleHash = StudioVoice::hash('dog', 'normal', 'GermanMale1', 'de');
+        $this->assertNotSame($femaleHash, $maleHash);
+        $this->assertStringContainsString($femaleHash, $female);
+        $this->assertStringContainsString($maleHash, $male);
+        Storage::disk(StudioVoice::DISK)->assertExists([$femaleHash.'.mp3', $maleHash.'.mp3']);
+
+        // Utan voice: kvinnlig röst (appar före röstvalet), ur cachen.
+        $this->prepareVoice(['language' => 'de'])->assertOk()->assertJsonPath('voice_used', 'female')
+            ->assertJsonPath('urls.dog', fn ($url) => str_contains($url, $femaleHash));
+        $this->assertCount(2, $this->elevenLabs);
+    }
+
+    public function test_missing_voice_falls_back_to_the_other_and_says_so(): void
+    {
+        $this->setSettings(['elevenlabs' => ['voice_id' => null, 'voices' => [
+            'es' => ['male' => ['voice_id' => 'SpanishMale1', 'name' => 'Pablo']],
+            'fr' => ['female' => ['voice_id' => 'FrenchFemale1', 'name' => 'Amélie']],
+        ]]]);
+
+        $this->prepareVoice(['language' => 'es', 'voice' => 'female'])->assertOk()->assertJsonPath('voice_used', 'male');
+        $this->assertStringContainsString('/text-to-speech/SpanishMale1?', $this->elevenLabs[0]->url());
+        $this->prepareVoice(['language' => 'es'])->assertOk()->assertJsonPath('voice_used', 'male');
+
+        $this->prepareVoice(['language' => 'fr', 'voice' => 'male'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->assertStringContainsString('/text-to-speech/FrenchFemale1?', $this->elevenLabs[1]->url());
+
+        // Ingen röst alls för språket: 503 som förut, utan voice_used.
+        $this->prepareVoice(['language' => 'de', 'voice' => 'male'])->assertStatus(503)
+            ->assertExactJson(['error' => 'tts_unavailable', 'message' => 'Studiorösten fungerar inte just nu. Appen använder telefonens röst så länge.']);
+        $this->prepareVoice(['language' => 'en', 'voice' => 'female'])->assertStatus(503)->assertJsonPath('error', 'tts_unavailable');
+        $this->assertCount(2, $this->elevenLabs);
+    }
+
+    public function test_malformed_voice_id_falls_back_to_the_other_voice(): void
+    {
+        $this->setSettings(['elevenlabs' => ['voices' => ['de' => [
+            'female' => ['voice_id' => '../v1/models', 'name' => 'Fel'],
+            'male' => ['voice_id' => 'GermanMale1', 'name' => 'Hans'],
+        ]]]]);
+
+        $this->prepareVoice(['language' => 'de', 'voice' => 'female'])->assertOk()->assertJsonPath('voice_used', 'male');
+        $this->assertStringContainsString('/text-to-speech/GermanMale1?', $this->elevenLabs[0]->url());
+    }
+
+    public function test_old_single_voice_per_language_counts_as_female(): void
+    {
+        $this->setSettings(['elevenlabs' => ['voices' => ['de' => ['voice_id' => 'OldGerman1', 'name' => 'Greta']]]]);
+
+        $this->prepareVoice(['language' => 'de', 'voice' => 'female'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->prepareVoice(['language' => 'de', 'voice' => 'male'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->assertCount(1, $this->elevenLabs);
+        $this->assertStringContainsString('/text-to-speech/OldGerman1?', $this->elevenLabs[0]->url());
+    }
+
+    public function test_legacy_voice_id_counts_as_english_female_and_keeps_its_files(): void
+    {
+        // Bara det äldre settings.elevenlabs.voice_id (som i setUp); filen från före röstvalet används.
+        $this->cache('dog');
+        $this->prepareVoice(['voice' => 'female'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->prepareVoice(['voice' => 'male'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->assertCount(0, $this->elevenLabs);
+
+        // En vald manlig engelsk röst används för male; female är fortfarande det äldre fältet.
+        $this->setSettings(['elevenlabs' => ['voices' => ['en' => ['male' => ['voice_id' => 'EnglishMale1', 'name' => 'Eldrin']]]]]);
+        $this->prepareVoice(['voice' => 'male'])->assertOk()->assertJsonPath('voice_used', 'male');
+        $this->prepareVoice(['voice' => 'female'])->assertOk()->assertJsonPath('voice_used', 'female');
+        $this->assertCount(1, $this->elevenLabs);
+        $this->assertStringContainsString('/text-to-speech/EnglishMale1?', $this->elevenLabs[0]->url());
+    }
+
     public function test_changing_voice_never_serves_audio_from_the_old_voice(): void
     {
         $this->cache('dog');
         $this->prepare(['dog'])->assertOk();
         $this->assertCount(0, $this->elevenLabs, 'Med samma röst används den sparade filen');
 
-        $this->setSettings(['elevenlabs' => ['voices' => ['en' => ['voice_id' => 'NewVoice42', 'name' => 'Ny']]]]);
+        $this->setSettings(['elevenlabs' => ['voices' => ['en' => ['female' => ['voice_id' => 'NewVoice42', 'name' => 'Ny']]]]]);
         $url = $this->prepare(['dog'])->assertOk()->json('urls.dog');
 
         $this->assertCount(1, $this->elevenLabs, 'Ny röst genererar ordet på nytt');
@@ -279,7 +373,7 @@ class GlosisTtsTest extends TestCase
     public function test_empty_result_is_an_object_not_a_list(): void
     {
         $this->prepare(['http://x.se'])->assertOk();
-        $this->assertSame('{"urls":{},"skipped":[{"word":"http:\/\/x.se","reason":"invalid"}]}', $this->prepare(['http://x.se'])->getContent());
+        $this->assertSame('{"urls":{},"skipped":[{"word":"http:\/\/x.se","reason":"invalid"}],"voice_used":"female"}', $this->prepare(['http://x.se'])->getContent());
     }
 
     // ---- Normalisering -------------------------------------------------
@@ -331,7 +425,7 @@ class GlosisTtsTest extends TestCase
         $this->assertNull(StudioVoice::normalize($text));
 
         if (mb_check_encoding($text, 'UTF-8')) {
-            $this->prepare([$text])->assertOk()->assertExactJson(['urls' => [], 'skipped' => [['word' => $text, 'reason' => 'invalid']]]);
+            $this->prepare([$text])->assertOk()->assertExactJson(['urls' => [], 'skipped' => [['word' => $text, 'reason' => 'invalid']], 'voice_used' => 'female']);
         }
         $this->assertCount(0, $this->elevenLabs);
         $this->assertSame(0, AiUsage::count());
@@ -394,6 +488,11 @@ class GlosisTtsTest extends TestCase
             'språk med stor bokstav' => [['speed' => 'normal', 'words' => ['dog'], 'language' => 'EN']],
             'språk som lista' => [['speed' => 'normal', 'words' => ['dog'], 'language' => ['en']]],
             'språk null' => [['speed' => 'normal', 'words' => ['dog'], 'language' => null]],
+            'okänd röst' => [['speed' => 'normal', 'words' => ['dog'], 'voice' => 'child']],
+            'röst med stor bokstav' => [['speed' => 'normal', 'words' => ['dog'], 'voice' => 'Female']],
+            'röst som lista' => [['speed' => 'normal', 'words' => ['dog'], 'voice' => ['male']]],
+            'röst null' => [['speed' => 'normal', 'words' => ['dog'], 'voice' => null]],
+            'röst tom' => [['speed' => 'normal', 'words' => ['dog'], 'voice' => '']],
         ];
     }
 

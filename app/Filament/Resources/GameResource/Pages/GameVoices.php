@@ -15,9 +15,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Röster: en aktiv ElevenLabs-röst per språk för Glosis studioröst. Rösten
- * sparas i settings.elevenlabs.voices.{språk} = {voice_id, name, category} och
- * används av StudioVoice direkt, utan ny appversion. Byts rösten byts
+ * Röster: två aktiva ElevenLabs-röster per språk för Glosis studioröst,
+ * kvinnlig och manlig. Rösten sparas i
+ * settings.elevenlabs.voices.{språk}.{female|male} = {voice_id, name, category}
+ * (äldre former läses av GlosisSettings) och används av StudioVoice direkt, utan ny appversion. Byts rösten byts
  * filnamnet (röst-id:t ingår i nyckeln), så gammalt ljud serveras inte.
  *
  * Sökningen läser ElevenLabs röstbibliotek eller kontots egna röster (se
@@ -41,6 +42,9 @@ class GameVoices extends Page
     /** Språket vars röst väljs just nu, eller null när ingen sökning är öppen. */
     public ?string $activeLanguage = null;
 
+    /** Rösten (female eller male) som väljs just nu. */
+    public ?string $activeGender = null;
+
     /** 'library' (röstbiblioteket) eller 'mine' (kontots röster). */
     public string $source = 'library';
 
@@ -59,7 +63,7 @@ class GameVoices extends Page
 
     public bool $searched = false;
 
-    /** @var array<string, list<array{word: string, speed: string, url: string}>> */
+    /** @var array<string, list<array{word: string, speed: string, url: string}>> nyckel "{språk}-{röst}" */
     public array $previews = [];
 
     public function mount(int|string $record): void
@@ -68,17 +72,25 @@ class GameVoices extends Page
         abort_unless($this->record->slug === 'glosis', 404);
     }
 
-    /** @return array<string, array<string, mixed>|null> */
+    /** @return array<string, array<string, array<string, mixed>|null>> */
     public function getVoices(): array
     {
         return GlosisSettings::for($this->freshGame())->elevenLabsVoices();
     }
 
-    public function startChoosing(string $language): void
+    public static function previewKey(string $language, string $gender): string
     {
-        $this->assertLanguage($language);
+        return $language.'-'.$gender;
+    }
+
+    public function startChoosing(string $language, string $gender): void
+    {
+        $this->assertSlot($language, $gender);
         $this->activeLanguage = $language;
+        $this->activeGender = $gender;
         $this->filterLanguage = $language;
+        // Förifyllt efter platsen, men går att ändra före sökningen.
+        $this->gender = $gender;
         $this->results = [];
         $this->searched = false;
     }
@@ -86,6 +98,7 @@ class GameVoices extends Page
     public function cancelChoosing(): void
     {
         $this->activeLanguage = null;
+        $this->activeGender = null;
         $this->results = [];
         $this->searched = false;
     }
@@ -130,8 +143,10 @@ class GameVoices extends Page
     {
         $library = app(ElevenLabsVoiceLibrary::class);
         $language = $this->activeLanguage;
+        $gender = $this->activeGender;
         $voice = $this->results[$index] ?? null;
-        if ($language === null || ! is_array($voice) || ! GlosisSettings::validVoiceId($voice['voice_id'] ?? null)) {
+        if ($language === null || $gender === null || ! array_key_exists($language, GlosisSettings::LANGUAGES)
+            || ! array_key_exists($gender, GlosisSettings::GENDERS) || ! is_array($voice) || ! GlosisSettings::validVoiceId($voice['voice_id'] ?? null)) {
             return;
         }
         if (($voice['expiring'] ?? false) === true) {
@@ -171,24 +186,25 @@ class GameVoices extends Page
             return;
         }
 
-        $this->storeVoice($language, $voiceId, (string) $voice['name'], $voice['category'] ?? null);
-        unset($this->previews[$language]);
+        $this->storeVoice($language, $gender, $voiceId, (string) $voice['name'], $voice['category'] ?? null);
+        unset($this->previews[self::previewKey($language, $gender)]);
         $this->cancelChoosing();
 
         Notification::make()->success()
-            ->title('Röst vald för '.mb_strtolower(GlosisSettings::LANGUAGES[$language]))
+            ->title(self::slotLabel($language, $gender).' vald')
             ->body("{$voice['name']} ({$voiceId}). Nya ord genereras med den här rösten; tidigare ljud används inte längre.")
             ->send();
     }
 
-    /** Genererar provorden med språkets röst via StudioVoice (cache, ai_usage och budget som i appen). */
-    public function previewVoice(string $language): void
+    /** Genererar provorden med platsens röst via StudioVoice (cache, ai_usage och budget som i appen). */
+    public function previewVoice(string $language, string $gender): void
     {
         $studioVoice = app(StudioVoice::class);
-        $this->assertLanguage($language);
+        $this->assertSlot($language, $gender);
         $game = $this->freshGame();
-        if (GlosisSettings::for($game)->elevenLabsVoiceId($language) === null) {
-            Notification::make()->danger()->persistent()->title('Ingen röst vald för '.mb_strtolower(GlosisSettings::LANGUAGES[$language]))->send();
+        // Bara platsens egen röst; StudioVoice skulle annars ta språkets andra röst.
+        if (GlosisSettings::for($game)->elevenLabsVoiceId($language, $gender) === null) {
+            Notification::make()->danger()->persistent()->title('Ingen '.mb_strtolower(self::slotLabel($language, $gender)).' vald')->send();
 
             return;
         }
@@ -196,7 +212,14 @@ class GameVoices extends Page
         $clips = [];
         $problems = [];
         foreach (array_keys(StudioVoice::SPEEDS) as $speed) {
-            $result = $studioVoice->prepare($game, StudioVoice::adminTransaction(), $speed, self::PREVIEW_WORDS, $language);
+            $result = $studioVoice->prepare($game, StudioVoice::adminTransaction(), $speed, self::PREVIEW_WORDS, $language, $gender);
+            if ($result['voice_used'] !== $gender) {
+                // Kan inte hända efter kontrollen ovan, men ljudet får aldrig visas under fel röst.
+                Log::error('Glosis röster: provlyssningen fick fel röst', ['language' => $language, 'voice' => $gender, 'voice_used' => $result['voice_used']]);
+                Notification::make()->danger()->persistent()->title('Provlyssningen använde fel röst')->send();
+
+                return;
+            }
             foreach (self::PREVIEW_WORDS as $word) {
                 if (isset($result['urls'][$word])) {
                     $clips[] = ['word' => $word, 'speed' => $speed, 'url' => $result['urls'][$word]];
@@ -207,7 +230,7 @@ class GameVoices extends Page
             }
         }
 
-        $this->previews[$language] = $clips;
+        $this->previews[self::previewKey($language, $gender)] = $clips;
         if ($problems !== []) {
             Notification::make()->danger()->persistent()
                 ->title('Provlyssningen blev inte komplett')
@@ -240,22 +263,34 @@ class GameVoices extends Page
         return 'Studiorösten svarade inte (se loggen).';
     }
 
-    private function storeVoice(string $language, string $voiceId, string $name, ?string $category): void
+    /**
+     * Sparar alltid i nuvarande form. En röst i den äldre formen (en per språk)
+     * flyttas till female, så att den finns kvar när den manliga väljs.
+     */
+    private function storeVoice(string $language, string $gender, string $voiceId, string $name, ?string $category): void
     {
-        DB::transaction(function () use ($language, $voiceId, $name, $category) {
+        DB::transaction(function () use ($language, $gender, $voiceId, $name, $category) {
             /** @var Game $game */
             $game = Game::whereKey($this->record->getKey())->lockForUpdate()->firstOrFail();
             $settings = $game->settings ?? [];
-            data_set($settings, "elevenlabs.voices.{$language}", [
+            $voices = (new GlosisSettings($settings, $game->slug))->storedVoicesFor($language);
+            $voices[$gender] = [
                 'voice_id' => $voiceId,
                 'name' => mb_substr($name, 0, 100),
                 'category' => $category,
-            ]);
+            ];
+            data_set($settings, "elevenlabs.voices.{$language}", $voices);
             $game->settings = $settings;
             $game->save();
         });
 
-        Log::info('Glosis röster: röst vald', ['language' => $language, 'voice_id' => $voiceId]);
+        Log::info('Glosis röster: röst vald', ['language' => $language, 'voice' => $gender, 'voice_id' => $voiceId]);
+    }
+
+    /** "Kvinnlig röst för engelska" */
+    public static function slotLabel(string $language, string $gender): string
+    {
+        return GlosisSettings::GENDERS[$gender].' för '.mb_strtolower(GlosisSettings::LANGUAGES[$language]);
     }
 
     private function apiKey(): ?string
@@ -276,9 +311,9 @@ class GameVoices extends Page
         Notification::make()->danger()->persistent()->title($title)->body($e->getMessage())->send();
     }
 
-    private function assertLanguage(string $language): void
+    private function assertSlot(string $language, string $gender): void
     {
-        abort_unless(array_key_exists($language, GlosisSettings::LANGUAGES), 422);
+        abort_unless(array_key_exists($language, GlosisSettings::LANGUAGES) && array_key_exists($gender, GlosisSettings::GENDERS), 422);
     }
 
     private function freshGame(): Game

@@ -16,8 +16,8 @@ use Illuminate\Support\Str;
 use Normalizer;
 
 /**
- * Studiorösten: glosor upplästa av ElevenLabs med en röst per språk (sidan
- * Röster i Filament), genererade en gång per unikt ord, hastighet, röst och språk och sedan sparade på disken glosis-tts
+ * Studiorösten: glosor upplästa av ElevenLabs med två röster per språk,
+ * kvinnlig och manlig (sidan Röster i Filament), genererade en gång per unikt ord, hastighet, röst och språk och sedan sparade på disken glosis-tts
  * (storage/app/glosis-tts/{sha256}.mp3). Appen får signerade adresser (24 h)
  * och spelar ljudet med en vanlig <audio src>.
  *
@@ -100,7 +100,8 @@ class StudioVoice
      * Filnamnets nyckel: sha256(normaliserad text | hastighet | röst-id | modell),
      * med språket sist för andra språk än engelska. Engelska saknar språkdelen
      * så att filerna som redan genererats behåller sina namn. Byts rösten byts
-     * nyckeln, så gammalt ljud serveras aldrig med en ny röst.
+     * nyckeln, så gammalt ljud serveras aldrig med en ny röst. Kvinnlig och
+     * manlig röst har olika röst-id och därmed egna filer.
      */
     public static function hash(string $normalized, string $speed, string $voiceId, string $language = ElevenLabsClient::LANGUAGE): string
     {
@@ -134,24 +135,31 @@ class StudioVoice
     }
 
     /**
+     * I svaret är stopped 'budget' eller 'unavailable' om genereringen
+     * stoppades, och voice_used rösten (female eller male) som orden lästes med.
+     *
      * @param  list<string>  $words  ord som appen skickat, i originalform
      * @param  string  $language  en nyckel i GlosisSettings::LANGUAGES
-     * @return array{urls: array<string, string>, skipped: list<array{word: string, reason: string}>, stopped: string|null}
-     *         stopped är 'budget' eller 'unavailable' om genereringen stoppades
+     * @param  string  $gender  en nyckel i GlosisSettings::GENDERS; saknar språket den rösten används språkets andra
+     * @return array{urls: array<string, string>, skipped: list<array{word: string, reason: string}>, stopped: string|null, voice_used: string}
      *
-     * @throws GlosisRejection 503 tts_unavailable när röst-id saknas
+     * @throws GlosisRejection 503 tts_unavailable när språket saknar röst
      */
-    public function prepare(Game $game, VerifiedTransaction $transaction, string $speed, array $words, string $language = ElevenLabsClient::LANGUAGE): array
+    public function prepare(Game $game, VerifiedTransaction $transaction, string $speed, array $words, string $language = ElevenLabsClient::LANGUAGE, string $gender = GlosisSettings::DEFAULT_GENDER): array
     {
         if (! array_key_exists($language, GlosisSettings::LANGUAGES)) {
             throw new \InvalidArgumentException("Okänt språk: {$language}");
         }
+        if (! array_key_exists($gender, GlosisSettings::GENDERS)) {
+            throw new \InvalidArgumentException("Okänd röst: {$gender}");
+        }
         $this->lastFailure = null;
         $settings = GlosisSettings::for($game);
-        $voiceId = $settings->elevenLabsVoiceId($language);
-        if ($voiceId === null) {
+        $voice = $settings->studioVoice($language, $gender);
+        if ($voice === null) {
             throw new GlosisRejection(503, 'tts_unavailable', 'Studiorösten fungerar inte just nu. Appen använder telefonens röst så länge.');
         }
+        $voiceId = $voice['voice_id'];
 
         $disk = Storage::disk(self::DISK);
         $started = microtime(true);
@@ -219,6 +227,8 @@ class StudioVoice
         Log::info('Glosis tts: prepare', [
             'environment' => $transaction->environment,
             'language' => $language,
+            'voice' => $gender,
+            'voice_used' => $voice['gender'],
             'tx' => GuldGate::txHash($transaction),
             'words' => count($words),
             'cached' => $stats['cached'],
@@ -229,7 +239,7 @@ class StudioVoice
             'duration_ms' => (int) round((microtime(true) - $started) * 1000),
         ]);
 
-        return ['urls' => $urls, 'skipped' => $skipped, 'stopped' => $stopped];
+        return ['urls' => $urls, 'skipped' => $skipped, 'stopped' => $stopped, 'voice_used' => $voice['gender']];
     }
 
     /**

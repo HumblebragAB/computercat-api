@@ -334,14 +334,14 @@ class GameResource extends Resource
                         ->label('ElevenLabs voice ID (reserv för engelska)')
                         ->regex('/^[A-Za-z0-9]{1,64}$/')
                         ->dehydrateStateUsing(fn ($state) => filled($state) ? trim($state) : null)
-                        ->helperText('Används bara när ingen engelsk röst är vald på sidan Röster. Rösterna per språk väljs där.'),
+                        ->helperText('Räknas som engelsk kvinnlig röst när ingen sådan är vald på sidan Röster. Rösterna per språk väljs där.'),
                     Forms\Components\Placeholder::make('elevenlabs_status')
                         ->label('Studioröst')
                         ->content(function (?Game $record) {
                             if (! filled($record?->settings['elevenlabs']['api_key'] ?? null)) {
                                 return 'Ingen nyckel: nya ord svarar 503 tts_unavailable, appen använder telefonens röst.';
                             }
-                            $voices = array_filter(GlosisSettings::for($record)->elevenLabsVoices());
+                            $voices = array_filter(GlosisSettings::for($record)->elevenLabsVoices(), fn (array $slots) => array_filter($slots) !== []);
 
                             return $voices === []
                                 ? 'Nyckel sparad men ingen röst vald: välj röster på sidan Röster.'

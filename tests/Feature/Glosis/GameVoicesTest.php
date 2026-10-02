@@ -132,9 +132,12 @@ class GameVoicesTest extends TestCase
 
         $this->page()
             ->assertSee(['Engelska', 'Tyska', 'Spanska', 'Franska'])
+            ->assertSee(['Kvinnlig röst', 'Manlig röst'])
+            ->assertSeeHtml(['data-test="voice-row-en-female"', 'data-test="voice-row-en-male"', 'data-test="voice-row-fr-male"'])
             ->assertSee('LegacyVoice1')
             ->assertSee('Från det äldre fältet')
-            ->assertSee('Ingen röst vald. Appen använder telefonens röst för tyska.')
+            ->assertSee('Appen använder telefonens röst för tyska.')
+            ->assertDontSee('Appen använder telefonens röst för engelska.')
             ->assertDontSee(self::API_KEY);
         $this->assertSame([], $this->requests, 'Sidan anropar inte ElevenLabs förrän något söks');
     }
@@ -164,7 +167,7 @@ class GameVoicesTest extends TestCase
         ]);
 
         $page = $this->page()
-            ->call('startChoosing', 'en')
+            ->call('startChoosing', 'en', 'female')
             ->set('search', 'baritone')
             ->set('accent', 'british')
             ->set('gender', 'male')
@@ -203,7 +206,7 @@ class GameVoicesTest extends TestCase
         ], 'has_more' => false, 'total_count' => 2]));
 
         $page = $this->page()
-            ->call('startChoosing', 'en')
+            ->call('startChoosing', 'en', 'female')
             ->set('source', 'mine')
             ->set('search', 'george')
             ->call('searchVoices')
@@ -223,7 +226,7 @@ class GameVoicesTest extends TestCase
 
         // En egen röst väljs direkt, utan att läggas till.
         $page->call('selectVoice', 0);
-        $this->assertSame(['voice_id' => 'MyClone1', 'name' => 'Min klon', 'category' => 'cloned'], $this->game->refresh()->settings['elevenlabs']['voices']['en']);
+        $this->assertSame(['female' => ['voice_id' => 'MyClone1', 'name' => 'Min klon', 'category' => 'cloned']], $this->game->refresh()->settings['elevenlabs']['voices']['en']);
         $this->assertCount(1, $this->requests);
     }
 
@@ -231,7 +234,7 @@ class GameVoicesTest extends TestCase
     {
         $this->answer('/v1/shared-voices', $this->missingPermission('voices_read'));
 
-        $page = $this->page()->call('startChoosing', 'en')->call('searchVoices');
+        $page = $this->page()->call('startChoosing', 'en', 'female')->call('searchVoices');
 
         $this->assertSame([], $page->get('results'));
         $notification = $this->notifications()[0];
@@ -244,7 +247,7 @@ class GameVoicesTest extends TestCase
     {
         $this->game->update(['settings' => ['elevenlabs' => ['voice_id' => 'LegacyVoice1']]]);
 
-        $this->page()->call('startChoosing', 'en')->call('searchVoices');
+        $this->page()->call('startChoosing', 'en', 'female')->call('searchVoices');
 
         $this->assertSame('Ingen ElevenLabs-nyckel', $this->notifications()[0]['title']);
         $this->assertSame([], $this->requests);
@@ -257,7 +260,7 @@ class GameVoicesTest extends TestCase
         $this->sharedVoicesAnswer([self::sharedVoice(['language' => 'de', 'name' => 'Greta'])]);
         $this->answer('/v1/voices/add/', fn () => Http::response(['voice_id' => 'AddedVoice9']));
 
-        $this->page()->call('startChoosing', 'de')->call('searchVoices')->call('selectVoice', 0)
+        $this->page()->call('startChoosing', 'de', 'female')->call('searchVoices')->call('selectVoice', 0)
             ->assertSet('activeLanguage', null);
 
         $add = $this->requests[1];
@@ -267,7 +270,7 @@ class GameVoicesTest extends TestCase
         $this->assertSame(self::API_KEY, $add->header('xi-api-key')[0]);
 
         $settings = $this->game->refresh()->settings;
-        $this->assertSame(['voice_id' => 'AddedVoice9', 'name' => 'Greta', 'category' => 'professional'], $settings['elevenlabs']['voices']['de']);
+        $this->assertSame(['female' => ['voice_id' => 'AddedVoice9', 'name' => 'Greta', 'category' => 'professional']], $settings['elevenlabs']['voices']['de']);
         $this->assertSame('LegacyVoice1', $settings['elevenlabs']['voice_id'], 'Det äldre fältet rörs inte');
         $this->assertSame(self::API_KEY, Crypt::decryptString($settings['elevenlabs']['api_key']));
         $this->assertSame('https://glosis.se', $settings['site_url']);
@@ -281,12 +284,12 @@ class GameVoicesTest extends TestCase
         $this->sharedVoicesAnswer([self::sharedVoice(['is_added_by_user' => true])]);
         $this->answer('/v2/voices', fn () => Http::response(['voices' => [['voice_id' => 'SharedVoice1', 'name' => 'Eldrin', 'category' => 'professional']], 'has_more' => false, 'total_count' => 1]));
 
-        $this->page()->call('startChoosing', 'en')->call('searchVoices')->call('selectVoice', 0);
+        $this->page()->call('startChoosing', 'en', 'female')->call('searchVoices')->call('selectVoice', 0);
 
         $this->assertCount(2, $this->requests);
         parse_str(parse_url($this->requests[1]->url(), PHP_URL_QUERY), $query);
         $this->assertSame('SharedVoice1', $query['voice_ids']);
-        $this->assertSame('SharedVoice1', $this->game->refresh()->settings['elevenlabs']['voices']['en']['voice_id']);
+        $this->assertSame('SharedVoice1', $this->game->refresh()->settings['elevenlabs']['voices']['en']['female']['voice_id']);
     }
 
     public function test_add_without_voices_write_permission_stores_nothing(): void
@@ -294,7 +297,7 @@ class GameVoicesTest extends TestCase
         $this->sharedVoicesAnswer([self::sharedVoice()]);
         $this->answer('/v1/voices/add/', $this->missingPermission('voices_write'));
 
-        $this->page()->call('startChoosing', 'en')->call('searchVoices')->call('selectVoice', 0);
+        $this->page()->call('startChoosing', 'en', 'female')->call('searchVoices')->call('selectVoice', 0);
 
         $this->assertNull(data_get($this->game->refresh()->settings, 'elevenlabs.voices'));
         $notification = $this->notifications()[0];
@@ -320,7 +323,155 @@ class GameVoicesTest extends TestCase
 
     public function test_unknown_language_is_rejected(): void
     {
-        $this->page()->call('startChoosing', 'sv')->assertStatus(422);
+        $this->page()->call('startChoosing', 'sv', 'female')->assertStatus(422);
+        $this->page()->call('startChoosing', 'en', 'child')->assertStatus(422);
+        $this->page()->call('previewVoice', 'en', 'child')->assertStatus(422);
+        $this->assertSame([], $this->requests);
+    }
+
+    // ---- Kvinnlig och manlig röst --------------------------------------
+
+    public function test_choosing_prefills_the_gender_filter_and_it_stays_editable(): void
+    {
+        $this->sharedVoicesAnswer([self::sharedVoice()]);
+
+        $page = $this->page()->call('startChoosing', 'de', 'male')
+            ->assertSet('activeLanguage', 'de')->assertSet('activeGender', 'male')->assertSet('gender', 'male')
+            ->assertSee('Välj manlig röst för tyska')
+            ->call('searchVoices');
+        parse_str(parse_url($this->requests[0]->url(), PHP_URL_QUERY), $query);
+        $this->assertSame('male', $query['gender']);
+        $this->assertSame('de', $query['language']);
+
+        $page->set('gender', '')->call('searchVoices');
+        parse_str(parse_url($this->requests[1]->url(), PHP_URL_QUERY), $query);
+        $this->assertArrayNotHasKey('gender', $query);
+
+        $this->page()->call('startChoosing', 'de', 'female')->assertSet('gender', 'female');
+    }
+
+    public function test_choosing_male_keeps_the_female_voice_and_moves_the_old_single_voice_to_female(): void
+    {
+        $settings = $this->game->settings;
+        $settings['elevenlabs']['voices'] = ['de' => ['voice_id' => 'OldGerman1', 'name' => 'Greta', 'category' => 'professional']];
+        $this->game->update(['settings' => $settings]);
+        $this->sharedVoicesAnswer([self::sharedVoice(['name' => 'Hans'])]);
+        $this->answer('/v1/voices/add/', fn () => Http::response(['voice_id' => 'GermanMale1']));
+
+        $this->page()->call('startChoosing', 'de', 'male')->call('searchVoices')->call('selectVoice', 0)
+            ->assertSet('activeLanguage', null)->assertSet('activeGender', null);
+
+        $settings = $this->game->refresh()->settings;
+        $this->assertSame([
+            'female' => ['voice_id' => 'OldGerman1', 'name' => 'Greta', 'category' => 'professional'],
+            'male' => ['voice_id' => 'GermanMale1', 'name' => 'Hans', 'category' => 'professional'],
+        ], $settings['elevenlabs']['voices']['de']);
+        $this->assertSame('LegacyVoice1', $settings['elevenlabs']['voice_id']);
+        $this->assertSame('Manlig röst för tyska vald', $this->notifications()[0]['title']);
+
+        $glosis = GlosisSettings::for($this->game);
+        $this->assertSame('OldGerman1', $glosis->elevenLabsVoiceId('de', 'female'));
+        $this->assertSame('GermanMale1', $glosis->elevenLabsVoiceId('de', 'male'));
+
+        // Kvinnlig väljs sedan: den manliga finns kvar.
+        $this->sharedVoicesAnswer([self::sharedVoice(['voice_id' => 'SharedVoice2', 'name' => 'Lena'])]);
+        $this->answer('/v1/voices/add/', fn () => Http::response(['voice_id' => 'GermanFemale2']));
+        $this->page()->call('startChoosing', 'de', 'female')->call('searchVoices')->call('selectVoice', 0);
+        $voices = $this->game->refresh()->settings['elevenlabs']['voices']['de'];
+        $this->assertSame(['female', 'male'], array_keys($voices));
+        $this->assertSame('GermanFemale2', $voices['female']['voice_id']);
+        $this->assertSame('GermanMale1', $voices['male']['voice_id']);
+    }
+
+    public function test_choosing_english_male_leaves_the_legacy_female_voice(): void
+    {
+        $this->sharedVoicesAnswer([self::sharedVoice()]);
+        $this->answer('/v1/voices/add/', fn () => Http::response(['voice_id' => 'EnglishMale1']));
+
+        $this->page()->call('startChoosing', 'en', 'male')->call('searchVoices')->call('selectVoice', 0);
+
+        $settings = $this->game->refresh()->settings;
+        $this->assertSame(['male'], array_keys($settings['elevenlabs']['voices']['en']));
+        $voices = GlosisSettings::for($this->game)->elevenLabsVoices()['en'];
+        $this->assertSame(['voice_id' => 'LegacyVoice1', 'name' => null, 'category' => null, 'source' => 'legacy'], $voices['female']);
+        $this->assertSame('EnglishMale1', $voices['male']['voice_id']);
+        $this->assertSame('voices', $voices['male']['source']);
+    }
+
+    public function test_preview_uses_only_that_slots_voice(): void
+    {
+        $settings = $this->game->settings;
+        $settings['elevenlabs']['voices'] = ['es' => [
+            'female' => ['voice_id' => 'SpanishFemale1', 'name' => 'Lucía'],
+            'male' => ['voice_id' => 'SpanishMale1', 'name' => 'Pablo'],
+        ], 'fr' => ['female' => ['voice_id' => 'FrenchFemale1', 'name' => 'Amélie']]];
+        $this->game->update(['settings' => $settings]);
+        $this->answer('/v1/text-to-speech/', fn () => Http::response(self::MP3, 200, ['Content-Type' => 'audio/mpeg']));
+
+        $page = $this->page()->call('previewVoice', 'es', 'male');
+        $this->assertCount(4, $this->requests);
+        foreach ($this->requests as $request) {
+            $this->assertStringStartsWith('https://api.elevenlabs.io/v1/text-to-speech/SpanishMale1?', $request->url());
+        }
+        $page->call('previewVoice', 'es', 'female');
+        $this->assertCount(8, $this->requests);
+        foreach (array_slice($this->requests, 4) as $request) {
+            $this->assertStringStartsWith('https://api.elevenlabs.io/v1/text-to-speech/SpanishFemale1?', $request->url());
+        }
+
+        $previews = $page->get('previews');
+        $this->assertSame(['es-male', 'es-female'], array_keys($previews));
+        $this->assertStringContainsString(StudioVoice::hash('grandmother', 'normal', 'SpanishMale1', 'es'), $previews['es-male'][0]['url']);
+        $this->assertStringContainsString(StudioVoice::hash('grandmother', 'normal', 'SpanishFemale1', 'es'), $previews['es-female'][0]['url']);
+        $page->assertSeeHtml(['data-test="previews-es-male"', 'data-test="previews-es-female"']);
+
+        // En plats utan röst provlyssnas inte med språkets andra röst.
+        $this->page()->call('previewVoice', 'fr', 'male');
+        $this->assertCount(8, $this->requests);
+        $this->assertSame('Ingen manlig röst för franska vald', collect($this->notifications())->last()['title']);
+    }
+
+    public function test_settings_read_the_new_shape_and_both_older_shapes(): void
+    {
+        $settings = new GlosisSettings(['elevenlabs' => [
+            'voice_id' => 'LegacyVoice1',
+            'voices' => [
+                'de' => ['female' => ['voice_id' => 'GermanFemale1', 'name' => 'Greta'], 'male' => ['voice_id' => 'GermanMale1', 'name' => 'Hans', 'category' => 'professional']],
+                'es' => ['voice_id' => 'OldSpanish1', 'name' => 'Lucía'],
+                'fr' => ['male' => ['voice_id' => 'FrenchMale1']],
+            ],
+        ]]);
+
+        $this->assertSame('GermanFemale1', $settings->elevenLabsVoiceId('de', 'female'));
+        $this->assertSame('GermanMale1', $settings->elevenLabsVoiceId('de', 'male'));
+        $this->assertSame('OldSpanish1', $settings->elevenLabsVoiceId('es', 'female'));
+        $this->assertNull($settings->elevenLabsVoiceId('es', 'male'));
+        $this->assertSame('LegacyVoice1', $settings->elevenLabsVoiceId('en', 'female'));
+        $this->assertSame('LegacyVoice1', $settings->elevenLabsVoiceId('en'));
+        $this->assertNull($settings->elevenLabsVoiceId('en', 'male'));
+        $this->assertNull($settings->elevenLabsVoiceId('fr', 'female'));
+        $this->assertNull($settings->elevenLabsVoiceId('de', 'child'));
+
+        $this->assertSame(['voice_id' => 'OldSpanish1', 'gender' => 'female'], $settings->studioVoice('es', 'male'));
+        $this->assertSame(['voice_id' => 'FrenchMale1', 'gender' => 'male'], $settings->studioVoice('fr', 'female'));
+        $this->assertSame(['voice_id' => 'LegacyVoice1', 'gender' => 'female'], $settings->studioVoice('en', 'male'));
+
+        $voices = $settings->elevenLabsVoices();
+        $this->assertSame(['en', 'de', 'es', 'fr'], array_keys($voices));
+        $this->assertSame(['voice_id' => 'GermanMale1', 'name' => 'Hans', 'category' => 'professional', 'source' => 'voices'], $voices['de']['male']);
+        $this->assertSame(['voice_id' => 'OldSpanish1', 'name' => 'Lucía', 'category' => null, 'source' => 'single'], $voices['es']['female']);
+        $this->assertNull($voices['es']['male']);
+        $this->assertSame('legacy', $voices['en']['female']['source']);
+        $this->assertNull($voices['fr']['female']);
+
+        $this->assertSame(['female' => ['voice_id' => 'OldSpanish1', 'name' => 'Lucía']], $settings->storedVoicesFor('es'));
+        $this->assertSame(['male' => ['voice_id' => 'FrenchMale1']], $settings->storedVoicesFor('fr'));
+        $this->assertSame([], $settings->storedVoicesFor('en'));
+
+        // Ingen röst alls sparad (som i drift nu).
+        $empty = new GlosisSettings([]);
+        $this->assertNull($empty->studioVoice('en', 'female'));
+        $this->assertSame(['female' => null, 'male' => null], $empty->elevenLabsVoices()['en']);
     }
 
     // ---- Provlyssna i Glosis -------------------------------------------
@@ -332,7 +483,7 @@ class GameVoicesTest extends TestCase
         $this->game->update(['settings' => $settings]);
         $this->answer('/v1/text-to-speech/', fn () => Http::response(self::MP3, 200, ['Content-Type' => 'audio/mpeg']));
 
-        $page = $this->page()->call('previewVoice', 'fr');
+        $page = $this->page()->call('previewVoice', 'fr', 'female');
 
         $this->assertCount(4, $this->requests);
         foreach ($this->requests as $request) {
@@ -352,14 +503,14 @@ class GameVoicesTest extends TestCase
         }
         $this->assertSame(4, AiUsage::where('feature', 'tts')->where('environment', 'Admin')->count());
 
-        $clips = $page->get('previews')['fr'];
+        $clips = $page->get('previews')['fr-female'];
         $this->assertCount(4, $clips);
         $this->assertStringStartsWith('https://api.computercat.co/api/v1/games/glosis/tts/audio/', $clips[0]['url']);
         $page->assertSee('<audio controls preload="none" src="'.e($clips[0]['url']).'"', false);
         $this->get($clips[0]['url'])->assertOk()->assertHeader('Content-Type', 'audio/mpeg');
 
         // En gång till: allt finns sparat, inga nya anrop eller kostnader.
-        $this->page()->call('previewVoice', 'fr');
+        $this->page()->call('previewVoice', 'fr', 'female');
         $this->assertCount(4, $this->requests);
         $this->assertSame(4, AiUsage::count());
     }
@@ -370,7 +521,7 @@ class GameVoicesTest extends TestCase
         $settings['ai'] = ['monthly_budget_usd' => 0];
         $this->game->update(['settings' => $settings]);
 
-        $this->page()->call('previewVoice', 'en');
+        $this->page()->call('previewVoice', 'en', 'female');
 
         $this->assertSame([], $this->requests);
         $this->assertSame(0, AiUsage::count());
@@ -381,7 +532,7 @@ class GameVoicesTest extends TestCase
     {
         $this->answer('/v1/text-to-speech/', $this->missingPermission('text_to_speech'));
 
-        $this->page()->call('previewVoice', 'en');
+        $this->page()->call('previewVoice', 'en', 'female');
 
         $this->assertSame(0, AiUsage::count());
         $this->assertStringContainsString('saknar behörigheten text_to_speech', $this->notifications()[0]['body']);
