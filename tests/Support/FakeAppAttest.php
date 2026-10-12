@@ -52,7 +52,7 @@ final class FakeAppAttest
             $o['aaguid'] ?? self::AAGUID_PRODUCTION,
             $o['credentialId'] ?? $keyId,
             $point,
-            $o['extensions'] ?? ['apple_bundle_version_01' => CborEncoder::text('1'), 'apple_validation_category_01' => "\x01\0\0\0"],
+            $o['extensions'] ?? ['apple_bundle_version_01' => CborEncoder::text('1'), 'apple_validation_category_01' => "\x04\0\0\0"],
         );
         $nonce = $o['nonce'] ?? hash('sha256', $authData.hash('sha256', $challenge, true), true);
         $leaf = $this->leaf($key, $nonce, $o['leafDays'] ?? 3);

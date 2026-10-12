@@ -39,6 +39,10 @@ final readonly class AuthenticatorData
         $aaguid = $credentialId = $cose = null;
 
         if ($attested) {
+            // AT-flaggan (0x40) ska vara satt när attesterad nyckeldata följer (WebAuthn §6.1).
+            if (($flags & 0x40) === 0) {
+                throw new InvalidAttestationException('authData: AT-flaggan saknas');
+            }
             if (strlen($data) < 55) {
                 throw new InvalidAttestationException('authData saknar attesterad nyckel');
             }
@@ -86,7 +90,10 @@ final readonly class AuthenticatorData
         return is_string($v) && $v !== '' && strlen($v) <= 64 && mb_check_encoding($v, 'UTF-8') ? $v : null;
     }
 
-    /** Artikeln säger UInt32; Apples exempel har 4 byte little-endian. Båda tolkas. */
+    /**
+     * Artikeln säger UInt32; Apples exempel (attestation-object-validation-guide) kodar den
+     * som 4 byte little-endian bytesträng. Både CBOR-heltal och den formen tolkas.
+     */
     public function validationCategory(): ?int
     {
         $v = $this->extensions['apple_validation_category_01'] ?? null;

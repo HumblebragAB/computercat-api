@@ -14,9 +14,28 @@ use RuntimeException;
  */
 final class AppAttestVerifier
 {
-    public const ROOT_CERT_PATH = 'certs/Apple_App_Attestation_Root_CA.pem';
+    /**
+     * https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem, hämtad 2026-10-12.
+     * Inbäddad i koden (publikt certifikat, ingen hemlighet) och kontrollerad mot ROOT_SHA256 vid varje konstruktion.
+     */
+    public const APPLE_ROOT_PEM = <<<'PEM'
+-----BEGIN CERTIFICATE-----
+MIICITCCAaegAwIBAgIQC/O+DvHN0uD7jG5yH2IXmDAKBggqhkjOPQQDAzBSMSYw
+JAYDVQQDDB1BcHBsZSBBcHAgQXR0ZXN0YXRpb24gUm9vdCBDQTETMBEGA1UECgwK
+QXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTAeFw0yMDAzMTgxODMyNTNa
+Fw00NTAzMTUwMDAwMDBaMFIxJjAkBgNVBAMMHUFwcGxlIEFwcCBBdHRlc3RhdGlv
+biBSb290IENBMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9y
+bmlhMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERTHhmLW07ATaFQIEVwTtT4dyctdh
+NbJhFs/Ii2FdCgAHGbpphY3+d8qjuDngIN3WVhQUBHAoMeQ/cLiP1sOUtgjqK9au
+Yen1mMEvRq9Sk3Jm5X8U62H+xTD3FE9TgS41o0IwQDAPBgNVHRMBAf8EBTADAQH/
+MB0GA1UdDgQWBBSskRBTM72+aEH/pwyp5frq5eWKoTAOBgNVHQ8BAf8EBAMCAQYw
+CgYIKoZIzj0EAwMDaAAwZQIwQgFGnByvsiVbpTKwSga0kP0e8EeDS4+sQmTvb7vn
+53O5+FRXgeLhpJ06ysC5PrOyAjEAp5U4xDgEgllF7En3VcE3iexZZtKeYnpqtijV
+oyFraWVIyd/dganmrduC1bmTBGwD
+-----END CERTIFICATE-----
+PEM;
 
-    /** SHA-256 (DER) för https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem, hämtad 2026-10-12. */
+    /** SHA-256 (DER) för APPLE_ROOT_PEM. */
     public const ROOT_SHA256 = '1cb9823ba28ba6ad2d33a006941de2ae4f513ef1d4e831b9f7e0fa7b6242c932';
 
     public const NONCE_OID = '1.2.840.113635.100.8.2';
@@ -26,60 +45,107 @@ final class AppAttestVerifier
 
     public const AAGUID_PRODUCTION = "appattest\0\0\0\0\0\0\0";
 
-    /** "appattestdevelop" i valideringsartikeln, "appattestsandbox" i preparing-to-use. Båda är development. */
+    /**
+     * "appattestdevelop": validating-apps-that-connect-to-your-server, steg 8.
+     * "appattestsandbox": preparing-to-use-the-app-attest-service ("When sending a sandbox-generated
+     * attestation object to your server ... expect to find the value appattestsandbox in the
+     * authenticator data's aaguid field"). Båda räknas som development.
+     */
     public const AAGUIDS_DEVELOPMENT = ['appattestdevelop', 'appattestsandbox'];
 
     private const MAX_ATTESTATION_BYTES = 16_384;
 
     private const MAX_ASSERTION_BYTES = 2_048;
 
+    /**
+     * apple_validation_category_01 (validating-apps-that-connect-to-your-server, steg 10):
+     * 2 = TestFlight, 4 = App Store. 3 = development-signerad, bara när development är tillåtet.
+     * Allt annat (saknas, 0 ogiltig, 1 OS-binär, 5 Enterprise/ad hoc, 6 Developer ID,
+     * 7–9 olämpliga, 10 övrigt, okända) avvisas.
+     */
+    public const PRODUCTION_CATEGORIES = [2, 4];
+
+    public const DEVELOPMENT_CATEGORIES = [3];
+
     private readonly OpenSSLCertificate $root;
 
-    public function __construct(?string $rootPem = null)
+    /** @var list<int> */
+    private readonly array $productionCategories;
+
+    /** @var list<int> */
+    private readonly array $developmentCategories;
+
+    /**
+     * @param  string|null  $rootPem  null = Apples inbäddade rot (pinnad). Annan rot bara i tester.
+     * @param  list<int>  $productionCategories  tillåtna validation categories alltid
+     * @param  list<int>  $developmentCategories  tillåtna dessutom när $allowDevelopment
+     */
+    public function __construct(?string $rootPem = null, array $productionCategories = self::PRODUCTION_CATEGORIES, array $developmentCategories = self::DEVELOPMENT_CATEGORIES)
     {
-        $root = $rootPem === null ? self::loadPinnedRoot(resource_path(self::ROOT_CERT_PATH)) : @openssl_x509_read($rootPem);
+        $root = $rootPem === null ? self::pinnedRoot(self::APPLE_ROOT_PEM) : @openssl_x509_read($rootPem);
         if (! $root instanceof OpenSSLCertificate) {
             throw new RuntimeException('App Attest-roten går inte att läsa');
         }
+        foreach ([$productionCategories, $developmentCategories] as $set) {
+            if (! array_is_list($set) || array_filter($set, fn ($c) => ! is_int($c)) !== []) {
+                throw new RuntimeException('Validation categories måste vara en lista med heltal');
+            }
+        }
         $this->root = $root;
+        $this->productionCategories = $productionCategories;
+        $this->developmentCategories = $developmentCategories;
     }
 
-    /** Läser roten och kontrollerar att det är Apples (för test av kontrollen). */
-    public static function fromRootFile(string $path): self
+    /** Verifier med en rot som måste ha Apples fingeravtryck (för test av pinningen). */
+    public static function fromPinnedPem(string $pem): self
     {
-        $root = self::loadPinnedRoot($path);
-        openssl_x509_export($root, $pem);
+        $root = self::pinnedRoot($pem);
+        openssl_x509_export($root, $out);
 
-        return new self($pem);
+        return new self($out);
     }
 
-    private static function loadPinnedRoot(string $path): OpenSSLCertificate
+    private static function pinnedRoot(string $pem): OpenSSLCertificate
     {
-        $pem = @file_get_contents($path);
-        $cert = $pem === false ? false : @openssl_x509_read($pem);
+        $cert = @openssl_x509_read($pem);
         if (! $cert instanceof OpenSSLCertificate) {
-            throw new RuntimeException('Apple App Attestation Root CA saknas i resources/'.self::ROOT_CERT_PATH);
+            throw new RuntimeException('Apple App Attestation Root CA går inte att läsa');
         }
         if (! hash_equals(self::ROOT_SHA256, (string) openssl_x509_fingerprint($cert, 'sha256'))) {
-            throw new RuntimeException('Apple App Attestation Root CA har fel SHA-256, filen är utbytt eller trasig');
+            throw new RuntimeException('Apple App Attestation Root CA har fel SHA-256');
         }
 
         return $cert;
     }
 
     /**
+     * @param  string  $attestation  rått attesteringsobjekt (CBOR)
      * @param  string  $keyId  rå keyId (32 byte) från appen
-     * @param  string  $clientDataHash  SHA256 av challengen som servern gav ut
+     * @param  string  $challenge  den engångs-challenge servern gav ut; clientDataHash = SHA256(challenge) räknas här
      * @param  string  $appId  Team ID + "." + bundle-id
      *
      * @throws InvalidAttestationException
      */
-    public function verifyAttestation(string $attestation, string $keyId, string $clientDataHash, string $appId, int $now, bool $allowDevelopment): AttestedKey
+    public function verifyAttestation(string $attestation, string $keyId, string $challenge, string $appId, int $now, bool $allowDevelopment): AttestedKey
+    {
+        if ($challenge === '') {
+            throw new InvalidAttestationException('challenge saknas');
+        }
+
+        return $this->verifyWithClientDataHash($attestation, $keyId, hash('sha256', $challenge, true), $appId, $now, $allowDevelopment);
+    }
+
+    /**
+     * Kärnan. Privat: i drift är clientDataHash alltid SHA256(challenge) via verifyAttestation.
+     * Bara testet för Apples exempelvektor (som kräver den råa challengen, forumtråd 842509)
+     * anropar den direkt via reflection.
+     */
+    private function verifyWithClientDataHash(string $attestation, string $keyId, string $clientDataHash, string $appId, int $now, bool $allowDevelopment): AttestedKey
     {
         if ($attestation === '' || strlen($attestation) > self::MAX_ATTESTATION_BYTES) {
             throw new InvalidAttestationException('Attesteringen saknas eller är för stor');
         }
-        if (strlen($keyId) !== 32 || strlen($clientDataHash) === 0) {
+        if (strlen($keyId) !== 32 || $clientDataHash === '') {
             throw new InvalidAttestationException('keyId eller clientDataHash har fel längd');
         }
 
@@ -146,11 +212,17 @@ final class AppAttestVerifier
             throw new InvalidAttestationException('COSE-nyckeln är inte credCerts nyckel');
         }
 
-        // 10–11. Extensions tolkas och sparas men avgör inte än (talvärdena för
-        // App Store och TestFlight är odokumenterade; se beslut 2026-10-12).
+        // 10. apple_validation_category_01 ska vara en tillåten kategori (se PRODUCTION_CATEGORIES).
+        $category = $auth->validationCategory();
+        $allowed = $allowDevelopment ? [...$this->productionCategories, ...$this->developmentCategories] : $this->productionCategories;
+        if ($category === null || ! in_array($category, $allowed, true)) {
+            throw new InvalidAttestationException('validation category '.($category ?? 'saknas').' är inte tillåten');
+        }
+
+        // 11. apple_bundle_version_01 tolkas och sparas men avgör inte.
         // Kvittot (receipt) krävs i formen men sparas inte: det behövs bara för Apples riskbedömning
         // (assessing-fraud-risk), som inte används i v1. Dataminimering; läggs till om riskbedömningen behövs.
-        return new AttestedKey($keyId, $details['key'], $environment, $auth->bundleVersion(), $auth->validationCategory());
+        return new AttestedKey($keyId, $details['key'], $environment, $auth->bundleVersion(), $category);
     }
 
     /** @param list<mixed> $x5c */
