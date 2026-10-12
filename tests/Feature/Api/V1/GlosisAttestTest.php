@@ -233,6 +233,16 @@ class GlosisAttestTest extends TestCase
         $this->postJson('/api/v1/games/glosis/attest/register', [])->assertStatus(503);
     }
 
+    public function test_saknat_team_id_loggas_en_gang_per_anrop(): void
+    {
+        $settings = $this->game->settings;
+        unset($settings['app_attest']);
+        $this->game->update(['settings' => $settings]);
+        Log::spy();
+        $this->postJson('/api/v1/games/glosis/attest/register', [])->assertStatus(503);
+        Log::shouldHaveReceived('error')->withArgs(fn ($m) => str_contains($m, 'team_id'))->once();
+    }
+
     public function test_team_id_med_fel_form_ger_503(): void
     {
         $this->game->update(['settings' => array_merge($this->game->settings, ['app_attest' => ['team_id' => 'abc.evil']])]);

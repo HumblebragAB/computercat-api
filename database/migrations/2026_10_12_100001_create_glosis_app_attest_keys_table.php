@@ -16,7 +16,14 @@ return new class extends Migration
         Schema::create('glosis_app_attest_keys', function (Blueprint $table) {
             $table->id();
             $table->foreignId('game_id')->constrained()->cascadeOnDelete();
-            $table->string('key_id', 44);          // base64(SHA256(publika nyckeln)), som appen skickar den
+            // base64(SHA256(publika nyckeln)), som appen skickar den. base64 är skiftlägeskänsligt, men
+            // MySQL:s standardsortering (utf8mb4_unicode_ci) är det inte: då kunde två olika nycklar
+            // krocka i unique-indexet och en uppslagning träffa fel rad. ascii_bin jämför byte för byte.
+            // SQLite (testerna) känner inte till ascii_bin men jämför redan binärt (BINARY) som standard.
+            $keyId = $table->string('key_id', 44);
+            if (in_array(Schema::getConnection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                $keyId->charset('ascii')->collation('ascii_bin');
+            }
             $table->text('public_key');            // PEM ur credCert
             $table->unsignedInteger('sign_count')->default(0);
             $table->string('environment', 16);     // production | development

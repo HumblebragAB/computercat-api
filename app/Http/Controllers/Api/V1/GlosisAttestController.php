@@ -32,11 +32,16 @@ class GlosisAttestController extends Controller
     /** base64 av en attestering (ungefär 5,5 kB rå i praktiken) med god marginal. */
     private const MAX_ATTESTATION_B64 = 22_000;
 
+    /**
+     * Gräns för vår egen json_decode. Den skyddar inte mot stora anrop: Laravels globala TrimStrings och
+     * ConvertEmptyStringsToNull har redan tolkat JSON-kroppen innan controllern körs (som för TTS-routen).
+     * Storleken på hela anropet begränsas av nginx (client_max_body_size) och PHP (post_max_size).
+     */
     private const MAX_BODY_BYTES = 24_000;
 
     public function challenge(Game $game, AttestChallenges $challenges): JsonResponse
     {
-        if (! $this->available($game)) {
+        if ($this->appId($game) === null) {
             return $this->error(503, 'free_unavailable', self::UNAVAILABLE);
         }
 
@@ -45,10 +50,10 @@ class GlosisAttestController extends Controller
 
     public function register(Request $request, Game $game, AppAttestVerifier $verifier, AttestChallenges $challenges): JsonResponse
     {
-        if (! $this->available($game)) {
+        $appId = $this->appId($game);
+        if ($appId === null) {
             return $this->error(503, 'free_unavailable', self::UNAVAILABLE);
         }
-        $appId = (string) GlosisSettings::for($game)->appAttestAppId();
 
         $content = $request->getContent();
         $body = strlen($content) <= self::MAX_BODY_BYTES ? json_decode($content, true, 4) : null;
@@ -62,7 +67,7 @@ class GlosisAttestController extends Controller
 
             return $this->error(422, 'invalid_attestation', self::INVALID);
         }
-        $keyHash = AppAttestKey::hashForLog($keyIdB64);
+        $keyHash = AppAttestKey::hashForLog(base64_encode($keyId));
         // Challengen förbrukas före den dyra kontrollen: en avvisad attestering bränner den, och samma
         // challenge kan aldrig prövas två gånger.
         if (! $challenges->consume($challenge)) {
@@ -120,11 +125,12 @@ class GlosisAttestController extends Controller
         return response()->json(['status' => 'registered']);
     }
 
-    private function available(Game $game): bool
+    /** App ID för attesteringen, eller null när gratisnivån är avstängd eller Team ID saknas (503). Läses en gång per anrop. */
+    private function appId(Game $game): ?string
     {
         $settings = GlosisSettings::for($game);
 
-        return $settings->freeEnabled() && $settings->appAttestAppId() !== null;
+        return $settings->freeEnabled() ? $settings->appAttestAppId() : null;
     }
 
     private function error(int $status, string $code, string $message): JsonResponse
