@@ -9,6 +9,7 @@ use App\Services\Glosis\AiBudget;
 use App\Services\Glosis\AiCost;
 use App\Services\Glosis\BudgetReservation;
 use App\Services\Glosis\FreeGate;
+use App\Services\Glosis\FreeScanWeek;
 use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\GlosisRejection;
 use App\Services\Glosis\GlosisSettings;
@@ -20,6 +21,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Throwable;
@@ -54,9 +56,6 @@ class GlosisScanController extends Controller
     public const MAX_IMAGE_DIMENSION = 8000;
 
     public const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
-
-    /** Gånger per nyckel och vecka som gratisfotot återförs efter en oläsbar bild (inga ord eller scan_failed). */
-    public const FREE_SCAN_WEEKLY_REFUNDS = 2;
 
     /**
      * Claude API: högst 10 MB per bild, base64-kodad
@@ -138,25 +137,34 @@ class GlosisScanController extends Controller
             return $this->error(503, 'scan_unavailable', 'Att fota läxan fungerar inte just nu. Skriv in orden själv så länge.');
         }
 
-        // 6. Månadsbudgeten (gratis: också gratisnivåns delbudget): reservera en
-        // övre uppskattning, rättas efter svaret.
-        $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN, $caller->tier);
-        if ($reservation === null) {
-            return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
-        }
-
-        // 7. Veckogränsen. Räknas först och avgörs på värdet hit() returnerar:
-        // cachens increment är atomisk (databas-store: lockForUpdate i en
-        // transaktion), så parallella anrop kan inte alla se en räknare under
-        // gränsen. Räknas bara när indata och köp eller nyckel godkänts.
         $nowStockholm = CarbonImmutable::now(GuldStatus::TIME_ZONE);
         $secondsToMonday = max(1, (int) ceil($nowStockholm->diffInSeconds($nowStockholm->startOfWeek(CarbonImmutable::MONDAY)->addWeek())));
-        $refundWeekly = null;
+
         if ($transaction === null) {
-            $refundWeekly = $this->freeLimits($game, $caller, $budget, $reservation, $free, $nowStockholm, $secondsToMonday);
+            // 6–7 gratis. Gränserna före budgeten: en nyckel som använt veckans
+            // foto får 429 free_scan_used (inte budget_exhausted), och nekade
+            // anrop håller aldrig någon reservation.
+            [$week, $rollback] = $this->freeLimits($game, $caller, $free, $nowStockholm, $secondsToMonday);
+            $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN, $caller->tier);
+            if ($reservation === null) {
+                $rollback();
+
+                return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
+            }
         } else {
-            // Guld: per köp och ISO-vecka i Stockholm (Filament:
-            // settings.scan.weekly_limit, sandbox lägre).
+            $week = null;
+
+            // 6. Månadsbudgeten: reservera en övre uppskattning, rättas efter svaret.
+            $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN);
+            if ($reservation === null) {
+                return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
+            }
+
+            // 7. Veckogräns per köp och ISO-vecka i Stockholm (Filament:
+            // settings.scan.weekly_limit, sandbox lägre). Räknas först och avgörs på
+            // värdet hit() returnerar: cachens increment är atomisk (databas-store:
+            // lockForUpdate i en transaktion), så parallella anrop kan inte alla se
+            // en räknare under gränsen. Räknas bara när indata och köp godkänts.
             $hits = RateLimiter::hit(self::weeklyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMonday + 60);
             if ($hits > GlosisSettings::for($game)->scanWeeklyLimit($transaction->environment)) {
                 $budget->release($reservation);
@@ -177,7 +185,7 @@ class GlosisScanController extends Controller
             } else {
                 $budget->release($reservation);
             }
-            $refunded = $refundWeekly !== null && $this->refundFreeScan($refundWeekly, $caller, $secondsToMonday);
+            $refunded = $week !== null && $this->refundFreeScan($week, $caller);
             Log::warning('Glosis scan: avläsningen misslyckades', [
                 'environment' => $caller->environment,
                 'tier' => $caller->tier,
@@ -192,8 +200,13 @@ class GlosisScanController extends Controller
             return $this->error(502, 'scan_failed', 'Jag kunde inte läsa bilden. Ta en ny bild rakt ovanifrån i bra ljus och försök igen.');
         } catch (Throwable $e) {
             $budget->release($reservation);
-            if ($refundWeekly !== null) {
-                $this->refundFreeScan($refundWeekly, $caller, $secondsToMonday);
+            if ($week !== null) {
+                // Ett fel i cachen här får inte dölja det ursprungliga felet.
+                try {
+                    $this->refundFreeScan($week, $caller);
+                } catch (Throwable $refundError) {
+                    Log::error('Glosis scan: veckans gratisfoto gick inte att återföra', ['key' => $caller->logHash(), 'error' => $refundError::class]);
+                }
             }
 
             throw $e;
@@ -202,8 +215,7 @@ class GlosisScanController extends Controller
         $this->recordUsage($game, $budget, $reservation, $caller, $result->model, $result->inputTokens, $result->outputTokens);
 
         // Inga ord: barnet ska inte förlora veckans foto på en suddig bild.
-        $refunded = $refundWeekly !== null && count($result->words) === 0
-            && $this->refundFreeScan($refundWeekly, $caller, $secondsToMonday);
+        $refunded = $week !== null && count($result->words) === 0 && $this->refundFreeScan($week, $caller);
 
         Log::info('Glosis scan: klar', [
             'environment' => $caller->environment,
@@ -221,65 +233,70 @@ class GlosisScanController extends Controller
     }
 
     /**
-     * Gratisgränserna: veckans foto per nyckel, ett globalt dagstak och ett
-     * dagstak per IP. Räknas först och avgörs på värdet hit() returnerar, som
-     * Guld-gränsen. Returnerar veckoräknarens nyckel, så att den kan återföras
-     * om bilden inte gick att läsa. Dagstaken återförs aldrig: de begränsar
-     * också återförda anrop till Claude.
+     * Gratisgränserna: veckans foto per nyckel (FreeScanWeek), ett globalt
+     * dagstak och ett dagstak per IP. Dagstaken räknas med Cache::add +
+     * Cache::increment och rullas tillbaka med Cache::decrement, alla atomiska
+     * (inte RateLimiter, vars increment kan skriva över ett parallellt anrop med
+     * put). Dagstaken återförs aldrig efter Claude: de begränsar också återförda
+     * anrop.
+     *
+     * @return array{0: FreeScanWeek, 1: \Closure(): void} veckan och en återställning för avslag före Claude
      *
      * @throws GlosisRejection 429 free_scan_used | free_busy
      */
-    private function freeLimits(Game $game, GlosisCaller $caller, AiBudget $budget, BudgetReservation $reservation, FreeGate $free, CarbonImmutable $now, int $secondsToMonday): string
+    private function freeLimits(Game $game, GlosisCaller $caller, FreeGate $free, CarbonImmutable $now, int $secondsToMonday): array
     {
         $settings = GlosisSettings::for($game);
         $day = $now->format('Y-m-d');
         $dayTtl = (int) ceil($now->diffInSeconds($now->addDay()->startOfDay())) + 60;
-        $weekTtl = $secondsToMonday + 60;
-        $weekKey = self::freeWeekKey($caller, $now);
+        $week = FreeScanWeek::for($caller, $now, $secondsToMonday + 60);
         $globalKey = 'glosis-scan:free-day:'.$game->id.':'.$day;
         $ipKey = 'glosis-scan:free-ip:'.$caller->ipLimitId().':'.$day;
 
-        if (RateLimiter::hit($weekKey, $weekTtl) > GlosisSettings::FREE_SCAN_WEEKLY_PER_KEY) {
-            RateLimiter::decrement($weekKey, $weekTtl);
-            $budget->release($reservation);
+        $slot = $week->claim();
+        if ($slot === null) {
             Log::info('Glosis scan: veckans gratisfoto använt', ['key' => $caller->logHash()]);
 
             throw $free->reject(429, 'free_scan_used', GuldGate::FEATURE_SCAN, ['retry_after' => $secondsToMonday], ['Retry-After' => (string) $secondsToMonday]);
         }
-        $globalOver = RateLimiter::hit($globalKey, $dayTtl) > $settings->freeScanDailyLimit();
-        $ipOver = RateLimiter::hit($ipKey, $dayTtl) > $settings->freeScanIpDailyLimit();
-        if ($globalOver || $ipOver) {
-            RateLimiter::decrement($weekKey, $weekTtl);
-            RateLimiter::decrement($globalKey, $dayTtl);
-            RateLimiter::decrement($ipKey, $dayTtl);
-            $budget->release($reservation);
-            Log::warning('Glosis scan: gratistaket nått', ['key' => $caller->logHash(), 'scope' => $globalOver ? 'global' : 'ip']);
+
+        $counted = [];
+        $rollback = function () use ($week, $slot, &$counted) {
+            foreach ($counted as $key) {
+                Cache::decrement($key);
+            }
+            $week->release($slot);
+        };
+        $over = null;
+        foreach ([[$globalKey, $settings->freeScanDailyLimit(), 'global'], [$ipKey, $settings->freeScanIpDailyLimit(), 'ip']] as [$key, $limit, $scope]) {
+            Cache::add($key, 0, $dayTtl);
+            $hits = Cache::increment($key);
+            if ($hits !== false) {
+                $counted[] = $key;
+            }
+            // Räknaren svarar inte: stäng hellre än att släppa igenom.
+            if ($hits === false || $hits > $limit) {
+                $over ??= $scope;
+            }
+        }
+        if ($over !== null) {
+            $rollback();
+            Log::warning('Glosis scan: gratistaket nått', ['key' => $caller->logHash(), 'scope' => $over]);
 
             throw $free->reject(429, 'free_busy', GuldGate::FEATURE_SCAN);
         }
 
-        return $weekKey;
+        return [$week, $rollback];
     }
 
-    public static function freeWeekKey(GlosisCaller $caller, \DateTimeInterface $now): string
+    /** Återför veckans gratisfoto (högst FreeScanWeek::MAX_REFUNDS gånger per vecka; nekade försök räknas också). */
+    private function refundFreeScan(FreeScanWeek $week, GlosisCaller $caller): bool
     {
-        return 'glosis-scan:free:'.$caller->limitId().':'.CarbonImmutable::instance($now)->setTimezone(GuldStatus::TIME_ZONE)->format('o-\WW');
-    }
-
-    /**
-     * Återför veckans gratisfoto efter en oläsbar bild. Högst
-     * FREE_SCAN_WEEKLY_REFUNDS gånger per nyckel och vecka, så att tomma
-     * bilder inte ger obegränsat med anrop till Claude.
-     */
-    private function refundFreeScan(string $weekKey, GlosisCaller $caller, int $secondsToMonday): bool
-    {
-        $ttl = $secondsToMonday + 60;
-        if (RateLimiter::hit($weekKey.':refunds', $ttl) > self::FREE_SCAN_WEEKLY_REFUNDS) {
+        if (! $week->refund()) {
             Log::info('Glosis scan: veckans återföringar av gratisfotot är slut', ['key' => $caller->logHash()]);
 
             return false;
         }
-        RateLimiter::decrement($weekKey, $ttl);
 
         return true;
     }

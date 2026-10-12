@@ -2,18 +2,19 @@
 
 namespace Tests\Feature\Api\V1;
 
-use App\Http\Controllers\Api\V1\GlosisScanController;
 use App\Models\AiUsage;
 use App\Models\AppAttestKey;
 use App\Models\Game;
 use App\Services\Glosis\AiBudget;
 use App\Services\Glosis\AppAttest\AppAttestVerifier;
+use App\Services\Glosis\FreeScanWeek;
 use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\HomeworkScanner;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Testing\TestResponse;
@@ -194,19 +195,23 @@ class GlosisFreeScanTest extends TestCase
     {
         $this->mock(HomeworkScanner::class, fn ($m) => $m->shouldReceive('scan')->once()->andThrow(new \RuntimeException('boom')));
         $this->scan()->assertStatus(500);
-        $this->assertSame(0, (int) RateLimiter::attempts(GlosisScanController::freeWeekKey($this->caller(), now())));
-        $this->assertSame(0, (int) cache()->get(AiBudget::freeMonthKey($this->game, now())));
-        $this->assertSame(0, (int) cache()->get(AiBudget::monthKey($this->game, now())));
+        $this->assertSame(0, (int) Cache::get(AiBudget::freeMonthKey($this->game, now())));
+        $this->assertSame(0, (int) Cache::get(AiBudget::monthKey($this->game, now())));
+
+        // Återförd: en ny plats är öppen.
+        $this->app->instance(HomeworkScanner::class, new HomeworkScanner($this->claude));
+        $this->words();
+        $this->scan()->assertOk();
     }
 
     public function test_aterforingarna_ar_begransade_per_vecka(): void
     {
         $this->claude->always(FakeClaudeTransport::json(['title' => '', 'words' => []]));
-        for ($i = 0; $i <= GlosisScanController::FREE_SCAN_WEEKLY_REFUNDS; $i++) {
+        for ($i = 0; $i <= FreeScanWeek::MAX_REFUNDS; $i++) {
             $this->scan()->assertOk();
         }
         $this->scan()->assertStatus(429)->assertJson(['error' => 'free_scan_used']);
-        $this->assertCount(GlosisScanController::FREE_SCAN_WEEKLY_REFUNDS + 1, $this->claude->requests);
+        $this->assertCount(FreeScanWeek::MAX_REFUNDS + 1, $this->claude->requests);
     }
 
     public function test_aterforda_anrop_raknas_mot_ip_taket(): void
@@ -224,7 +229,7 @@ class GlosisFreeScanTest extends TestCase
         $this->game->update(['settings' => array_merge($this->game->settings, ['free' => ['enabled' => false]])]);
         $this->scan()->assertStatus(503)->assertJson(['error' => 'free_unavailable']);
         $this->assertCount(0, $this->claude->requests);
-        $this->assertSame(0, (int) RateLimiter::attempts(GlosisScanController::freeWeekKey($this->caller(), now())));
+        $this->assertWeekUnused();
         $this->assertSame(0, $this->key->fresh()->sign_count);
     }
 
@@ -233,7 +238,7 @@ class GlosisFreeScanTest extends TestCase
         $this->settings(['monthly_budget_usd' => 0]);
         $this->scan()->assertStatus(503)->assertJson(['error' => 'budget_exhausted']);
         $this->assertCount(0, $this->claude->requests);
-        $this->assertSame(0, (int) RateLimiter::attempts(GlosisScanController::freeWeekKey($this->caller(), now())));
+        $this->assertWeekUnused();
     }
 
     public function test_bade_proof_och_attest_ger_422(): void
@@ -248,6 +253,82 @@ class GlosisFreeScanTest extends TestCase
             ->assertStatus(422)->assertJson(['error' => 'invalid_attest']);
         $this->post(self::URL, ['image' => $this->image(), 'attest' => ''], ['Accept' => 'application/json'])
             ->assertStatus(422)->assertJson(['error' => 'invalid_attest']);
+    }
+
+    public function test_anvand_vecka_ger_free_scan_used_fore_budgeten(): void
+    {
+        $this->words();
+        $this->scan()->assertOk();
+        $this->settings(['monthly_budget_usd' => 0]);
+        $this->scan()->assertStatus(429)->assertJson(['error' => 'free_scan_used']);
+    }
+
+    public function test_slut_pa_budget_lamnar_tillbaka_platsen_och_dagstaken(): void
+    {
+        $this->settings(['monthly_budget_usd' => 0, 'scan_ip_daily_limit' => 1]);
+        $this->scan()->assertStatus(503)->assertJson(['error' => 'budget_exhausted']);
+        $this->assertSame(0, (int) Cache::get('glosis-scan:free-ip:'.$this->caller()->ipLimitId().':'.$this->base->format('Y-m-d')));
+
+        $this->settings(['scan_ip_daily_limit' => 1]);
+        $this->words();
+        $this->scan()->assertOk();
+    }
+
+    public function test_gratisvagen_anvander_inte_ratelimiter_for_veckan(): void
+    {
+        $this->words();
+        $this->scan()->assertOk();
+        $week = $this->week();
+        $this->assertSame(0, (int) RateLimiter::attempts($week->key()));
+        $this->assertFalse(Cache::has($week->key()));
+        $this->assertTrue(Cache::has($week->key().':slot:0'));
+    }
+
+    /** Anropen flätas samman för hand: varje beviljat foto äger en unik plats, och taket håller. */
+    public function test_veckans_platser_under_sammanflatade_anrop(): void
+    {
+        $a = $this->week();
+        $b = $this->week();
+
+        $this->assertSame(0, $a->claim());
+        $this->assertNull($b->claim()); // parallellt anrop: platsen är tagen
+
+        // a fick inga ord: en ny plats öppnas, och bara ett av två parallella anrop får den.
+        $this->assertTrue($a->refund());
+        $this->assertSame(1, $b->claim());
+        $this->assertNull($a->claim());
+
+        // Ett anrop som nekas före Claude lämnar tillbaka sin plats, och nästa tar den.
+        $b->release(1);
+        $this->assertSame(1, $a->claim());
+
+        // Återföringarna tar slut; nekade försök räknas också, så fler försök ger inget.
+        $this->assertTrue($b->refund());
+        $this->assertSame(2, $b->claim());
+        for ($i = 0; $i < 5; $i++) {
+            $this->assertFalse($a->refund());
+        }
+        $this->assertNull($a->claim());
+        $this->assertNull($b->claim());
+    }
+
+    /** Den gamla felmoden: en räknare som står på 0 (efter decrement) får inte tappa ett parallellt anrop. */
+    public function test_rester_av_gamla_raknare_paverkar_inte_platserna(): void
+    {
+        $week = $this->week();
+        Cache::put($week->key(), 0, 3600);
+        $this->assertSame(0, $week->claim());
+        $this->assertNull($this->week()->claim());
+    }
+
+    private function week(): FreeScanWeek
+    {
+        return FreeScanWeek::for($this->caller(), now(), 3600);
+    }
+
+    private function assertWeekUnused(): void
+    {
+        $this->assertFalse(Cache::has($this->week()->key().':slot:0'));
     }
 
     private function caller(): GlosisCaller
