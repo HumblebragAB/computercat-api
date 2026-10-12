@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\DailyContentController;
 use App\Http\Controllers\Api\V1\GameController;
 use App\Http\Controllers\Api\V1\GameEventController;
 use App\Http\Controllers\Api\V1\GameSaveController;
+use App\Http\Controllers\Api\V1\GlosisAttestController;
 use App\Http\Controllers\Api\V1\GlosisScanController;
 use App\Http\Controllers\Api\V1\GlosisTtsController;
 use App\Http\Controllers\Api\V1\InterestSignupController;
@@ -84,6 +85,17 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         ->middleware(['signed', 'throttle:glosis-tts-audio'])
         ->withoutMiddleware('throttle:60,1')
         ->name(\App\Services\Glosis\StudioVoice::AUDIO_ROUTE);
+
+    // Glosis gratisnivå (App Attest, iOS). Challenge per gratisförfrågan; registrering en gång per
+    // installation. Egna gränser i stället för den globala (60/min), eftersom en skolklass delar IP.
+    Route::middleware([ResolveGame::class])
+        ->withoutMiddleware(\Illuminate\Routing\Middleware\SubstituteBindings::class)
+        ->group(function () {
+            Route::post('/games/{game}/attest/challenge', [GlosisAttestController::class, 'challenge'])
+                ->where('game', 'glosis')->middleware('throttle:glosis-attest-challenge')->withoutMiddleware('throttle:60,1');
+            Route::post('/games/{game}/attest/register', [GlosisAttestController::class, 'register'])
+                ->where('game', 'glosis')->middleware('throttle:glosis-attest-register')->withoutMiddleware('throttle:60,1');
+        });
 
     // RevenueCat webhooks (no auth — signature verified in controller)
     Route::middleware(ResolveGame::class)

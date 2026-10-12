@@ -36,6 +36,22 @@ final class GlosisSettings
 
     public const DEFAULT_GENDER = 'female';
 
+    /** Gratisnivån (beslut 2026-10-12): en skanning per nyckel och ISO-vecka. */
+    public const FREE_SCAN_WEEKLY_PER_KEY = 1;
+
+    /** Nya ord per App Attest-nyckel och Stockholmsdygn, samma tal som per köp. */
+    public const TTS_DAILY_NEW_PER_KEY = 100;
+
+    public const DEFAULT_FREE_SCAN_DAILY_LIMIT = 40;
+
+    public const DEFAULT_FREE_SCAN_IP_DAILY_LIMIT = 10;
+
+    public const DEFAULT_FREE_TTS_DAILY_NEW_LIMIT = 800;
+
+    public const DEFAULT_FREE_TTS_IP_DAILY_NEW_LIMIT = 300;
+
+    public const DEFAULT_FREE_MONTHLY_BUDGET_USD = 20;
+
     /** @param array<string, mixed> $settings */
     public function __construct(private readonly array $settings, private readonly string $slug = 'glosis') {}
 
@@ -61,6 +77,51 @@ final class GlosisSettings
     public function ttsDailyNewLimit(): int
     {
         return (int) $this->number('tts.daily_new_limit', self::DEFAULT_TTS_DAILY_NEW_LIMIT);
+    }
+
+    /** settings.free.enabled (Filament-växeln). Avslagen om den saknas. */
+    public function freeEnabled(): bool
+    {
+        return data_get($this->settings, 'free.enabled') === true;
+    }
+
+    /** "TEAMID.se.computercat.glosis", eller null (fel i loggen) om Team ID saknas eller har fel form. */
+    public function appAttestAppId(): ?string
+    {
+        $team = data_get($this->settings, 'app_attest.team_id');
+        if (! is_string($team) || preg_match('/^[A-Z0-9]{10}\z/', $team) !== 1) {
+            Log::error("Glosis: settings.app_attest.team_id saknas eller har fel form för {$this->slug}");
+
+            return null;
+        }
+
+        return $team.'.'.AppleTransactionVerifier::BUNDLE_ID;
+    }
+
+    public function freeScanDailyLimit(): int
+    {
+        return (int) $this->number('free.scan_daily_limit', self::DEFAULT_FREE_SCAN_DAILY_LIMIT);
+    }
+
+    public function freeScanIpDailyLimit(): int
+    {
+        return (int) $this->number('free.scan_ip_daily_limit', self::DEFAULT_FREE_SCAN_IP_DAILY_LIMIT);
+    }
+
+    public function freeTtsDailyNewLimit(): int
+    {
+        return (int) $this->number('free.tts_daily_new_limit', self::DEFAULT_FREE_TTS_DAILY_NEW_LIMIT);
+    }
+
+    public function freeTtsIpDailyNewLimit(): int
+    {
+        return (int) $this->number('free.tts_ip_daily_new_limit', self::DEFAULT_FREE_TTS_IP_DAILY_NEW_LIMIT);
+    }
+
+    /** Gratisnivåns delbudget per månad, i miljondels dollar (ryms i monthlyBudgetMicroUsd). */
+    public function freeMonthlyBudgetMicroUsd(): int
+    {
+        return (int) round($this->number('free.monthly_budget_usd', self::DEFAULT_FREE_MONTHLY_BUDGET_USD) * 1_000_000);
     }
 
     public function anthropicKey(): ?string

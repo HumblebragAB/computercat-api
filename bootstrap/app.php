@@ -26,8 +26,12 @@ return Application::configure(basePath: dirname(__DIR__))
         //
         // Glosis fotoskanning och studioröst: Capacitor på Android har origin https://localhost,
         // som Sanctum räknar som "stateful" och då kräver CSRF. Anropet har
-        // ingen session; köpbeviset i anropet är behörigheten.
-        $middleware->validateCsrfTokens(except: ['api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare']);
+        // ingen session; köpbeviset i anropet är behörigheten. Samma sak för
+        // gratisnivåns App Attest-endpoints, där Apples intyg är behörigheten.
+        $middleware->validateCsrfTokens(except: [
+            'api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare',
+            'api/v1/games/glosis/attest/challenge', 'api/v1/games/glosis/attest/register',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
@@ -43,9 +47,9 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         // Glosis-appens kontrakt för 429 gäller både den globala API-gränsen
-        // och glosis-scan- och glosis-tts-gränserna per IP.
+        // och glosis-scan-, glosis-tts- och glosis-attest-gränserna per IP.
         $exceptions->render(function (ThrottleRequestsException $e, Request $request) {
-            if ($request->is('api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare')) {
+            if ($request->is('api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare', 'api/v1/games/glosis/attest/challenge', 'api/v1/games/glosis/attest/register')) {
                 $retryAfter = (int) ($e->getHeaders()['Retry-After'] ?? 60);
 
                 return response()->json([

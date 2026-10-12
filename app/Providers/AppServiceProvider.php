@@ -52,6 +52,21 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(600)->by('glosis-tts-audio:'.$request->ip());
         });
 
+        // Glosis App Attest-challenges: en per gratisförfrågan (ett pass ger ungefär fyra).
+        // En skolklass delar IP, därför generöst. Ersätter den globala API-gränsen.
+        RateLimiter::for('glosis-attest-challenge', function (Request $request) {
+            return Limit::perMinute(120)->by('glosis-attest-ch:'.$request->ip());
+        });
+
+        // Nya App Attest-nycklar: en per installation. Det finns ingen proxy framför (nginx terminerar
+        // TLS), så ip() är klientens adress; en skola bakom NAT delar den. 60/h räcker för en klass som
+        // installerar samtidigt. Gränsen hindrar inte en angripare med många IP-adresser; de verkliga
+        // gränserna är taken per IP och de globala gratistaken (beslut 2026-10-12). Ersätter den globala
+        // API-gränsen.
+        RateLimiter::for('glosis-attest-register', function (Request $request) {
+            return Limit::perHour(60)->by('glosis-attest-reg:'.$request->ip());
+        });
+
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });
