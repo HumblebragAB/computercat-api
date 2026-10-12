@@ -262,7 +262,7 @@ class StudioVoice
                 $counters = [['glosis-tts:'.$caller->limitId().':'.$day, GlosisSettings::TTS_DAILY_NEW_PER_KEY, $caller->isFree() ? 'key' : 'purchase']];
                 if ($caller->isFree()) {
                     $counters[] = ['glosis-tts:free-day:'.$game->id.':'.$day, $settings->freeTtsDailyNewLimit(), 'free_global'];
-                    $counters[] = ['glosis-tts:free-ip:'.hash('sha256', (string) $caller->ip).':'.$day, $settings->freeTtsIpDailyNewLimit(), 'free_ip'];
+                    $counters[] = ['glosis-tts:free-ip:'.$caller->ipLimitId().':'.$day, $settings->freeTtsIpDailyNewLimit(), 'free_ip'];
                 } else {
                     $counters[] = ['glosis-tts:day:'.$game->id.':'.$day, $settings->ttsDailyNewLimit(), 'global'];
                 }

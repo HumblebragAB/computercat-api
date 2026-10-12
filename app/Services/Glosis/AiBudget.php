@@ -82,8 +82,13 @@ final class AiBudget
             return null;
         }
 
+        if (! in_array($tier, [GlosisCaller::GULD, GlosisCaller::FREE, GlosisCaller::ADMIN], true)) {
+            Cache::decrement($key, $microUsd);
+
+            throw new \InvalidArgumentException("Okänd nivå: {$tier}");
+        }
         if ($tier !== GlosisCaller::FREE) {
-            return new BudgetReservation($key, $microUsd);
+            return new BudgetReservation($key, $microUsd, $tier);
         }
 
         // Gratisnivåns delbudget: ryms i den globala, så att missbruk av gratis inte kan äta upp Guld-köparnas utrymme.
@@ -104,23 +109,19 @@ final class AiBudget
             return null;
         }
 
-        return new BudgetReservation($key, $microUsd, $freeKey);
+        return new BudgetReservation($key, $microUsd, GlosisCaller::FREE, $freeKey);
     }
 
     /**
      * Sparar anropet i ai_usage och rättar reservationen till verklig kostnad.
      *
-     * Utan $caller bokförs raden som Guld (eller Admin för environment Admin),
-     * som före gratisnivån.
+     * Nivån tas från reservationen (bestämd före anropet), aldrig från $caller.
+     * $caller ger bara nyckeln för en gratisrad.
      *
      * @param  array{units?: int, input_tokens?: int|null, output_tokens?: int|null, characters?: int|null}  $fields
      */
     public function record(Game $game, BudgetReservation $reservation, string $feature, string $environment, int $microUsd, array $fields = [], ?GlosisCaller $caller = null): AiUsage
     {
-        // En gratisrad utan delbudgetens reservation (eller tvärtom) skulle bryta invarianten för delräknaren.
-        if (($caller?->isFree() ?? false) !== ($reservation->freeKey !== null)) {
-            throw new LogicException('Budgetreservationen och anroparens nivå stämmer inte överens');
-        }
         $usage = AiUsage::create([
             'game_id' => $game->id,
             'feature' => $feature,
@@ -130,8 +131,8 @@ final class AiBudget
             'output_tokens' => $fields['output_tokens'] ?? null,
             'characters' => $fields['characters'] ?? null,
             'est_cost_usd' => AiCost::toUsd($microUsd),
-            'tier' => $caller?->tier ?? ($environment === 'Admin' ? AiUsage::TIER_ADMIN : AiUsage::TIER_GULD),
-            'app_attest_key_id' => $caller?->attestKeyId,
+            'tier' => $reservation->tier,
+            'app_attest_key_id' => $reservation->tier === GlosisCaller::FREE ? $caller?->attestKeyId : null,
         ]);
 
         $this->close($reservation);

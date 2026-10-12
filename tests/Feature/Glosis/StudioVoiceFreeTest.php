@@ -88,7 +88,7 @@ class StudioVoiceFreeTest extends TestCase
         $result = $voice->prepare($this->game, GlosisCaller::free($other, '5.6.7.8'), 'normal', ['cat'], 'en', 'female');
         $this->assertSame([['word' => 'cat', 'reason' => 'limit']], $result['skipped']);
         // Avvisade anrop lämnar inget kvar i räknarna.
-        $this->assertSame(0, RateLimiter::attempts('glosis-tts:'.GlosisCaller::free($other, null)->limitId().':'.$this->day()));
+        $this->assertSame(0, RateLimiter::attempts('glosis-tts:'.GlosisCaller::free($other, '9.9.9.9')->limitId().':'.$this->day()));
     }
 
     public function test_gratis_och_guld_raknare_ar_skilda_och_guldnyckeln_oforandrad(): void
@@ -98,5 +98,22 @@ class StudioVoiceFreeTest extends TestCase
         $this->assertSame('tx:'.hash('sha256', 'filament-preview'), GlosisCaller::admin()->limitId());
         $this->assertStringStartsWith('key:', $this->free()->limitId());
         $this->assertSame($this->key->logHash(), $this->free()->logHash());
+    }
+
+    public function test_ip_raknaren_ar_hmac_inte_en_ren_hash_av_adressen(): void
+    {
+        app(StudioVoice::class)->prepare($this->game, $this->free('1.2.3.4'), 'normal', ['dog'], 'en', 'female');
+
+        $this->assertSame(0, RateLimiter::attempts('glosis-tts:free-ip:'.hash('sha256', '1.2.3.4').':'.$this->day()));
+        $this->assertSame(1, RateLimiter::attempts('glosis-tts:free-ip:'.$this->free('1.2.3.4')->ipLimitId().':'.$this->day()));
+        $this->assertNotSame($this->free('1.2.3.4')->ipLimitId(), $this->free('1.2.3.5')->ipLimitId());
+    }
+
+    public function test_provlyssning_bokfors_som_admin(): void
+    {
+        app(StudioVoice::class)->prepare($this->game, GlosisCaller::admin(), 'normal', ['dog'], 'en', 'female');
+
+        $usage = AiUsage::sole();
+        $this->assertSame([AiUsage::TIER_ADMIN, null, 'Admin'], [$usage->tier, $usage->app_attest_key_id, $usage->environment]);
     }
 }

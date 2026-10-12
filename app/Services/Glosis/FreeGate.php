@@ -48,6 +48,12 @@ final class FreeGate
         if ($appId === null) {
             throw $this->reject(503, 'free_unavailable', $feature);
         }
+        // IP-gränsen behöver en adress. Saknas den är servern felkonfigurerad: stäng hellre än att alla delar en hink.
+        if ($ip === null || $ip === '') {
+            Log::error("Glosis {$feature}: gratisförfrågan utan IP-adress");
+
+            throw $this->reject(503, 'free_unavailable', $feature);
+        }
 
         $keyIdB64 = is_array($attest) ? ($attest['keyId'] ?? null) : null;
         $assertionB64 = is_array($attest) ? ($attest['assertion'] ?? null) : null;
@@ -96,6 +102,8 @@ final class FreeGate
      */
     public function reject(int $status, string $code, string $feature, array $extra = [], array $headers = []): GlosisRejection
     {
-        return new GlosisRejection($status, $code, self::MESSAGES[$feature][$code], $extra, $headers);
+        $message = self::MESSAGES[$feature][$code] ?? throw new \InvalidArgumentException("Ingen text för {$feature}/{$code}");
+
+        return new GlosisRejection($status, $code, $message, $extra, $headers);
     }
 }

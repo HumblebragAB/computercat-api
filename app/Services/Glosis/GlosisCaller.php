@@ -3,6 +3,7 @@
 namespace App\Services\Glosis;
 
 use App\Models\AppAttestKey;
+use RuntimeException;
 
 /**
  * Vem som gör ett betalt anrop: ett Guld-köp, en gratisnyckel (App Attest)
@@ -34,7 +35,7 @@ final readonly class GlosisCaller
     }
 
     /** Nyckelns logghash är samma som i FreeGate och registreringen, så en nyckel har en identifierare i alla loggar. */
-    public static function free(AppAttestKey $key, ?string $ip): self
+    public static function free(AppAttestKey $key, string $ip): self
     {
         return new self(
             self::FREE,
@@ -61,6 +62,20 @@ final readonly class GlosisCaller
     public function limitId(): string
     {
         return ($this->isFree() ? 'key:' : 'tx:').hash('sha256', $this->subject);
+    }
+
+    /**
+     * Räknarnyckelns id för IP-gränsen: HMAC med en nyckel ur APP_KEY, så att
+     * en IP-adress inte går att få fram ur cachen genom att prova alla adresser.
+     */
+    public function ipLimitId(): string
+    {
+        $appKey = (string) config('app.key');
+        if ($appKey === '' || $this->ip === null) {
+            throw new RuntimeException('IP-gränsens nyckel kräver APP_KEY och en gratisanropare med IP');
+        }
+
+        return hash_hmac('sha256', $this->ip, hash_hmac('sha256', 'glosis-ip-limit', $appKey, true));
     }
 
     public function logHash(): string

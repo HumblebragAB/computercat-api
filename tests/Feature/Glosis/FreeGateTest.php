@@ -72,19 +72,19 @@ class FreeGateTest extends TestCase
     public function test_samma_assertion_tva_ganger_nekas(): void
     {
         $cred = self::credential($this->key, $this->priv, 'tts', [], 1);
-        $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, null);
-        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, null));
+        $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, '1.2.3.4');
+        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
     }
 
     public function test_ny_challenge_men_gammal_raknare_nekas(): void
     {
-        $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 5), $this->game, GuldGate::FEATURE_TTS, null);
-        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 5), $this->game, GuldGate::FEATURE_TTS, null));
+        $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 5), $this->game, GuldGate::FEATURE_TTS, '1.2.3.4');
+        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 5), $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
     }
 
     public function test_paddad_challenge_nekas_och_raknaren_rors_inte(): void
     {
-        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 1, str_repeat('b', 54)), $this->game, GuldGate::FEATURE_TTS, null));
+        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 1, str_repeat('b', 54)), $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
         $this->assertSame(0, $this->key->fresh()->sign_count);
     }
 
@@ -92,31 +92,55 @@ class FreeGateTest extends TestCase
     {
         $cred = self::credential($this->key, $this->priv, 'tts', [], 1);
         $this->travel(301)->seconds();
-        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, null));
+        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($cred, $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
     }
 
     public function test_assertion_for_annan_funktion_nekas(): void
     {
-        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'scan', [], 1), $this->game, GuldGate::FEATURE_TTS, null));
+        $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'scan', [], 1), $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
     }
 
     public function test_okand_nyckel_ger_401(): void
     {
         $cred = self::credential($this->key, $this->priv, 'tts', [], 1);
-        $this->assertRejected(401, 'unknown_key', fn () => $this->gate()->verify(['keyId' => base64_encode(str_repeat("\x07", 32))] + $cred, $this->game, GuldGate::FEATURE_TTS, null));
+        $this->assertRejected(401, 'unknown_key', fn () => $this->gate()->verify(['keyId' => base64_encode(str_repeat("\x07", 32))] + $cred, $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
     }
 
     public function test_fel_form_ger_422(): void
     {
         foreach ([null, 'x', [], ['keyId' => 'a', 'assertion' => 'b', 'clientData' => 'c'], ['keyId' => $this->key->key_id, 'assertion' => 'AA==', 'clientData' => str_repeat('a', 9000)]] as $bad) {
-            $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($bad, $this->game, GuldGate::FEATURE_TTS, null));
+            $this->assertRejected(422, 'invalid_attest', fn () => $this->gate()->verify($bad, $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
         }
     }
 
     public function test_avstangd_flagga_ger_503(): void
     {
         $this->game->update(['settings' => array_merge($this->game->settings, ['free' => ['enabled' => false]])]);
+        $this->assertRejected(503, 'free_unavailable', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 1), $this->game, GuldGate::FEATURE_TTS, '1.2.3.4'));
+    }
+
+    public function test_saknad_ip_ger_503_utan_att_raknaren_rors(): void
+    {
         $this->assertRejected(503, 'free_unavailable', fn () => $this->gate()->verify(self::credential($this->key, $this->priv, 'tts', [], 1), $this->game, GuldGate::FEATURE_TTS, null));
+        $this->assertSame(0, $this->key->fresh()->sign_count);
+    }
+
+    public function test_varje_mojlig_avvisning_har_en_text_och_okanda_kombinationer_kastar(): void
+    {
+        $combos = [
+            GuldGate::FEATURE_SCAN => ['free_unavailable', 'invalid_attest', 'unknown_key', 'free_scan_used', 'free_busy'],
+            GuldGate::FEATURE_TTS => ['free_unavailable', 'invalid_attest', 'unknown_key'],
+        ];
+        foreach ($combos as $feature => $codes) {
+            foreach ($codes as $code) {
+                $e = $this->gate()->reject(429, $code, $feature);
+                $this->assertSame($code, $e->error);
+                $this->assertNotSame('', $e->userMessage);
+                $this->assertStringNotContainsString('—', $e->userMessage);
+            }
+        }
+        $this->expectException(\InvalidArgumentException::class);
+        $this->gate()->reject(429, 'free_scan_used', GuldGate::FEATURE_TTS);
     }
 
     private function assertRejected(int $status, string $code, \Closure $fn): void
