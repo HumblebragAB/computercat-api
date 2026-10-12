@@ -57,6 +57,8 @@ PEM;
 
     private const MAX_ASSERTION_BYTES = 2_048;
 
+    private const ASSERTION_AUTHDATA_BYTES = 37;
+
     /**
      * apple_validation_category_01 (validating-apps-that-connect-to-your-server, steg 10):
      * 2 = TestFlight, 4 = App Store. 3 = development-signerad, bara när development är tillåtet.
@@ -223,6 +225,55 @@ PEM;
         // Kvittot (receipt) krävs i formen men sparas inte: det behövs bara för Apples riskbedömning
         // (assessing-fraud-risk), som inte används i v1. Dataminimering; läggs till om riskbedömningen behövs.
         return new AttestedKey($keyId, $details['key'], $environment, $auth->bundleVersion(), $category);
+    }
+
+    /**
+     * Assertion enligt artikelns "Verify the assertion".
+     *
+     * @return int den nya räknaren, som anroparen sparar atomiskt
+     *
+     * @throws InvalidAttestationException
+     */
+    public function verifyAssertion(string $assertion, string $clientData, string $publicKeyPem, int $storedSignCount, string $appId): int
+    {
+        if ($assertion === '' || strlen($assertion) > self::MAX_ASSERTION_BYTES) {
+            throw new InvalidAttestationException('Assertionen saknas eller är för stor');
+        }
+        $obj = Cbor::decode($assertion);
+        $signature = is_array($obj) ? ($obj['signature'] ?? null) : null;
+        $authData = is_array($obj) ? ($obj['authenticatorData'] ?? null) : null;
+        if (! is_string($signature) || $signature === '' || ! is_string($authData) || count($obj) !== 2) {
+            throw new InvalidAttestationException('Assertionen har fel form');
+        }
+        // Assertionens authenticatorData är exakt rpIdHash(32) flags(1) counter(4), inga tillägg.
+        if (strlen($authData) !== self::ASSERTION_AUTHDATA_BYTES) {
+            throw new InvalidAttestationException('Assertionens authData har fel längd');
+        }
+
+        // 1–3. nonce = SHA256(authenticatorData ‖ SHA256(clientData)); signaturen är ECDSA P-256/SHA-256 med
+        // nonce som meddelande (dubbel hashning), som node-app-attest (createVerify('SHA256').update(nonce)) och
+        // devicecheck-appattest (SHA256withECDSA, update(nonce)).
+        // ASSUMED — verifieras mot en riktig enhet (planens Task 14) innan gratisflaggan slås på; Apple saknar assertion-testvektor.
+        // Reserv om enhetsprovet visar enkel hashning: openssl_verify($authData.hash('sha256', $clientData, true), …).
+        $nonce = hash('sha256', $authData.hash('sha256', $clientData, true), true);
+        $key = @openssl_pkey_get_public($publicKeyPem);
+        if (! $key instanceof OpenSSLAsymmetricKey
+            || openssl_verify($nonce, $signature, $key, OPENSSL_ALGO_SHA256) !== 1) {
+            throw new InvalidAttestationException('Signaturen stämmer inte');
+        }
+
+        $auth = AuthenticatorData::parse($authData, attested: false);
+        // 4. RP ID
+        if (! hash_equals(hash('sha256', $appId, true), $auth->rpIdHash)) {
+            throw new InvalidAttestationException('RP ID stämmer inte');
+        }
+        // 5. counter > förra (> 0 första gången, eftersom attesteringen hade 0)
+        if ($auth->signCount <= $storedSignCount) {
+            throw new InvalidAttestationException('counter ökar inte (replay?)');
+        }
+
+        // 6. Challengen kontrolleras av FreeGate. 7–8: extensions loggas men avgör inte (se attesteringen).
+        return $auth->signCount;
     }
 
     /** @param list<mixed> $x5c */

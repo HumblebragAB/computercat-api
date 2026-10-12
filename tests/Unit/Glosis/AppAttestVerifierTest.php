@@ -257,4 +257,114 @@ class AppAttestVerifierTest extends TestCase
         $this->expectException(RuntimeException::class);
         new AppAttestVerifier(null, productionCategories: ['4']);
     }
+
+    private function attested(): array
+    {
+        $a = $this->fake()->attest(self::CHALLENGE, self::APP_ID);
+
+        return [$a['privateKey'], $this->verify($a)->publicKeyPem];
+    }
+
+    public function test_godkand_assertion_ger_ny_raknare(): void
+    {
+        [$priv, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $count = $this->verifier()->verifyAssertion(base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 1)), $cd, $pem, 0, self::APP_ID);
+        $this->assertSame(1, $count);
+    }
+
+    /** @return array<string, array{array<string, mixed>, int, string}> */
+    public static function badAssertions(): array
+    {
+        return [
+            'räknaren ökar inte' => [[], 5, 'counter'],
+            'räknaren lägre än lagrad' => [[], 9, 'counter'],
+            'fel rpId' => [['appId' => 'ABCDE12345.se.annan.app'], 0, 'RP ID'],
+            'ändrad clientData' => [['signedClientData' => '{"action":"tts","challenge":"annan"}'], 0, 'Signaturen'],
+        ];
+    }
+
+    #[DataProvider('badAssertions')]
+    public function test_avvisar_assertion(array $o, int $stored, string $reason): void
+    {
+        [$priv, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $assertion = base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 5, $o));
+        $this->expectException(InvalidAttestationException::class);
+        $this->expectExceptionMessageMatches('/'.preg_quote($reason, '/').'/');
+        $this->verifier()->verifyAssertion($assertion, $cd, $pem, $stored, self::APP_ID);
+    }
+
+    public function test_avvisar_assertion_signerad_med_annan_nyckel(): void
+    {
+        [, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $other = \Tests\Support\FakeAppleChain::ecKey('prime256v1');
+        $this->expectException(InvalidAttestationException::class);
+        $this->expectExceptionMessageMatches('/Signaturen/');
+        $this->verifier()->verifyAssertion(base64_decode(FakeAppAttest::assert($other, $cd, self::APP_ID, 1)), $cd, $pem, 0, self::APP_ID);
+    }
+
+    public function test_avvisar_assertion_med_fel_form(): void
+    {
+        [, $pem] = $this->attested();
+        $this->expectException(InvalidAttestationException::class);
+        $this->verifier()->verifyAssertion(CborEncoder::encode(['signature' => 'x']), '{}', $pem, 0, self::APP_ID);
+    }
+
+    /** @return array<string, array{callable(string, string): string, string}> */
+    public static function malformedAssertions(): array
+    {
+        $good = fn (string $sig, string $auth) => CborEncoder::encode(['signature' => $sig, 'authenticatorData' => $auth]);
+
+        return [
+            'tom' => [fn () => '', 'saknas'],
+            'för stor' => [fn () => str_repeat('a', 2049), 'för stor'],
+            'avkapad' => [fn (string $sig, string $auth) => substr($good($sig, $auth), 0, -10), ''],
+            'trasig DER-signatur' => [fn (string $sig, string $auth) => $good(substr($sig, 0, 20).str_repeat("\xff", 10), $auth), 'Signaturen'],
+            'signatur med skräp efter' => [fn (string $sig, string $auth) => $good($sig."\0", $auth), 'Signaturen'],
+            'tom signatur' => [fn (string $sig, string $auth) => $good('', $auth), 'fel form'],
+            'extra nyckel' => [fn (string $sig, string $auth) => CborEncoder::encode(['signature' => $sig, 'authenticatorData' => $auth, 'x' => 'y']), 'fel form'],
+            'signatur som heltal' => [fn (string $sig, string $auth) => CborEncoder::encode(['signature' => 5, 'authenticatorData' => $auth]), 'fel form'],
+            'authData för kort' => [fn (string $sig, string $auth) => $good($sig, substr($auth, 0, 36)), 'längd'],
+            'authData för lång' => [fn (string $sig, string $auth) => $good($sig, $auth."\0"), 'längd'],
+            'bara en CBOR-sträng' => [fn () => CborEncoder::encode('abc'), 'fel form'],
+        ];
+    }
+
+    #[DataProvider('malformedAssertions')]
+    public function test_avvisar_trasiga_assertioner(callable $build, string $reason): void
+    {
+        [$priv, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $decoded = \App\Services\Glosis\AppAttest\Cbor::decode(base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 1)));
+        $assertion = $build($decoded['signature'], $decoded['authenticatorData']);
+
+        try {
+            $this->verifier()->verifyAssertion($assertion, $cd, $pem, 0, self::APP_ID);
+            $this->fail('Assertionen borde ha avvisats');
+        } catch (InvalidAttestationException $e) {
+            $this->assertMatchesRegularExpression('/'.preg_quote($reason, '/').'/', $e->getMessage());
+        }
+    }
+
+    public function test_assertion_kan_inte_spelas_upp_igen(): void
+    {
+        [$priv, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $assertion = base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 3));
+        $count = $this->verifier()->verifyAssertion($assertion, $cd, $pem, 2, self::APP_ID);
+        $this->assertSame(3, $count);
+
+        $this->expectException(InvalidAttestationException::class);
+        $this->verifier()->verifyAssertion($assertion, $cd, $pem, $count, self::APP_ID);
+    }
+
+    public function test_avvisar_trasig_publik_nyckel(): void
+    {
+        [$priv] = $this->attested();
+        $cd = '{}';
+        $this->expectException(InvalidAttestationException::class);
+        $this->verifier()->verifyAssertion(base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 1)), $cd, 'inte en nyckel', 0, self::APP_ID);
+    }
 }
