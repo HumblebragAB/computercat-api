@@ -28,6 +28,10 @@ final class Cbor
 
     public static function decodeAt(string $bytes, int &$offset): mixed
     {
+        if ($offset < 0) {
+            throw new InvalidAttestationException('CBOR: negativ offset');
+        }
+
         return self::item($bytes, $offset, 0);
     }
 
@@ -44,7 +48,7 @@ final class Cbor
         if ($major > 5) {
             throw new InvalidAttestationException("CBOR: typ {$major} stöds inte");
         }
-        $n = self::argument($b, $o, $initial & 0x1f);
+        $n = self::argument($b, $o, $initial & 0x1F);
 
         switch ($major) {
             case 0:

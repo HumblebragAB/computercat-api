@@ -39,8 +39,3 @@ final class CborEncoder
         };
     }
 }
-
-final class CborText
-{
-    public function __construct(public readonly string $value) {}
-}
