@@ -257,8 +257,11 @@ PEM;
         // Reserv om enhetsprovet visar enkel hashning: openssl_verify($authData.hash('sha256', $clientData, true), …).
         $nonce = hash('sha256', $authData.hash('sha256', $clientData, true), true);
         $key = @openssl_pkey_get_public($publicKeyPem);
-        if (! $key instanceof OpenSSLAsymmetricKey
-            || openssl_verify($nonce, $signature, $key, OPENSSL_ALGO_SHA256) !== 1) {
+        $details = $key instanceof OpenSSLAsymmetricKey ? openssl_pkey_get_details($key) : false;
+        if (! is_array($details) || ($details['type'] ?? null) !== OPENSSL_KEYTYPE_EC || ($details['ec']['curve_name'] ?? null) !== 'prime256v1') {
+            throw new InvalidAttestationException('Den publika nyckeln är inte en P-256-nyckel');
+        }
+        if (openssl_verify($nonce, $signature, $key, OPENSSL_ALGO_SHA256) !== 1) {
             throw new InvalidAttestationException('Signaturen stämmer inte');
         }
 

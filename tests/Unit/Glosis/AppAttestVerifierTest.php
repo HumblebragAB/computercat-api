@@ -320,7 +320,7 @@ class AppAttestVerifierTest extends TestCase
         return [
             'tom' => [fn () => '', 'saknas'],
             'för stor' => [fn () => str_repeat('a', 2049), 'för stor'],
-            'avkapad' => [fn (string $sig, string $auth) => substr($good($sig, $auth), 0, -10), ''],
+            'avkapad' => [fn (string $sig, string $auth) => substr($good($sig, $auth), 0, -10), 'CBOR: strängen är längre än datan'],
             'trasig DER-signatur' => [fn (string $sig, string $auth) => $good(substr($sig, 0, 20).str_repeat("\xff", 10), $auth), 'Signaturen'],
             'signatur med skräp efter' => [fn (string $sig, string $auth) => $good($sig."\0", $auth), 'Signaturen'],
             'tom signatur' => [fn (string $sig, string $auth) => $good('', $auth), 'fel form'],
@@ -365,6 +365,42 @@ class AppAttestVerifierTest extends TestCase
         [$priv] = $this->attested();
         $cd = '{}';
         $this->expectException(InvalidAttestationException::class);
+        $this->expectExceptionMessageMatches('/P-256/');
         $this->verifier()->verifyAssertion(base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 1)), $cd, 'inte en nyckel', 0, self::APP_ID);
+    }
+
+    public function test_avvisar_publik_nyckel_som_inte_ar_p256(): void
+    {
+        [$priv] = $this->attested();
+        $cd = '{}';
+        $assertion = base64_decode(FakeAppAttest::assert($priv, $cd, self::APP_ID, 1));
+        $p384 = openssl_pkey_get_details(\Tests\Support\FakeAppleChain::ecKey('secp384r1'))['key'];
+        $rsa = openssl_pkey_get_details(openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]))['key'];
+        foreach ([$p384, $rsa] as $pem) {
+            try {
+                $this->verifier()->verifyAssertion($assertion, $cd, $pem, 0, self::APP_ID);
+                $this->fail('Nyckeln borde ha avvisats');
+            } catch (InvalidAttestationException $e) {
+                $this->assertStringContainsString('P-256', $e->getMessage());
+            }
+        }
+    }
+
+    /**
+     * Binder dubbel hashning (se ASSUMED-markören i verifyAssertion, Task 14): en signatur över
+     * authData ‖ SHA256(clientData) med enkel hashning ska avvisas. Byter enhetsprovet schema
+     * ska detta test ändras medvetet tillsammans med verifyAssertion och FakeAppAttest::assert.
+     */
+    public function test_enkel_hashning_avvisas_tills_enhetsprovet_visar_annat(): void
+    {
+        [$priv, $pem] = $this->attested();
+        $cd = '{"action":"tts","challenge":"c1"}';
+        $authData = FakeAppAttest::authData(hash('sha256', self::APP_ID, true), 1);
+        openssl_sign($authData.hash('sha256', $cd, true), $sig, $priv, OPENSSL_ALGO_SHA256);
+        $assertion = CborEncoder::encode(['signature' => $sig, 'authenticatorData' => $authData]);
+
+        $this->expectException(InvalidAttestationException::class);
+        $this->expectExceptionMessageMatches('/Signaturen/');
+        $this->verifier()->verifyAssertion($assertion, $cd, $pem, 0, self::APP_ID);
     }
 }
