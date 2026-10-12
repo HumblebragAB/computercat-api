@@ -22,8 +22,8 @@ final class GlosisSettings
 
     public const DEFAULT_TTS_DAILY_NEW_LIMIT = 1000;
 
-    /** Nya ord per köp och Stockholmsdygn. Cachade ord räknas inte. */
-    public const TTS_DAILY_NEW_PER_PURCHASE = 100;
+    /** Nya ord per köp och Stockholmsdygn. Cachade ord räknas inte. Alias för TTS_DAILY_NEW_PER_KEY (Filament-texten, testerna). */
+    public const TTS_DAILY_NEW_PER_PURCHASE = self::TTS_DAILY_NEW_PER_KEY;
 
     /** Glosis paketnamn på Google Play (applicationId). */
     public const DEFAULT_GOOGLE_PLAY_PACKAGE = 'se.computercat.glosis';
@@ -39,7 +39,7 @@ final class GlosisSettings
     /** Gratisnivån (beslut 2026-10-12): en skanning per nyckel och ISO-vecka. */
     public const FREE_SCAN_WEEKLY_PER_KEY = 1;
 
-    /** Nya ord per App Attest-nyckel och Stockholmsdygn, samma tal som per köp. */
+    /** Nya ord per App Attest-nyckel eller köp och Stockholmsdygn. */
     public const TTS_DAILY_NEW_PER_KEY = 100;
 
     public const DEFAULT_FREE_SCAN_DAILY_LIMIT = 40;

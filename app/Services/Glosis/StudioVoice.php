@@ -27,7 +27,10 @@ use Normalizer;
  *
  * Kostnaden styrs av tre gränser för nya ord (cachade ord räknas inte): per köp
  * och Stockholmsdygn (100), globalt per dygn (settings.tts.daily_new_limit) och
- * den gemensamma månadsbudgeten (AiBudget). Räknarna ökas atomiskt före anropet
+ * den gemensamma månadsbudgeten (AiBudget). Gratisnivån (GlosisCaller::free)
+ * har i stället per nyckel (100), en egen global dygnsgräns, en per IP och
+ * gratisnivåns delbudget. Provlyssningen i Filament (GlosisCaller::admin())
+ * räknas som ett köp och bokförs med environment "Admin". Räknarna ökas atomiskt före anropet
  * och återförs om anropet misslyckas. Ett lås per fil gör att samtidiga
  * förfrågningar på samma nya ord bara genererar det en gång.
  */
@@ -54,16 +57,6 @@ class StudioVoice
 
     /** Senaste felet från ElevenLabs i prepare(), för provlyssningen i Filament. */
     public ?TtsFailedException $lastFailure = null;
-
-    /**
-     * Transaktionen som provlyssningen i Filament räknas på: egen räknare per
-     * dygn, samma globala dygnsgräns och samma månadsbudget som appen.
-     * Bokförs i ai_usage med environment "Admin".
-     */
-    public static function adminTransaction(): VerifiedTransaction
-    {
-        return new VerifiedTransaction('filament-preview', 'filament-preview', 'filament-preview', 'Admin', null);
-    }
 
     public function __construct(
         private readonly ElevenLabsClient $client,
@@ -145,7 +138,7 @@ class StudioVoice
      *
      * @throws GlosisRejection 503 tts_unavailable när språket saknar röst
      */
-    public function prepare(Game $game, VerifiedTransaction $transaction, string $speed, array $words, string $language = ElevenLabsClient::LANGUAGE, string $gender = GlosisSettings::DEFAULT_GENDER): array
+    public function prepare(Game $game, GlosisCaller $caller, string $speed, array $words, string $language = ElevenLabsClient::LANGUAGE, string $gender = GlosisSettings::DEFAULT_GENDER): array
     {
         if (! array_key_exists($language, GlosisSettings::LANGUAGES)) {
             throw new \InvalidArgumentException("Okänt språk: {$language}");
@@ -199,7 +192,7 @@ class StudioVoice
                         $stopped = 'unavailable';
                         $outcome[$normalized] = 'unavailable';
                     } else {
-                        $result = $this->generate($game, $transaction, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash);
+                        $result = $this->generate($game, $caller, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash);
                         $outcome[$normalized] = $result;
                         if ($result === 'ok:'.$hash) {
                             $stats['generated']++;
@@ -225,11 +218,12 @@ class StudioVoice
         }
 
         Log::info('Glosis tts: prepare', [
-            'environment' => $transaction->environment,
+            'environment' => $caller->environment,
+            'tier' => $caller->tier,
             'language' => $language,
             'voice' => $gender,
             'voice_used' => $voice['gender'],
-            'tx' => GuldGate::txHash($transaction),
+            'tx' => $caller->logHash(),
             'words' => count($words),
             'cached' => $stats['cached'],
             'generated' => $stats['generated'],
@@ -246,12 +240,12 @@ class StudioVoice
      * Genererar ett nytt ord under lås. Returnerar 'ok:{hash}', 'limit',
      * 'budget', 'failed' eller 'unavailable' (låset gick inte att få).
      */
-    private function generate(Game $game, VerifiedTransaction $transaction, GlosisSettings $settings, Filesystem $disk, string $apiKey, string $voiceId, string $language, string $speed, string $normalized, string $hash): string
+    private function generate(Game $game, GlosisCaller $caller, GlosisSettings $settings, Filesystem $disk, string $apiKey, string $voiceId, string $language, string $speed, string $normalized, string $hash): string
     {
         $file = self::fileName($hash);
 
         try {
-            return $this->lock($hash)->block($this->lockWaitSeconds, function () use ($game, $transaction, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash, $file) {
+            return $this->lock($hash)->block($this->lockWaitSeconds, function () use ($game, $caller, $settings, $disk, $apiKey, $voiceId, $language, $speed, $normalized, $hash, $file) {
                 // En annan förfrågan kan ha genererat ordet medan vi väntade.
                 if ($disk->exists($file)) {
                     return 'ok:'.$hash;
@@ -262,28 +256,37 @@ class StudioVoice
                 $now = CarbonImmutable::now(GuldStatus::TIME_ZONE);
                 $day = $now->format('Y-m-d');
                 $ttl = (int) ceil($now->diffInSeconds($now->addDay()->startOfDay())) + 60;
-                $txKey = 'glosis-tts:tx:'.hash('sha256', $transaction->originalTransactionId).':'.$day;
-                $dayKey = 'glosis-tts:day:'.$game->id.':'.$day;
-                $undoCounters = function () use ($txKey, $dayKey, $ttl) {
-                    RateLimiter::decrement($txKey, $ttl);
-                    RateLimiter::decrement($dayKey, $ttl);
+                // Guld: samma nycklar som före gratisnivån. Gratis: egen global räknare och en per IP,
+                // så att gratis aldrig äter upp Guld-köparnas dagsutrymme (beslut 2026-10-12).
+                // Scope-namnen 'purchase' och 'global' är desamma som före gratisnivån (loggarna, GlosisTtsTest).
+                $counters = [['glosis-tts:'.$caller->limitId().':'.$day, GlosisSettings::TTS_DAILY_NEW_PER_KEY, $caller->isFree() ? 'key' : 'purchase']];
+                if ($caller->isFree()) {
+                    $counters[] = ['glosis-tts:free-day:'.$game->id.':'.$day, $settings->freeTtsDailyNewLimit(), 'free_global'];
+                    $counters[] = ['glosis-tts:free-ip:'.hash('sha256', (string) $caller->ip).':'.$day, $settings->freeTtsIpDailyNewLimit(), 'free_ip'];
+                } else {
+                    $counters[] = ['glosis-tts:day:'.$game->id.':'.$day, $settings->ttsDailyNewLimit(), 'global'];
+                }
+                $undoCounters = function () use ($counters, $ttl) {
+                    foreach ($counters as [$key]) {
+                        RateLimiter::decrement($key, $ttl);
+                    }
                 };
-
-                $txHits = RateLimiter::hit($txKey, $ttl);
-                $dayHits = RateLimiter::hit($dayKey, $ttl);
-                if ($txHits > GlosisSettings::TTS_DAILY_NEW_PER_PURCHASE || $dayHits > $settings->ttsDailyNewLimit()) {
+                $over = null;
+                foreach ($counters as [$key, $limit, $scope]) {
+                    if (RateLimiter::hit($key, $ttl) > $limit) {
+                        $over ??= $scope;
+                    }
+                }
+                if ($over !== null) {
                     $undoCounters();
-                    Log::info('Glosis tts: gränsen för nya ord nådd', [
-                        'tx' => GuldGate::txHash($transaction),
-                        'scope' => $txHits > GlosisSettings::TTS_DAILY_NEW_PER_PURCHASE ? 'purchase' : 'global',
-                    ]);
+                    Log::info('Glosis tts: gränsen för nya ord nådd', ['tx' => $caller->logHash(), 'tier' => $caller->tier, 'scope' => $over]);
 
                     return 'limit';
                 }
 
                 $characters = mb_strlen($normalized);
                 $cost = AiCost::tts($characters);
-                $reservation = $this->budget->reserve($game, $cost, AiUsage::FEATURE_TTS);
+                $reservation = $this->budget->reserve($game, $cost, AiUsage::FEATURE_TTS, $caller->tier);
                 if ($reservation === null) {
                     $undoCounters();
 
@@ -307,7 +310,7 @@ class StudioVoice
                 }
 
                 // Anropet är debiterat: bokför innan filen skrivs.
-                $this->budget->record($game, $reservation, AiUsage::FEATURE_TTS, $transaction->environment, $cost, ['characters' => $characters]);
+                $this->budget->record($game, $reservation, AiUsage::FEATURE_TTS, $caller->environment, $cost, ['characters' => $characters], $caller);
 
                 // Skriv till en tillfällig fil och byt namn, så att en halvskriven
                 // fil aldrig serveras.

@@ -5,6 +5,7 @@ namespace App\Filament\Resources\GameResource\Pages;
 use App\Filament\Resources\GameResource;
 use App\Models\Game;
 use App\Services\Glosis\ElevenLabsVoiceLibrary;
+use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\GlosisSettings;
 use App\Services\Glosis\StudioVoice;
 use App\Services\Glosis\VoiceLibraryException;
@@ -212,7 +213,7 @@ class GameVoices extends Page
         $clips = [];
         $problems = [];
         foreach (array_keys(StudioVoice::SPEEDS) as $speed) {
-            $result = $studioVoice->prepare($game, StudioVoice::adminTransaction(), $speed, self::PREVIEW_WORDS, $language, $gender);
+            $result = $studioVoice->prepare($game, GlosisCaller::admin(), $speed, self::PREVIEW_WORDS, $language, $gender);
             if ($result['voice_used'] !== $gender) {
                 // Kan inte hända efter kontrollen ovan, men ljudet får aldrig visas under fel röst.
                 Log::error('Glosis röster: provlyssningen fick fel röst', ['language' => $language, 'voice' => $gender, 'voice_used' => $result['voice_used']]);

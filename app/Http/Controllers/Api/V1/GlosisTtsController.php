@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Game;
 use App\Services\Glosis\ElevenLabsClient;
+use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\GlosisRejection;
 use App\Services\Glosis\GlosisSettings;
 use App\Services\Glosis\GuldGate;
@@ -58,7 +59,7 @@ class GlosisTtsController extends Controller
             }
 
             $transaction = $gate->verify($proof, $game, GuldGate::FEATURE_TTS);
-            $result = $voice->prepare($game, $transaction, $speed, $words, $language, $gender);
+            $result = $voice->prepare($game, GlosisCaller::guld($transaction), $speed, $words, $language, $gender);
         } catch (GlosisRejection $e) {
             return $e->toResponse();
         }

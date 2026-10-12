@@ -15,6 +15,12 @@ class AiUsage extends Model
 
     public const FEATURE_TTS = 'tts';
 
+    public const TIER_GULD = 'guld';
+
+    public const TIER_FREE = 'free';
+
+    public const TIER_ADMIN = 'admin';
+
     public const UPDATED_AT = null;
 
     protected $table = 'ai_usage';
@@ -28,6 +34,8 @@ class AiUsage extends Model
         'output_tokens',
         'characters',
         'est_cost_usd',
+        'tier',
+        'app_attest_key_id',
     ];
 
     protected function casts(): array
@@ -38,6 +46,7 @@ class AiUsage extends Model
             'output_tokens' => 'integer',
             'characters' => 'integer',
             'est_cost_usd' => 'decimal:6',
+            'app_attest_key_id' => 'integer',
             'created_at' => 'datetime',
         ];
     }
