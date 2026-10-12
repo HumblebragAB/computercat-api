@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Game;
 use App\Services\Glosis\ElevenLabsClient;
+use App\Services\Glosis\FreeGate;
 use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\GlosisRejection;
 use App\Services\Glosis\GlosisSettings;
@@ -16,7 +17,7 @@ use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
- * Glosis studioröst (Guldstjärnan, iOS och Android).
+ * Glosis studioröst (Guldstjärnan, iOS och Android; gratisnivån på iOS).
  *
  * POST /api/v1/games/glosis/tts/prepare
  *   {"proof": {"platform": "ios", "jws": "..."} eller
@@ -31,11 +32,21 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
  *   429 rate_limited, 501 platform_not_supported (Android när Google Play inte är
  *   inställt), 503 tts_unavailable|budget_exhausted.
  *
+ *   Gratisnivån (iOS, App Attest) i stället för proof:
+ *   {"attest": {"keyId": "...", "assertion": "...", "clientData": "<JSON-sträng>"}}
+ *   där clientData = {"action": "tts", "challenge": "...", "speed": ..., "words": [...],
+ *   "voice": ... (valfritt), "language": ... (valfritt)}. Fälten läses BARA ur den
+ *   signerade clientData, aldrig ur kroppen. Svaret 200 har samma form som för Guld.
+ *   proof och attest samtidigt: 422 invalid_request; inget av dem: 422 invalid_proof.
+ *   Gratisfel: 401 unknown_key, 422 invalid_attest, 503 free_unavailable.
+ *
  * GET /api/v1/games/glosis/tts/audio/{hash} (signerad, 24 h) → audio/mpeg.
  */
 class GlosisTtsController extends Controller
 {
-    public function prepare(Request $request, Game $game, GuldGate $gate, StudioVoice $voice): JsonResponse
+    private const INVALID_REQUEST = 'Något blev fel med studiorösten. Appen använder telefonens röst så länge.';
+
+    public function prepare(Request $request, Game $game, GuldGate $gate, FreeGate $free, StudioVoice $voice): JsonResponse
     {
         try {
             // Rå JSON i stället för $request->input(): TrimStrings och
@@ -43,23 +54,39 @@ class GlosisTtsController extends Controller
             // orden exakt som appen skickade dem som nycklar.
             $body = json_decode($request->getContent(), true, 16);
             $body = is_array($body) ? $body : [];
+            $hasAttest = array_key_exists('attest', $body);
+            if ($hasAttest && array_key_exists('proof', $body)) {
+                throw new GlosisRejection(422, 'invalid_request', self::INVALID_REQUEST);
+            }
 
-            $proof = $gate->parse($body['proof'] ?? null, GuldGate::FEATURE_TTS);
+            if ($hasAttest) {
+                // Gratisnivån: förfrågan är clientData, som appen signerat med
+                // App Attest. Inget fält läses ur den osignerade kroppen.
+                $freeRequest = $free->verify($body['attest'], $game, GuldGate::FEATURE_TTS, $request->ip());
+                $params = $freeRequest->clientData;
+                $caller = $freeRequest->caller;
+            } else {
+                $proof = $gate->parse($body['proof'] ?? null, GuldGate::FEATURE_TTS);
+                $params = $body;
+                $caller = null;
+            }
 
-            $speed = $body['speed'] ?? null;
-            $words = $body['words'] ?? null;
+            $speed = $params['speed'] ?? null;
+            $words = $params['words'] ?? null;
             // Valfritt; saknas det gäller engelska (appar före språkfältet).
-            $language = array_key_exists('language', $body) ? $body['language'] : ElevenLabsClient::LANGUAGE;
+            $language = array_key_exists('language', $params) ? $params['language'] : ElevenLabsClient::LANGUAGE;
             // Valfritt; saknas det gäller kvinnlig röst (appar före röstvalet).
-            $gender = array_key_exists('voice', $body) ? $body['voice'] : GlosisSettings::DEFAULT_GENDER;
+            $gender = array_key_exists('voice', $params) ? $params['voice'] : GlosisSettings::DEFAULT_GENDER;
             if (! is_string($speed) || ! array_key_exists($speed, StudioVoice::SPEEDS) || ! self::validWords($words)
                 || ! is_string($language) || ! array_key_exists($language, GlosisSettings::LANGUAGES)
                 || ! is_string($gender) || ! array_key_exists($gender, GlosisSettings::GENDERS)) {
-                throw new GlosisRejection(422, 'invalid_request', 'Något blev fel med studiorösten. Appen använder telefonens röst så länge.');
+                // En gratisförfrågan har här redan förbrukat sin challenge och
+                // räknare. Avsiktligt: den var signerad, och appen hämtar en ny.
+                throw new GlosisRejection(422, 'invalid_request', self::INVALID_REQUEST);
             }
 
-            $transaction = $gate->verify($proof, $game, GuldGate::FEATURE_TTS);
-            $result = $voice->prepare($game, GlosisCaller::guld($transaction), $speed, $words, $language, $gender);
+            $caller ??= GlosisCaller::guld($gate->verify($proof, $game, GuldGate::FEATURE_TTS));
+            $result = $voice->prepare($game, $caller, $speed, $words, $language, $gender);
         } catch (GlosisRejection $e) {
             return $e->toResponse();
         }

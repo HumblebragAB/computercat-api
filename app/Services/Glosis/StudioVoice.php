@@ -98,7 +98,7 @@ class StudioVoice
      */
     public static function hash(string $normalized, string $speed, string $voiceId, string $language = ElevenLabsClient::LANGUAGE): string
     {
-        $parts = [$normalized, sprintf('%.2f', self::SPEEDS[$speed]), $voiceId, ElevenLabsClient::MODEL];
+        $parts = [$normalized, sprintf('%.2F', self::SPEEDS[$speed]), $voiceId, ElevenLabsClient::MODEL];
         if ($language !== ElevenLabsClient::LANGUAGE) {
             $parts[] = $language;
         }

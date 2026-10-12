@@ -301,6 +301,22 @@ class GlosisTtsTest extends TestCase
         $this->assertNotSame(StudioVoice::hash('dog', 'normal', self::VOICE, 'de'), StudioVoice::hash('dog', 'normal', self::VOICE, 'fr'));
     }
 
+    public function test_hash_does_not_depend_on_the_locale(): void
+    {
+        $expected = hash('sha256', 'dog|1.00|'.self::VOICE.'|eleven_flash_v2_5');
+        $previous = setlocale(LC_NUMERIC, '0');
+        if (setlocale(LC_NUMERIC, 'sv_SE.UTF-8', 'sv_SE', 'de_DE.UTF-8') === false) {
+            $this->markTestSkipped('Ingen locale med decimalkomma finns.');
+        }
+
+        try {
+            $this->assertSame('1,00', sprintf('%.2f', 1.0), 'Locale:n ska ha decimalkomma, annars testar testet inget.');
+            $this->assertSame($expected, StudioVoice::hash('dog', 'normal', self::VOICE));
+        } finally {
+            setlocale(LC_NUMERIC, $previous);
+        }
+    }
+
     public function test_slow_speed_uses_0_7_and_its_own_file(): void
     {
         $this->cache('dog', 'normal');
