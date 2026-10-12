@@ -10,7 +10,6 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Normalizer;
@@ -251,8 +250,12 @@ class StudioVoice
                     return 'ok:'.$hash;
                 }
 
-                // Gränserna räknas först och avgörs på värdet hit() returnerar
-                // (atomiskt, som skanningens veckogräns).
+                // Gränserna räknas först och avgörs på värdet increment() returnerar
+                // (atomiskt, som skanningens dagstak i GlosisScanController::freeLimits).
+                // Inte RateLimiter: dess increment() gör put($key, 1) när add() misslyckas
+                // och värdet blev 1, vilket tillsammans med återföringen kan skriva över
+                // ett parallellt anrop. Nycklarna är desamma som RateLimiter använde
+                // (cleanRateLimiterKey ändrar inte [a-z0-9:-]), så räknarna löper vidare.
                 $now = CarbonImmutable::now(GuldStatus::TIME_ZONE);
                 $day = $now->format('Y-m-d');
                 $ttl = (int) ceil($now->diffInSeconds($now->addDay()->startOfDay())) + 60;
@@ -266,14 +269,23 @@ class StudioVoice
                 } else {
                     $counters[] = ['glosis-tts:day:'.$game->id.':'.$day, $settings->ttsDailyNewLimit(), 'global'];
                 }
-                $undoCounters = function () use ($counters, $ttl) {
-                    foreach ($counters as [$key]) {
-                        RateLimiter::decrement($key, $ttl);
+                // Bara räknare som detta anrop faktiskt ökat återförs.
+                $counted = [];
+                $undoCounters = function () use (&$counted) {
+                    foreach ($counted as $key) {
+                        Cache::decrement($key);
                     }
+                    $counted = [];
                 };
                 $over = null;
                 foreach ($counters as [$key, $limit, $scope]) {
-                    if (RateLimiter::hit($key, $ttl) > $limit) {
+                    Cache::add($key, 0, $ttl);
+                    $hits = Cache::increment($key);
+                    if ($hits !== false) {
+                        $counted[] = $key;
+                    }
+                    // Räknaren svarar inte: stäng hellre än att släppa igenom.
+                    if ($hits === false || $hits > $limit) {
                         $over ??= $scope;
                     }
                 }

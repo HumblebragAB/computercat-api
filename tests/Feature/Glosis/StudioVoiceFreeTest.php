@@ -109,6 +109,86 @@ class StudioVoiceFreeTest extends TestCase
         $this->assertNotSame($this->free('1.2.3.4')->ipLimitId(), $this->free('1.2.3.5')->ipLimitId());
     }
 
+    /** Räknarna för nya ord går via Cache::add + increment, inte RateLimiter (som kan skriva över med put). */
+    public function test_ordgranserna_anvander_inte_ratelimiter(): void
+    {
+        RateLimiter::spy();
+        $voice = app(StudioVoice::class);
+        $guld = GlosisCaller::guld(new VerifiedTransaction('2000000111111111', '2000000111111111', 'glosis_guld_2026_27', 'Production', null));
+
+        $voice->prepare($this->game, $this->free(), 'normal', ['dog'], 'en', 'female');
+        $voice->prepare($this->game, $guld, 'normal', ['cat'], 'en', 'female');
+
+        foreach (['hit', 'increment', 'decrement', 'attempts', 'tooManyAttempts'] as $method) {
+            RateLimiter::shouldNotHaveReceived($method);
+        }
+        $this->assertSame(1, Cache::get('glosis-tts:'.$this->free()->limitId().':'.$this->day()));
+        $this->assertSame(1, Cache::get('glosis-tts:free-day:'.$this->game->id.':'.$this->day()));
+        $this->assertSame(1, Cache::get('glosis-tts:free-ip:'.$this->free()->ipLimitId().':'.$this->day()));
+        $this->assertSame(1, Cache::get('glosis-tts:'.$guld->limitId().':'.$this->day()));
+        $this->assertSame(1, Cache::get('glosis-tts:day:'.$this->game->id.':'.$this->day()));
+    }
+
+    public function test_slut_delbudget_aterfor_alla_gratisraknare(): void
+    {
+        $this->game->update(['settings' => array_merge($this->game->settings, ['free' => ['monthly_budget_usd' => '0.0001']])]); // 100 µ$; "dog" kostar 120
+        // Andra anrop har redan räknat: återföringen ska ta bort just detta anrops ökning, inte nollställa.
+        Cache::put('glosis-tts:free-day:'.$this->game->id.':'.$this->day(), 5, 3600);
+
+        $result = app(StudioVoice::class)->prepare($this->game, $this->free(), 'normal', ['dog'], 'en', 'female');
+
+        $this->assertSame('budget', $result['stopped']);
+        Http::assertNothingSent();
+        $this->assertSame(0, Cache::get('glosis-tts:'.$this->free()->limitId().':'.$this->day()));
+        $this->assertSame(5, Cache::get('glosis-tts:free-day:'.$this->game->id.':'.$this->day()));
+        $this->assertSame(0, Cache::get('glosis-tts:free-ip:'.$this->free()->ipLimitId().':'.$this->day()));
+        $this->assertSame(0, AiUsage::count());
+    }
+
+    public function test_raknare_som_inte_svarar_stanger_och_aterfor_bara_det_som_okats(): void
+    {
+        $limitKey = 'glosis-tts:'.$this->free()->limitId().':'.$this->day();
+        $globalKey = 'glosis-tts:free-day:'.$this->game->id.':'.$this->day();
+        $ipKey = 'glosis-tts:free-ip:'.$this->free()->ipLimitId().':'.$this->day();
+        Cache::spy();
+        Cache::shouldReceive('add')->andReturn(true);
+        Cache::shouldReceive('increment')->with($limitKey)->andReturn(1);
+        Cache::shouldReceive('increment')->with($globalKey)->andReturn(false);
+        Cache::shouldReceive('increment')->with($ipKey)->andReturn(1);
+        Cache::shouldReceive('lock')->andReturn(new class implements \Illuminate\Contracts\Cache\Lock
+        {
+            public function get($callback = null)
+            {
+                return $callback ? $callback() : true;
+            }
+
+            public function block($seconds, $callback = null)
+            {
+                return $callback ? $callback() : true;
+            }
+
+            public function release()
+            {
+                return true;
+            }
+
+            public function owner()
+            {
+                return 'test';
+            }
+
+            public function forceRelease() {}
+        });
+
+        $result = app(StudioVoice::class)->prepare($this->game, $this->free(), 'normal', ['dog'], 'en', 'female');
+
+        $this->assertSame([['word' => 'dog', 'reason' => 'limit']], $result['skipped']);
+        Http::assertNothingSent();
+        Cache::shouldHaveReceived('decrement')->with($limitKey)->once();
+        Cache::shouldHaveReceived('decrement')->with($ipKey)->once();
+        Cache::shouldNotHaveReceived('decrement', [$globalKey]);
+    }
+
     public function test_provlyssning_bokfors_som_admin(): void
     {
         app(StudioVoice::class)->prepare($this->game, GlosisCaller::admin(), 'normal', ['dog'], 'en', 'female');
