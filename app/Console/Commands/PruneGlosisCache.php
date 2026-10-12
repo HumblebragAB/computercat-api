@@ -17,7 +17,12 @@ use Illuminate\Support\Facades\DB;
  */
 class PruneGlosisCache extends Command
 {
-    /** Det Glosis skriver i cachen: AttestChallenges, FreeScanWeek och GlosisScanController, StudioVoice, AiBudget. */
+    /**
+     * Glosis utgående räknare och markörer: AttestChallenges, FreeScanWeek och GlosisScanController, StudioVoice, AiBudget.
+     * Inte fullständig med flit: 'glosis:google-play:access-token:...' (GooglePurchaseVerifier) är en rad per
+     * tjänstekonto-nyckel och skrivs över vid förnyelse, alltså begränsad, och 'glosis-tts-gen:' (StudioVoice) är
+     * kortlivade lås. Ingetdera gallras här.
+     */
     public const PREFIXES = [
         'glosis-attest-used:',
         'glosis-scan:',
