@@ -5,7 +5,12 @@ namespace App\Console\Commands;
 use App\Models\AppAttestKey;
 use Illuminate\Console\Command;
 
-/** Gallrar App Attest-nycklar som inte använts på --months månader (integritetspolicyn). Räknar först. */
+/**
+ * Gallrar App Attest-nycklar som inte använts på --months månader (integritetspolicyn). Räknar först.
+ *
+ * Invarianten "varje gratisrad i ai_usage har en nyckel" gäller bara inom nyckelns lagringstid:
+ * när en nyckel gallras nollas eller försvinner kopplingen för äldre rader.
+ */
 class PruneGlosisAttestKeys extends Command
 {
     protected $signature = 'glosis:prune-attest-keys {--months=13} {--dry-run}';

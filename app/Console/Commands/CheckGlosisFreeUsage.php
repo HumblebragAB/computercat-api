@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\Log;
  * Taken läses som de är när kommandot körs. Sänks ett tak i Filament mitt på dagen kan dagens
  * redan bokförda rader ligga över det nya taket och ge ett falskt larm; kontrollera då mot
  * taket som gällde. Höjs ett tak blir kontrollen bara snällare.
+ *
+ * Invarianten "varje gratisrad i ai_usage har en nyckel" gäller bara inom nyckelns lagringstid:
+ * när en nyckel gallras nollas eller försvinner kopplingen för äldre rader.
  */
 class CheckGlosisFreeUsage extends Command
 {

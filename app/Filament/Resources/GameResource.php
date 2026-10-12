@@ -297,7 +297,7 @@ class GameResource extends Resource
                         ->helperText('Av = appen får 503 free_unavailable och visar telefonens röst och "pausat" för fotot.'),
                     Forms\Components\TextInput::make('settings.app_attest.team_id')
                         ->label('Apple Team ID')
-                        ->regex('/^[A-Z0-9]{10}$/')
+                        ->regex('/^[A-Z0-9]{10}\z/')
                         ->helperText('10 tecken, Apple Developer → Membership. Krävs för App Attest (RP ID = Team ID + bundle-id).'),
                     Forms\Components\TextInput::make('settings.free.scan_daily_limit')->label('Gratisskanningar per dygn (alla)')->integer()->minValue(0)
                         ->placeholder((string) GlosisSettings::DEFAULT_FREE_SCAN_DAILY_LIMIT)->helperText('Per nyckel gäller alltid 1 i veckan.'),

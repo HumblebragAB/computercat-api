@@ -95,17 +95,18 @@ class FreeUsageInvariantTest extends TestCase
             ['other-cache-glosis-tts:x', $past],            // annan app, kvar
             ['app-cache-glosisXtts:x', $past],              // nästan-prefix, kvar
             ['app-cache-glosis-unknown:x', $past],          // okänt Glosis-prefix, kvar
+            ['app-cache-glosis-tts-audio:x', $past],        // bara Limit::by-nyckel, kvar
         ];
         foreach ($rows as [$key, $exp]) {
             DB::table('cache')->insert(['key' => $key, 'value' => 's:1:"x";', 'expiration' => $exp]);
         }
 
         $this->artisan('glosis:prune-cache --dry-run')->expectsOutputToContain('3 utgångna')->assertExitCode(0);
-        $this->assertSame(8, DB::table('cache')->count());
+        $this->assertSame(9, DB::table('cache')->count());
 
         $this->artisan('glosis:prune-cache')->assertExitCode(0);
         $this->assertEqualsCanonicalizing(
-            ['app-cache-glosis-scan:free:y:2026-W42:slot:0', 'app-cache-other-thing', 'other-cache-glosis-tts:x', 'app-cache-glosisXtts:x', 'app-cache-glosis-unknown:x'],
+            ['app-cache-glosis-scan:free:y:2026-W42:slot:0', 'app-cache-other-thing', 'other-cache-glosis-tts:x', 'app-cache-glosisXtts:x', 'app-cache-glosis-unknown:x', 'app-cache-glosis-tts-audio:x'],
             DB::table('cache')->pluck('key')->all(),
         );
     }

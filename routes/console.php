@@ -17,4 +17,4 @@ Schedule::command('interest:prune-unconfirmed --days=30')->dailyAt('03:30');
 // Glosis gratisnivå (planen 2026-10-12): invarianter, gallring av App Attest-nycklar (13 månader) och utgångna cacherader.
 Schedule::command('glosis:check-free-usage')->dailyAt('06:00');
 Schedule::command('glosis:prune-attest-keys --months=13')->monthlyOn(1, '04:00');
-Schedule::command('glosis:prune-cache')->hourly();
+Schedule::command('glosis:prune-cache')->hourly()->withoutOverlapping();

@@ -7,8 +7,9 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Databascachen (CACHE_STORE=database i produktion) tar aldrig bort utgångna rader själv.
- * Gratisnivån skriver räknare per nyckel, IP och dygn, en ":used"-markör per inlöst challenge
- * och rate limiter-rader. De utgångna raderna gallras här.
+ * Gratisnivån skriver räknare per nyckel, IP och dygn och en markör per inlöst challenge.
+ * De utgångna raderna gallras här. Rate limiter-rader ingår inte: Laravel lagrar throttle-nycklar
+ * som md5(...) och de börjar aldrig med "glosis-".
  *
  * Bara nycklar som börjar med någon av Glosis egna prefix nedan (efter cache.prefix) och bara
  * utgångna rader. Prefixen matchas exakt i PHP, inte med LIKE, så ingen annan apps rader kan
@@ -16,13 +17,11 @@ use Illuminate\Support\Facades\DB;
  */
 class PruneGlosisCache extends Command
 {
-    /** Allt Glosis skriver i cachen (kontrollerat mot AttestChallenges, FreeScanWeek, StudioVoice, AiBudget, GlosisScanController, AppServiceProvider). */
+    /** Det Glosis skriver i cachen: AttestChallenges, FreeScanWeek och GlosisScanController, StudioVoice, AiBudget. */
     public const PREFIXES = [
         'glosis-attest-used:',
-        'glosis-attest-ch:',
         'glosis-scan:',
         'glosis-tts:',
-        'glosis-tts-audio:',
         'glosis-ai-budget:',
         'glosis-ai-budget-free:',
     ];
@@ -42,7 +41,6 @@ class PruneGlosisCache extends Command
         $table = DB::connection($store['connection'] ?? null)->table($store['table'] ?? 'cache');
         $now = now()->getTimestamp();
         $cachePrefix = (string) config('cache.prefix');
-        $len = strlen($cachePrefix);
 
         $keys = [];
         foreach (self::PREFIXES as $prefix) {
@@ -52,7 +50,7 @@ class PruneGlosisCache extends Command
                 ->whereRaw('substr('.$this->col($store, 'key').', 1, ?) = ?', [strlen($full), $full])
                 ->pluck('key');
             foreach ($candidates as $key) {
-                if (str_starts_with($key, $full) && strlen($key) >= $len) {
+                if (str_starts_with($key, $full)) {
                     $keys[$key] = true;
                 }
             }
