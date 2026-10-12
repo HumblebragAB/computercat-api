@@ -75,6 +75,20 @@ class AiUsageReportTest extends TestCase
         );
     }
 
+    public function test_gratisnivans_kostnad_i_manaden_redovisas_separat(): void
+    {
+        $this->usage('tts', '2026-10-14 10:00', '0.500000');
+        AiUsage::query()->latest('id')->firstOrFail()->forceFill(['tier' => 'free'])->save();
+        $this->usage('scan', '2026-10-14 10:00', '0.100000'); // guld
+        $this->usage('tts', '2026-09-30 10:00', '0.700000'); // förra månaden
+        AiUsage::query()->latest('id')->firstOrFail()->forceFill(['tier' => 'free'])->save();
+
+        $report = AiUsageReport::build($this->game, now());
+
+        $this->assertSame(500_000, $report['month_free_micro_usd']);
+        $this->assertSame(20_000_000, $report['free_budget_micro_usd']);
+    }
+
     public function test_page_renders_for_admin(): void
     {
         $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));

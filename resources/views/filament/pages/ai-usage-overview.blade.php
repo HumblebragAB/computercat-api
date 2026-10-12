@@ -13,6 +13,9 @@
             <p class="text-lg font-semibold" data-test="month-total">
                 {{ $usd($report['month_total_micro_usd']) }} av {{ $usd($report['budget_micro_usd']) }}
             </p>
+            <p class="text-sm" data-test="month-free">
+                Varav gratisnivån: {{ $usd($report['month_free_micro_usd']) }} av {{ $usd($report['free_budget_micro_usd']) }}
+            </p>
         </x-filament::section>
 
         <x-filament::section>

@@ -25,6 +25,8 @@ final class AiUsageReport
      *     month: array<string, array{count: int, micro_usd: int}>,
      *     month_total_micro_usd: int,
      *     budget_micro_usd: int,
+     *     month_free_micro_usd: int,
+     *     free_budget_micro_usd: int,
      * }
      */
     public static function build(Game $game, DateTimeInterface $now): array
@@ -43,12 +45,13 @@ final class AiUsageReport
         }
         $week = $empty();
         $month = $empty();
+        $monthFree = 0;
 
         $rows = AiUsage::query()
             ->where('game_id', $game->id)
             ->where('created_at', '>=', $from->setTimezone(config('app.timezone')))
             ->toBase()
-            ->select(['id', 'feature', 'created_at', 'est_cost_usd'])
+            ->select(['id', 'feature', 'created_at', 'est_cost_usd', 'tier'])
             ->lazyById(1000, 'id');
 
         foreach ($rows as $row) {
@@ -74,6 +77,9 @@ final class AiUsageReport
             }
             if ($at->greaterThanOrEqualTo($monthStart)) {
                 $add($month);
+                if ($row->tier === AiUsage::TIER_FREE) {
+                    $monthFree += $micro;
+                }
             }
         }
 
@@ -83,6 +89,8 @@ final class AiUsageReport
             'month' => $month,
             'month_total_micro_usd' => array_sum(array_column($month, 'micro_usd')),
             'budget_micro_usd' => GlosisSettings::for($game)->monthlyBudgetMicroUsd(),
+            'month_free_micro_usd' => $monthFree,
+            'free_budget_micro_usd' => GlosisSettings::for($game)->freeMonthlyBudgetMicroUsd(),
         ];
     }
 }
