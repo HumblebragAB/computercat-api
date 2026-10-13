@@ -33,6 +33,29 @@ class ThemeSweepTest extends TestCase
         }
     }
 
+    public function test_fargklasser_i_egna_filament_vyer_finns_i_den_forkompilerade_css_en(): void
+    {
+        // Prod bygger ingen Tailwind: en färgklass som saknas i Filaments app.css gör
+        // ingenting, och då slår ljuslägets färg igenom i mörkt läge (t.ex. 2.7:1).
+        $root = dirname(__DIR__, 2);
+        $css = file_get_contents("$root/public/css/filament/filament/app.css");
+        $vyer = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator("$root/resources/views/filament"));
+        $saknas = [];
+        foreach ($vyer as $fil) {
+            if (! str_ends_with($fil->getFilename(), '.blade.php')) {
+                continue;
+            }
+            preg_match_all('#(?<![\w:-])((?:dark:)?(?:text|bg|border|ring|divide)-(?:gray|primary|danger|warning|success|info|white|black)(?:-\d{2,3})?(?:/\d+)?)(?![\w-])#', file_get_contents($fil), $m);
+            foreach (array_unique($m[1]) as $klass) {
+                $selektor = '.'.str_replace([':', '/'], ['\\:', '\\/'], $klass);
+                if (! preg_match('#'.preg_quote($selektor, '#').'(?![\w\\\\/-])#', $css)) {
+                    $saknas[] = $fil->getFilename().": $klass";
+                }
+            }
+        }
+        $this->assertSame([], $saknas);
+    }
+
     public function test_den_oanvanda_welcome_vyn_ar_borta(): void
     {
         $this->assertFileDoesNotExist(dirname(__DIR__, 2).'/resources/views/welcome.blade.php');

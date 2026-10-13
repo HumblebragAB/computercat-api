@@ -29,7 +29,7 @@
                             @if ($loop->first)
                                 <td class="py-3 font-medium" rowspan="{{ count($genders) }}">{{ $label }}</td>
                             @endif
-                            <td class="py-3 pr-3 whitespace-nowrap text-gray-600 dark:text-gray-300">{{ $genderLabel }}</td>
+                            <td class="py-3 pr-3 whitespace-nowrap text-gray-600 dark:text-gray-400">{{ $genderLabel }}</td>
                             <td class="py-3">
                                 @if ($voice === null)
                                     <span class="text-gray-500">Ingen röst vald.</span>
