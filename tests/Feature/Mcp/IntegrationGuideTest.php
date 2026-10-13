@@ -19,6 +19,19 @@ class IntegrationGuideTest extends McpTestCase
         $this->assertSame(0, PersonalAccessToken::count());
     }
 
+    // Manualen ska beskriva förnyelsen, inte den gamla 7-dagarsgränsen.
+    public function test_manual_describes_token_refresh(): void
+    {
+        $game = $this->game();
+
+        $manual = IntegrationGuide::manual($game, ['auth']);
+
+        $this->assertStringNotContainsString('7 days', $manual);
+        $this->assertStringContainsString('POST '.rtrim(config('app.url'), '/').'/api/v1/auth/refresh', $manual);
+        $this->assertStringContainsString('older than 24 hours', $manual);
+        $this->assertStringContainsString('90 days', $manual);
+    }
+
     public function test_tool_returns_manual_and_respects_features(): void
     {
         $user = $this->staffMember($this->game());

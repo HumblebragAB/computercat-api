@@ -150,7 +150,7 @@ class IntegrationGuide
         $lines[] = '- Store everything in local storage. Push to cloud in background.';
         $lines[] = '- Game must work perfectly without internet.';
         $lines[] = '- On launch: pull cloud → merge with local → push merged state.';
-        $lines[] = '- **Tokens expire after 7 days.** On 401, create a new anonymous user and re-sync.';
+        $lines[] = '- **Tokens expire 90 days after they are issued.** Refresh at launch when the stored token is older than 24 hours (see Authentication). On 401, create a new anonymous user and re-sync.';
         $lines[] = '';
 
         if (in_array('auth', $features)) {
@@ -167,14 +167,21 @@ class IntegrationGuide
             $lines[] = '```';
             $lines[] = 'Response: `{"token": "1|abc...", "user": {"id": 1, "display_name": "Player", "is_anonymous": true}}`';
             $lines[] = '';
-            $lines[] = 'Store token persistently. Use for all subsequent requests.';
+            $lines[] = 'Store token persistently together with the time it was issued, and keep the same user for as long as the token works.';
             $lines[] = '';
-            $lines[] = '### Verify on launch';
+            $lines[] = '### Refresh on launch';
+            $lines[] = 'Tokens expire 90 days after they are issued. At app start, if the stored token is older than 24 hours, exchange it for a new one:';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/auth/me";
+            $lines[] = "POST {$baseUrl}/auth/refresh";
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
-            $lines[] = 'If 401 → create new anonymous user.';
+            $lines[] = 'Response: `{"token": "2|def...", "user": {"id": 1, "display_name": "Player", "is_anonymous": true}, "expires_at": "2027-01-11T12:00:00+00:00"}`';
+            $lines[] = '';
+            $lines[] = 'Replace the stored token and its issue time with the new ones. The old token keeps working for up to 10 minutes, so requests already in flight (or other tabs) do not fail. A player who opens the game at least once every 90 days keeps the same account.';
+            $lines[] = '';
+            $lines[] = 'If the refresh (or any other request) returns 401, the token has expired or the user was removed: create a new anonymous user and re-sync. 403 means the account is banned; do not create a new user. 429 means rate limited: keep the current token and try again on next launch.';
+            $lines[] = '';
+            $lines[] = "If the token is younger than 24 hours, `GET {$baseUrl}/auth/me` is enough to verify it.";
             $lines[] = '';
             $lines[] = '### Upgrade to email (optional)';
             $lines[] = '```';
@@ -629,7 +636,7 @@ class IntegrationGuide
         $lines[] = '';
         $lines[] = '| Status | Meaning | Action |';
         $lines[] = '|--------|---------|--------|';
-        $lines[] = '| 401 | Token expired | Create new anonymous user |';
+        $lines[] = '| 401 | Token expired or invalid | Create new anonymous user |';
         $lines[] = '| 404 | Not found | — |';
         $lines[] = '| 409 | Save conflict | Pull, merge, retry |';
         $lines[] = '| 422 | Validation | Check `errors` |';
