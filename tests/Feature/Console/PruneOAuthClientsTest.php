@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Console;
 
+use App\Console\Commands\PruneOAuthClients;
 use App\Models\User;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -110,5 +111,34 @@ class PruneOAuthClientsTest extends TestCase
         $this->assertCount(1, $events);
         // En gång per natt: fast minut och timme, varje dag.
         $this->assertMatchesRegularExpression('/^\d+ [0-5] \* \* \*$/', $events->first()->expression);
+    }
+
+    /** En klient som får sin första auth-kod mellan urval och radering ska överleva. */
+    public function test_delete_step_rechecks_guards_for_preselected_ids(): void
+    {
+        $user = User::factory()->create();
+        $raced = $this->dcrClient(48);
+        $idle = $this->dcrClient(48);
+
+        // Urvalet är redan gjort (båda oanvända); sedan hinner en kod skapas för den ena.
+        DB::table('oauth_auth_codes')->insert([
+            'id' => Str::random(80), 'user_id' => $user->id, 'client_id' => $raced,
+            'scopes' => '["mcp:use"]', 'revoked' => false, 'expires_at' => now()->addMinutes(10),
+        ]);
+
+        $deleted = app(PruneOAuthClients::class)->deleteUnused([$raced, $idle]);
+
+        $this->assertSame(1, $deleted);
+        $this->assertTrue(Client::whereKey($raced)->exists());
+        $this->assertFalse(Client::whereKey($idle)->exists());
+    }
+
+    /** Invariant: passport:purge utan --revoked kan få aktiva klienter att se oanvända ut. */
+    public function test_passport_purge_is_not_scheduled(): void
+    {
+        $purge = collect(app(Schedule::class)->events())
+            ->filter(fn ($e) => str_contains((string) $e->command, 'passport:purge'));
+
+        $this->assertCount(0, $purge);
     }
 }

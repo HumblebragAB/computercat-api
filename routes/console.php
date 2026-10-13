@@ -20,4 +20,6 @@ Schedule::command('glosis:prune-attest-keys --months=13')->monthlyOn(1, '04:00')
 Schedule::command('glosis:prune-cache')->hourly()->withoutOverlapping(10);
 
 // Övergivna DCR-registreringar (POST /oauth/register): klienter utan tokens eller koder, äldre än 24 h.
+// Schemalägg aldrig passport:purge utan --revoked: rensade utgångna access-tokens vars refresh-tokens
+// fortfarande gäller får aktiva klienter att se oanvända ut, och då raderas de här.
 Schedule::command('computercat:prune-oauth-clients --hours=24')->dailyAt('04:30');

@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 use Laravel\Passport\Client;
 use Laravel\Passport\Passport;
@@ -16,6 +17,10 @@ use Laravel\Passport\Passport;
  * ingen ägare, ingen secret (publik), ingen provider och grant_types exakt
  * [authorization_code, refresh_token]. Klienter med access-tokens, auth-koder eller
  * device-koder rörs aldrig. Räknar först och raderar sedan exakt de insamlade id:na.
+ *
+ * Invariant: schemalägg aldrig `passport:purge` utan `--revoked`. Rensas utgångna access-tokens
+ * bort medan deras refresh-tokens fortfarande gäller ser en aktiv klient oanvänd ut, och då
+ * raderar den här gallringen den.
  */
 class PruneOAuthClients extends Command
 {
@@ -32,17 +37,13 @@ class PruneOAuthClients extends Command
         $hours = max(1, (int) $this->option('hours'));
         $cutoff = now()->subHours($hours);
 
-        $ids = Passport::client()->newQuery()
+        $ids = $this->unused(Passport::client()->newQuery())
             ->whereNull('owner_type')
             ->whereNull('owner_id')
             ->whereNull('secret')
             ->whereNull('provider')
             ->where('created_at', '<', $cutoff)
-            ->whereDoesntHave('tokens')
-            ->whereDoesntHave('authCodes')
-            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('oauth_device_codes')
-                ->whereColumn('oauth_device_codes.client_id', 'oauth_clients.id'))
-            ->get()
+            ->get(['id', 'grant_types'])
             // grant_types är JSON-text; jämförs i PHP i stället för som sträng i SQL.
             ->filter(fn (Client $client) => $this->isDcrGrantTypes($client->grant_types))
             ->pluck('id');
@@ -55,15 +56,42 @@ class PruneOAuthClients extends Command
             return self::SUCCESS;
         }
 
-        // Raderar exakt de id:n som räknades ovan, i omgångar.
-        $deleted = 0;
-        foreach ($ids->chunk(self::CHUNK) as $chunk) {
-            $deleted += Passport::client()->newQuery()->whereIn('id', $chunk->values()->all())->delete();
-        }
+        $deleted = $this->deleteUnused($ids->all());
         $this->info("Raderade {$deleted}.");
         Log::info("computercat:prune-oauth-clients: raderade {$deleted}.");
+        if ($deleted < $ids->count()) {
+            Log::warning('computercat:prune-oauth-clients: färre raderade än valda, klienter fick tokens eller koder under körningen.', [
+                'selected' => $ids->count(), 'deleted' => $deleted,
+            ]);
+        }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Raderar exakt de givna id:na i omgångar, men bara de som fortfarande saknar tokens och
+     * koder. Villkoren upprepas eftersom en klient kan få sin första kod mellan urval och radering.
+     *
+     * @param  array<int, string>  $ids
+     */
+    public function deleteUnused(array $ids): int
+    {
+        $deleted = 0;
+        foreach (array_chunk($ids, self::CHUNK) as $chunk) {
+            $deleted += $this->unused(Passport::client()->newQuery())->whereIn('id', $chunk)->delete();
+        }
+
+        return $deleted;
+    }
+
+    /** Klienten har inga access-tokens, auth-koder eller device-koder. */
+    private function unused(Builder $query): Builder
+    {
+        return $query
+            ->whereDoesntHave('tokens')
+            ->whereDoesntHave('authCodes')
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('oauth_device_codes')
+                ->whereColumn('oauth_device_codes.client_id', 'oauth_clients.id'));
     }
 
     /** @param  array<int, string>  $grantTypes */
