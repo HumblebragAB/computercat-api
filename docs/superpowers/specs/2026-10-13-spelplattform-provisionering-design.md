@@ -38,131 +38,164 @@ Fullständiga anteckningar med käll-rader ligger i bilagorna längst ned. Samma
 **SiteOps** (`~/Web/siteops`, läst i koden)
 - `POST /api/v1/sites` finns (scope `sites:write`, auth `X-Api-Key` eller JWT via egen `OAuthMiddleware`), men kan inte sätta basic auth, `is_monitored`, välja lösning eller avaktivera. Det byggs ut här (se delprojekt 2a).
 
-## Ej verifierat, verifieras i en spike innan resten byggs
+## Förutsättningar (engångs, före bygget av 2c)
+
+Var och en kräver Eriks OK eller görs av Erik:
+
+1. **Kö-worker i prod.** Computercat har idag inga köjobb och troligen ingen worker. En Forge-daemon `php8.4 artisan queue:work --tries=1 --timeout=120` som användaren `computercat` skapas.
+2. **Slack-webhook** för larm (`SLACK_ALERT_WEBHOOK_URL`). Ingen Slack-larmning finns i Computercat idag.
+3. **GitHub App "Humblebrag Spelstudio"** (Administration: write, Contents: write, Metadata: read), installerad på "Only select repositories" med `spelmall`.
+4. **Coolify-token** med `write` + `deploy`, skapad med Humblebrags team aktivt.
+5. **Coolifys och Claudes GitHub App-installationer** på HumblebragAB måste nå nya repon. Är någon av dem på "Only select repositories" måste den ändras till "All repositories", eftersom vår app inte kan utöka andra appars installationer.
+6. **SiteOps-nyckel** med bara `sites:write`.
+7. Nycklarna läggs i Computercats `.env` på Forge.
+8. **Claude Code-molnmiljön** tillåter `api.computercat.co` och `*.apps.humblebrag.se`, och Computercat-connectorn är tillagd i claude.ai.
+
+## Ej verifierat, verifieras i en spike innan 2c byggs
 
 1. `git_repository`-formatet för GitHub App-källa (`owner/repo` eller full URL).
 2. Att `ports_exposes: "80"` är rätt för statisk nginx-image.
-3. Att Coolifys GitHub App-installation på HumblebragAB når **nya** repon (All repositories) eller måste utökas.
-4. Att Claude GitHub App-installationen når nya repon, så att en molnsession kan öppnas på dem.
-5. Att basic auth satt via API ger samma Traefik-labels som UI:t (minnesanteckningen säger att labels måste regenereras efter ändring via tinker; skapande via API kan bete sig annorlunda). Kontrolleras mot `robots-sync`/`coolify-health`, som larmar om en Demo-app saknar basic auth.
+3. Att basic auth satt via API vid skapande ger samma Traefik-labels som UI:t, så att `robots-sync`/`coolify-health` inte larmar.
+4. Att build-variabler satta via `POST /applications/{uuid}/envs` med `is_buildtime: true` (finns i controllern, inte i OpenAPI-specen) når `next build`.
+5. Att wildcard-DNS för `*.apps.humblebrag.se` pekar på Coolify-servern.
+6. Att en molnsession som instrueras att pusha till `main` faktiskt gör det (prefixet `claude/` är ett standardval enligt dokumentationen, inte en spärr).
+7. Att en `next build` med statisk export klarar sig med Coolify-serverns minne medan övriga appar kör (mät RAM under bygget).
 
-Spiken körs mot en riktig Demo-app med slug `e2e-spike`, som tas bort på sitt uuid efteråt. Faller en punkt: stanna och fråga Erik.
+Spiken använder en riktig Demo-app med Coolify-namn `spel-e2e-spike`, som tas bort på sitt uuid efteråt. Faller en punkt: stanna och fråga Erik.
 
 ## Uppdelning
 
 | Del | Repo | Innehåll |
 |---|---|---|
-| 2a | siteops | API: sätt basic auth och `is_monitored` på en miljö, avaktivera en sajt |
+| 2a | siteops | API: skapa sajt med miljö av typ demo, uppdatera miljö, avaktivera, slå upp på URL |
 | 2b | spelmall (nytt) | Mallrepot med exempelspel, Computercat-klient, CLAUDE.md |
-| 2c | computercat-api | Provisioneringssagan och MCP-verktygen, invariant, acceptans |
+| 2c | computercat-api | Provisionerings- och arkiveringssagor, MCP-verktyg, Slack-larm, invariant |
+| 2d | — | Acceptans: Kattsvep |
 
-Ordning: 2a och 2b först (oberoende), sedan spiken, sedan 2c, sist acceptansen.
+Ordning: förutsättningarna, 2a och 2b (oberoende av varandra), spiken, 2c, sist 2d.
 
 ---
 
 ## 2a. SiteOps API
 
-Nya routes under `/api/v1`, samma `OAuthMiddleware` och scope-kontroll som befintliga:
+Nya eller utökade routes under `/api/v1`, samma `OAuthMiddleware` och scope-kontroll som befintliga:
 
 | Route | Scope | Gör |
 |---|---|---|
-| `POST /sites` (befintlig, utökas) | `sites:write` | Ny valfri `environment`: `{name, url, basic_auth_user, basic_auth_password, is_monitored}`. Skapar miljön även utan credentials. |
+| `POST /sites` (utökas) | `sites:write` | Ny valfri `environment`: `{type: "demo", name, url, basic_auth_user, basic_auth_password, is_monitored}`. Skapar bara den miljön, inte den tomma Production-miljön. |
+| `GET /sites?url=` (eller befintlig `/sites/search`) | `sites:read` | Slå upp sajt på exakt URL, för idempotens |
 | `PATCH /sites/{id}/environments/{env}` | `sites:write` | Sätter `basic_auth_user`, `basic_auth_password`, `is_monitored` |
 | `POST /sites/{id}/deactivate` | `sites:write` | `active = false`, `monitoring_enabled = false`. Ingen radering via API. |
 
-- Basic auth lagras krypterat som i UI:t (`Environment` casts), och visas aldrig i API-svar.
+- `type` måste finnas i `Environment::TYPES`.
+- Basic auth lagras krypterat som i UI:t och visas aldrig i API-svar.
 - Validering: `url` måste vara `https://`, `basic_auth_*` max 255, båda eller ingen.
-- Ny API-klient för Computercat med bara `sites:write`. Nyckeln skapas och lämnas till Computercats `.env` med Eriks OK.
-- Tester: skapa med miljö, uppdatera, avaktivera, scope saknas → 403, lösenord syns aldrig i svar.
+- Sajten får som idag en egen lösning (`BelongsToSolution`). Att samla spelen i en gemensam lösning ingår inte.
+- Ny API-klient för Computercat med `sites:read` + `sites:write`.
+- Tester: skapa med demo-miljö, uppslag på URL, uppdatera, avaktivera, scope saknas → 403, lösenord syns aldrig i svar.
 
 ## 2b. Spelmallen `HumblebragAB/spelmall`
 
 - Next.js (App Router), React, Tailwind, Zustand, framer-motion, TypeScript. `next.config.ts` med `output: 'export'` och `images.unoptimized`.
-- `lib/computercat/` — liten klient: anonym inloggning, lagring av token, förnyelse vid 401, offline-först (lokalt först, synk i bakgrunden), topplistor, sparningar. Läser `NEXT_PUBLIC_COMPUTERCAT_GAME` och `NEXT_PUBLIC_COMPUTERCAT_URL` (build-variabler).
-- Ett minimalt spelbart exempel (klick-räknare med topplista) som visar mönstret, så att mallen bevisar hela kedjan direkt efter första deploy.
+- `lib/computercat/` — liten klient: anonym inloggning, lagring av token, ny anonym användare vid 401, offline-först (lokalt först, synk i bakgrunden), topplistor, sparningar. Läser `NEXT_PUBLIC_COMPUTERCAT_GAME`; API-adressen `https://api.computercat.co/api/v1` är hårdkodad som standard och kan skrivas över med `NEXT_PUBLIC_COMPUTERCAT_URL`.
+- Ett minimalt spelbart exempel (klick-räknare med topplista) som bevisar hela kedjan direkt efter första deploy.
 - `CLAUDE.md` för spelets Claude:
   - Backend är Computercat. Bygg aldrig en egen backend, databas eller API-route.
   - Konfigurera topplistor, achievements, pooler m.m. med Computercat-connectorns verktyg (`get_game`, `upsert_*`). Hämta integrationsmanualen med `get_integration_guide`.
-  - Push till `main` deployar Demo automatiskt. Kontrollera Demo-adressen efter deploy.
+  - Pusha till `main` när en ändring är klar och testad; det deployar Demo automatiskt. Följ upp med `get_provisioning_status` och kontrollera Demo-adressen.
   - Behövs serverlogik som byggstenarna inte har: beskriv behovet och föreslå en PR mot computercat-api, bygg inte runt det.
-- `README.md` med samma sak för människor.
-- Markeras som mallrepo (`is_template: true`).
-- CI: ingen (Actions-budget). Bygget verifieras av Coolify vid deploy.
+- `README.md` med samma sak för människor, plus spelets idé (fylls i av `create_game`, se steget `repo`).
+- Markeras som mallrepo (`is_template: true`). Ingen CI (Actions-budget); bygget verifieras av Coolify.
 
 ## 2c. Provisionering i Computercat
 
 ### Konfiguration (Forge `.env`, med Eriks OK)
 
-`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (fil i storage, 600), `GITHUB_TEMPLATE_REPO=HumblebragAB/spelmall`, `COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_PROJECT_UUID` (Demo), `COOLIFY_SERVER_UUID`, `COOLIFY_GITHUB_APP_UUID`, `SITEOPS_URL`, `SITEOPS_API_KEY`, `DEMO_BASIC_AUTH_USER/PASSWORD` (demo/demo enligt befintlig konvention). Saknas något svarar `create_game` med ett tydligt fel om vilken inställning som saknas; inget halvt skapas.
+`GITHUB_APP_CLIENT_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (fil i storage, 600), `GITHUB_TEMPLATE_REPO=HumblebragAB/spelmall`, `COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_PROJECT_UUID` (Demo), `COOLIFY_SERVER_UUID`, `COOLIFY_GITHUB_APP_UUID`, `SITEOPS_URL`, `SITEOPS_API_KEY`, `DEMO_BASIC_AUTH_USER/PASSWORD` (demo/demo enligt befintlig konvention), `SLACK_ALERT_WEBHOOK_URL`. `lcobucci/jwt` krävs uttryckligen i composer (finns idag bara indirekt via Passport). Saknas en inställning svarar `create_game` med vilken, innan något skapas.
+
+### Slug
+
+- Regel `^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){2,39}\z`: giltig som GitHub-reponamn och DNS-etikett, inga dubbla eller avslutande bindestreck.
+- Reserverade: `www`, `api`, `admin`, `app`, `apps`, `demo`, `mail`, `spel`, samt varje befintlig underdomän under `apps.humblebrag.se` (lista i config, uppdateras när Coolify-appar läggs till för hand).
+- Regeln läggs i en regelklass som `create_game` använder. `GameResource` får regeln bara för nya spel (befintliga `tocco`, `tells`, `glosis` matchar redan, men redigering av ett befintligt spel ska aldrig blockeras).
+- IntegrationGuide skickar även spelets och eventens slug genom `code()`.
 
 ### Datamodell
 
-**`provisioning_runs`**: `id`, `game_id`, `user_id`, `status` (`running | succeeded | failed | archived`), `github_repo` (full_name), `coolify_app_uuid`, `siteops_site_id`, `demo_url`, `last_error` (text, trunkerad 4 KB, utan hemligheter), timestamps.
+**`provisioning_runs`**: `id`, `uuid`, `slug` (unik bland runs som inte är `released`), `user_id`, `game_id` (null tills spelet skapats), `kind` (`provision | archive`), `status` (`running | succeeded | failed | released | archived`), `idea` (text), `github_repo`, `coolify_app_uuid`, `siteops_site_id`, `demo_url`, `last_error` (text, max 4 KB, se redigering nedan), timestamps.
 **`provisioning_steps`**: `run_id`, `step`, `status` (`pending | done | failed`), `attempts`, `detail` (json), timestamps. Unik på (`run_id`, `step`).
 
-### Sagans steg
+### Provisioneringssagan
 
-| Steg | Idempotens (finns resursen redan?) |
-|---|---|
-| `game` — skapa inaktivt spel, anroparen blir `owner` | slug i `games` |
-| `repo` — generera `HumblebragAB/<slug>` från mallen, `private: true` | `GET /repos/HumblebragAB/<slug>`; finns det men skapades inte av denna run → fel, aldrig återanvänd |
-| `coolify_app` — skapa app i Demo enligt "Externa fakta", domän `https://<slug>.apps.humblebrag.se`, basic auth, build-variablerna ovan, `is_auto_deploy_enabled: true` | sparat uuid; vid 409 domänkonflikt → fel |
-| `cors` — lägg till Demo-adressen i spelets `allowed_origins` | finns redan i listan |
-| `siteops` — skapa sajt typ `app` med miljön Demo, basic auth, `is_monitored: true` | sparat id |
-| `deploy` — trigga deploy, polla till `finished` (max 15 min), sedan `GET` Demo-URL med basic auth → 200 | sparat deployment-uuid |
+Slugen reserveras när run-raden skapas. Spelposten skapas först när repot finns, så att ett tidigt fel aldrig lämnar ett spel som låser slugen.
 
-- Körs i en kö-jobbkedja (ett jobb per steg) så att MCP-anropet svarar direkt. Kön finns redan på servern (`$RESTART_QUEUES()` i deploy-skriptet); verifieras i spiken att en worker körs.
-- Ett misslyckat steg: status `failed`, `last_error` sparas, Slack-larm (samma webhook som Glosis-larmen), sagan stannar. `retry_provisioning(game)` kör om från första ej klara steget.
-- 4xx/5xx från GitHub, Coolify och SiteOps loggas med metod, URL, status och body, trunkerat till 4 KB, med `Authorization`, `private_key`, `password` och `token` borttagna.
+| Steg | Gör | Idempotens |
+|---|---|---|
+| `repo` | `POST /repos/HumblebragAB/spelmall/generate` med `name: <slug>`, `private: true`, `description: "Computercat-spel <slug> (run <uuid>)"`. Skriver idén till `README.md` via Contents-API. | Vid omkörning: `GET /repos/HumblebragAB/<slug>`; godta bara om `description` innehåller run-uuid och `template_repository.full_name` är mallen. 422 "name already exists" utan match → run `failed` med "slug upptagen på GitHub", slugen släpps (`released`). |
+| `game` | Skapa spelet **aktivt** med `is_listed = false`, anroparen som `owner` | slug i `games`, kopplad till runnens `game_id` |
+| `coolify_app` | `POST /applications/private-github-app`: namn `spel-<slug>`, domän `https://<slug>.apps.humblebrag.se`, nixpacks + statisk + `out`, basic auth, `is_auto_deploy_enabled: true`, `instant_deploy: false` | sparat uuid; annars `GET /applications` och matcha exakt namn `spel-<slug>` i Demo-projektet. 409 domänkonflikt → `failed`. |
+| `coolify_env` | `NEXT_PUBLIC_COMPUTERCAT_GAME=<slug>` som build-variabel | finns redan med samma värde |
+| `cors` | Demo-adressen i spelets `allowed_origins` | finns redan |
+| `siteops` | Skapa sajt typ `app` med demo-miljö, basic auth, `is_monitored: true` | sparat id; annars uppslag på exakt URL |
+| `deploy` | `POST /deploy?uuid=`; ett jobb som pollar `GET /deployments/{uuid}` och släpper sig själv (`release(30)`) tills `finished`, max 15 min; sedan `GET` Demo-URL med basic auth → 200 | sparat deployment-uuid |
+
+**`is_listed`** är en ny kolumn på `games` (default `true`, så befintliga spel påverkas inte). `GET /api/v1/games` visar bara listade spel. Demo-spel är aktiva så att spelar-API:t fungerar, men syns inte i den publika listan förrän Erik listar dem vid Live.
+
+**Arkiveringssagan** (`kind: archive`), samma motor, stegen: `coolify_delete` (bara det sparade uuid:t), `siteops_deactivate`, `repo_archive` (`PATCH archived: true`), `game_deactivate` (`is_active = false`). Ingen HTTP-anrop sker inne i en databastransaktion.
+
+**Fel:** steget `failed`, `last_error` sparas, Slack-larm, sagan stannar. `retry_provisioning` fortsätter från första ej klara steg. 4xx/5xx från GitHub, Coolify och SiteOps loggas med metod, URL, status och body, max 4 KB, där `Authorization`, `private_key`, `password`, `token`, `value` och Coolifys `logs` tas bort. Samma redigering gäller `last_error`, som visas för spelets medlemmar.
+
+**Klienternas egna spärrar** (testade på samma sätt som GitHub-spärren):
+- GitHub-klienten har ingen metod för `DELETE`; ett test i hela sviten (Http::fake) säkerställer att inget `DELETE` mot `api.github.com` skickas.
+- Coolify-klienten tar bara emot uuid:n som finns i `provisioning_runs`, och kontrollerar `project_uuid == COOLIFY_PROJECT_UUID` innan `DELETE` eller `PATCH`.
+
+### Slack-larm
+
+En liten `SlackAlert`-klass (POST till webhooken, timeout 5 s, fel loggas men stoppar aldrig anroparen) med dedupe per nyckel och dygn via cache. Används av sagan, `request_live` och invarianten.
+
+### Behörighet
+
+- `GameAccess::isOwner(User, Game)`: ägare enligt pivot, eller plattformsadmin.
+- En gemensam bas för verktyg utan spel (`create_game`, `list_games`) med samma revisionslogg och felhantering som `GameTool`; `ListGamesTool` flyttas dit.
 
 ### MCP-verktyg
 
 | Verktyg | Vem | Gör |
 |---|---|---|
-| `create_game(slug, name, idea)` | staff | Kontrollerar tak (15 Demo-spel, 5/dygn/användare), slugformat, att slug är ledig i Computercat, GitHub och Coolify. Startar sagan. Svarar med run-id och vad som händer härnäst. |
-| `get_provisioning_status(game)` | medlem | Steg och status, repo-URL, Demo-URL, senaste fel |
-| `retry_provisioning(game)` | ägare | Kör om från första ej klara steg |
+| `create_game(slug, name, idea)` | staff | Kontrollerar inställningar, slugregel och reservationer, tak och att slugen är ledig i Computercat och bland runs. Startar sagan och svarar direkt med run-id. |
+| `get_provisioning_status(game)` | medlem | Steg och status, repo-URL, Demo-URL, senaste fel (redigerat) |
+| `retry_provisioning(game)` | ägare | Fortsätter från första ej klara steg |
 | `request_live(game, domain?)` | ägare | Slack-larm till Erik med spel, Demo-URL och önskad domän. Ändrar inget. |
-| `archive_game(game)` | ägare, bara spel med en run från `create_game` och bara i Demo | Tar bort Coolify-appen, avaktiverar SiteOps-sajten, arkiverar repot (`PATCH archived: true`), avaktiverar spelet, run → `archived`. Inga raderingar i GitHub eller Computercat. |
+| `archive_game(game)` | ägare, bara spel med en lyckad provisioneringsrun och bara i Demo | Startar arkiveringssagan |
 
-Alla ärver `GameTool` (åtkomst, transaktion, revisionslogg) utom `create_game`, som ärver basen för verktyg utan spel och loggar sig själv. Verktygsnamnsinvarianten från delprojekt 1 (inga `delete`-namn) gäller fortfarande; `archive_game` matchar inte mönstret.
-
-### Gameslug
-
-Delprojekt 1 lämnade spelets slug utan formatregel och med råa slug-interpolationer i IntegrationGuide. Här: `^[a-z][a-z0-9-]{2,39}\z` (även giltigt som GitHub-reponamn och DNS-etikett), regeln läggs i en regelklass som både `GameResource` och `create_game` använder, och IntegrationGuide skickar även spelets slug genom `code()`.
+**Tak:** 15 gäller runs med status `running`, `succeeded` eller `failed` (alltså spel som finns eller kan finnas på Coolify). 5 per dygn och användare räknar alla `create_game`-anrop som skapade en run.
 
 ### Invariant (nattlig, `computercat:check-provisioning`)
 
-För varje run som inte är `archived`: repot finns, Coolify-appen finns och har basic auth, SiteOps-sajten är aktiv och övervakad, Demo-URL svarar. Omvänt: varje Coolify-app i Demo-projektet vars namn börjar med ett spelslug från Computercat har en run. Avvikelse → Slack-larm, ett per avvikelse och dygn. Kör `--dry-run` lokalt.
+För varje run med status `succeeded`: repot finns och är inte arkiverat, Coolify-appen `spel-<slug>` finns i Demo-projektet och har basic auth, SiteOps-sajten är aktiv och övervakad, Demo-URL svarar 200 med basic auth. Omvänt: varje Coolify-app i Demo-projektet med namn `spel-*` har en run. Avvikelse → Slack-larm (dedupe per avvikelse och dygn). `--dry-run` finns.
 
 ## Säkerhet
 
-- **Nycklar** endast i `.env`/storage på Forge, aldrig i svar, loggar eller revisionslogg (summeringen redaktar redan långa strängar; nycklar passerar aldrig verktygsargument).
-- **GitHub App** på "Only select repositories". Kod och test garanterar att inget `DELETE` skickas till GitHub (Http::fake med `assertNotSent` på alla tester i sviten).
-- **Coolify-token** `write` + `deploy`, inte `root`, i rätt team.
-- **SiteOps-nyckel** bara `sites:write`.
-- **Kapat claude.ai-konto (staff):** högst 5 nya Demo-spel per dygn, arkivering bara av egna Demo-spel, inget i Live, inga raderingar av repon eller data.
-- **Coolify-servern** skyddas av taket 15 och av att byggen köas ett i taget.
-- **Basic auth på Demo** är en konvention (demo/demo), inte en hemlighet; den hindrar indexering och tillfälliga besökare.
+- **Nycklar** finns bara i `.env`/storage på Forge, aldrig i verktygssvar eller loggar. De passerar aldrig verktygsargument, så revisionsloggen (som kortar strängar till 200 tecken men inte redigerar) får dem aldrig.
+- **GitHub App** på "Only select repositories"; inget `DELETE` i kod, vaktat av test.
+- **Coolify-token** `write` + `deploy`, inte `root`. Den når hela teamet, därför klientens spärr på sparade uuid:n och Demo-projektet.
+- **SiteOps-nyckel** bara `sites:read` + `sites:write`.
+- **Slug** valideras strikt innan den hamnar i URL:er, reponamn eller domäner.
+- **Kapat claude.ai-konto (staff):** högst 5 nya Demo-spel per dygn och 15 totalt, arkivering bara av egna Demo-spel, inget i Live, inga raderingar av repon eller data.
+- **Coolify-servern** skyddas av taket och av att byggen köas ett i taget. Spiken mäter minnet under ett bygge.
+- **Basic auth på Demo** är en konvention (demo/demo), inte en hemlighet.
 
-## Acceptans: Kattsvep
-
-Förutsättningar (engångs, Erik gör eller godkänner var och en):
-1. GitHub App "Humblebrag Spelstudio" skapas och installeras på `spelmall`.
-2. Coolify-token med `write` + `deploy` i rätt team.
-3. Nycklarna läggs i Computercats `.env` på Forge.
-4. Computercat-connectorn läggs till i claude.ai (Eriks konto; organisationen för Mattias).
-5. Claude Code-molnmiljön tillåter `api.computercat.co` och `*.apps.humblebrag.se` i nätverket.
+## Acceptans: Kattsvep (2d)
 
 Körning:
-1. Routine A (Eriks konto, connectorn påslagen, inget repo): "Skapa ett nytt spel i Computercat: Kattsvep (slug `kattsvep`), ett minröj där katter letar bajs, med daglig topplista för snabbaste rensning. Följ upp tills Demo-adressen svarar."
-2. När sagan är klar kopplas `HumblebragAB/kattsvep` till routine B: "Bygg spelet enligt idén i README och CLAUDE.md, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen."
-3. Verifiering (av Claude i Eriks session, inte av routinen):
-   - Demo-URL svarar 200 med basic auth och spelet laddar (HTML innehåller spelets rot).
-   - En anonym spelare kan skicka en tid via API:t från Demo-origin (CORS-preflight OK) och den syns i `get_game`/topplistan.
-   - SiteOps-sajten finns, är aktiv och miljön övervakas.
+1. Routine A (Eriks konto, connectorn påslagen, inget repo): "Skapa ett nytt spel i Computercat: Kattsvep (slug `kattsvep`), ett minröj där katter letar bajs, med daglig topplista för snabbaste rensning. Följ upp med get_provisioning_status tills Demo-adressen svarar."
+2. När sagan är klar kopplas `HumblebragAB/kattsvep` till routine B (Claude gör det i Eriks session om routine-API:t tillåter det, annars är det ett klick för Erik i routinens inställningar): "Bygg spelet enligt README och CLAUDE.md, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen."
+3. Verifiering (av Claude i Eriks session):
+   - Demo-URL svarar 200 med basic auth och spelet laddar.
+   - En anonym spelare kan skicka en tid via API:t från Demo-origin (CORS-preflight OK) och den syns i topplistan.
+   - SiteOps-sajten är aktiv och miljön övervakas.
    - `computercat:check-provisioning` är grön.
-   - Revisionsloggen visar anropen från routinen.
+   - Revisionsloggen visar routinens anrop.
 4. Erik väljer om Kattsvep lever vidare eller arkiveras med `archive_game`.
 
 ## Ingår inte
