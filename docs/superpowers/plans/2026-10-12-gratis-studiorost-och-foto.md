@@ -1,5 +1,7 @@
 # Gratis studioröst och veckans gratisfoto – implementationsplan
 
+> **Ändrat 2026-10-13:** Gratisfotot är borttaget. Att fota läxan kräver Guldstjärnan, och gratisnivån (App Attest) gäller bara studiorösten. Skanningen nekar `attest` med 402 `guld_required` innan något arbete görs, `FreeScanWeek`, skanningens gratistak (`free.scan_daily_limit`, `free.scan_ip_daily_limit`) och felkoderna `free_scan_used`/`free_busy` finns inte längre, och `glosis:check-free-usage` larmar på varje gratisskanning. Allt nedan om gratisfotot (Task 7, delar av Task 6, 8, 11 och 12) är historik.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Studiorösten blir gratis för alla, och gratisanvändare får fota en läxa per vecka. Gratisnivån skyddas med Apple App Attest, och Guld-vägen lämnas orörd.

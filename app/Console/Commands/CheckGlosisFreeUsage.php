@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Invarianterna för Glosis gratisnivå (planen 2026-10-12). Larmar i loggen och med exit 1.
+ * Gratisnivån gäller bara studiorösten sedan 2026-10-13, så en enda gratisskanning larmar.
  *
  * Taken läses som de är när kommandot körs. Sänks ett tak i Filament mitt på dagen kan dagens
  * redan bokförda rader ligga över det nya taket och ge ett falskt larm; kontrollera då mot
@@ -53,8 +54,9 @@ class CheckGlosisFreeUsage extends Command
             if ($perKey > 0) {
                 $problems[] = "{$d}: {$perKey} nycklar över ".GlosisSettings::TTS_DAILY_NEW_PER_KEY.' nya ord per nyckel';
             }
-            if (($n = $free()->where('feature', AiUsage::FEATURE_SCAN)->count()) > $settings->freeScanDailyLimit()) {
-                $problems[] = "{$d}: {$n} gratisskanningar, taket är {$settings->freeScanDailyLimit()}";
+            // Att fota läxan kräver Guld (beslut 2026-10-13): varje gratisskanning är ett fel.
+            if (($n = $free()->where('feature', AiUsage::FEATURE_SCAN)->count()) > 0) {
+                $problems[] = "{$d}: {$n} gratisskanningar, fotot kräver Guld";
             }
         }
         $spent = AiBudget::spentMicroUsd($game, $now, AiUsage::TIER_FREE);

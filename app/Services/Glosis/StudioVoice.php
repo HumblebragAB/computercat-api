@@ -251,7 +251,7 @@ class StudioVoice
                 }
 
                 // Gränserna räknas först och avgörs på värdet increment() returnerar
-                // (atomiskt, som skanningens dagstak i GlosisScanController::freeLimits).
+                // (Cache::add + Cache::increment, båda atomiska).
                 // Inte RateLimiter: dess increment() gör put($key, 1) när add() misslyckas
                 // och värdet blev 1, vilket tillsammans med återföringen kan skriva över
                 // ett parallellt anrop. Nycklarna är desamma som RateLimiter använde

@@ -18,7 +18,9 @@ use Illuminate\Support\Facades\DB;
 class PruneGlosisCache extends Command
 {
     /**
-     * Glosis utgående räknare och markörer: AttestChallenges, FreeScanWeek och GlosisScanController, StudioVoice, AiBudget.
+     * Glosis utgående räknare och markörer: AttestChallenges, GlosisScanController, StudioVoice, AiBudget.
+     * 'glosis-scan:' fångar också rester av det borttagna gratisfotot ('glosis-scan:free:', ':free-day:', ':free-ip:'),
+     * som går ut inom en vecka och sedan gallras som andra rader.
      * Inte fullständig med flit: 'glosis:google-play:access-token:...' (GooglePurchaseVerifier) är en rad per
      * tjänstekonto-nyckel och skrivs över vid förnyelse, alltså begränsad, och 'glosis-tts-gen:' (StudioVoice) är
      * kortlivade lås. Ingetdera gallras här.

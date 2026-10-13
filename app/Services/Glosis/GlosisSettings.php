@@ -36,15 +36,8 @@ final class GlosisSettings
 
     public const DEFAULT_GENDER = 'female';
 
-    /** Gratisnivån (beslut 2026-10-12): en skanning per nyckel och ISO-vecka. */
-    public const FREE_SCAN_WEEKLY_PER_KEY = 1;
-
     /** Nya ord per App Attest-nyckel eller köp och Stockholmsdygn. */
     public const TTS_DAILY_NEW_PER_KEY = 100;
-
-    public const DEFAULT_FREE_SCAN_DAILY_LIMIT = 40;
-
-    public const DEFAULT_FREE_SCAN_IP_DAILY_LIMIT = 10;
 
     public const DEFAULT_FREE_TTS_DAILY_NEW_LIMIT = 800;
 
@@ -96,16 +89,6 @@ final class GlosisSettings
         }
 
         return $team.'.'.AppleTransactionVerifier::BUNDLE_ID;
-    }
-
-    public function freeScanDailyLimit(): int
-    {
-        return (int) $this->number('free.scan_daily_limit', self::DEFAULT_FREE_SCAN_DAILY_LIMIT);
-    }
-
-    public function freeScanIpDailyLimit(): int
-    {
-        return (int) $this->number('free.scan_ip_daily_limit', self::DEFAULT_FREE_SCAN_IP_DAILY_LIMIT);
     }
 
     public function freeTtsDailyNewLimit(): int

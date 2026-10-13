@@ -10,9 +10,11 @@ use App\Services\Glosis\AppAttest\InvalidAttestationException;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Gratisnivåns grind (beslut 2026-10-12). Appen skickar
+ * Gratisnivåns grind (beslut 2026-10-12). Sedan 2026-10-13 gäller gratisnivån
+ * bara studiorösten; att fota läxan kräver Guld (GlosisScanController nekar
+ * attest med 402 guld_required och når aldrig hit). Appen skickar
  *   "attest": {"keyId": "<base64>", "assertion": "<base64>", "clientData": "<JSON-sträng>"}
- * där clientData = {"action": "scan"|"tts", "challenge": "<engångs>", ...förfrågans fält}.
+ * där clientData = {"action": "tts", "challenge": "<engångs>", ...förfrågans fält}.
  * clientData är det appen signerat, och förfrågans innehåll läses därifrån.
  *
  * Ordning: form → nyckeln finns → signatur, RP ID och räknare
@@ -21,13 +23,6 @@ use Illuminate\Support\Facades\Log;
 final class FreeGate
 {
     private const MESSAGES = [
-        GuldGate::FEATURE_SCAN => [
-            'free_unavailable' => 'Gratisfotot är pausat just nu. Skriv in orden själv så länge.',
-            'invalid_attest' => 'Appen kunde inte kontrolleras. Försök igen om en stund.',
-            'unknown_key' => 'Appen behöver kontrolleras på nytt. Försök igen.',
-            'free_scan_used' => 'Du har använt veckans gratisfoto. Nästa går att ta på måndag. Med Guldstjärnan kan du fota fler läxor.',
-            'free_busy' => 'Många fotar sina läxor just nu. Försök igen i morgon, eller skriv in orden så länge.',
-        ],
         GuldGate::FEATURE_TTS => [
             'free_unavailable' => 'Studiorösten är pausad just nu. Appen använder telefonens röst så länge.',
             'invalid_attest' => 'Studiorösten kunde inte starta. Appen använder telefonens röst så länge.',
@@ -40,9 +35,16 @@ final class FreeGate
         private readonly AttestChallenges $challenges,
     ) {}
 
-    /** @throws GlosisRejection */
+    /**
+     * @throws GlosisRejection
+     * @throws \InvalidArgumentException för en funktion som inte har någon gratisnivå (bara tts har det)
+     */
     public function verify(mixed $attest, Game $game, string $feature, ?string $ip): FreeRequest
     {
+        // Programmeringsfel, inte en avvisning: ingen gratisgren får finnas för en Guld-funktion.
+        if (! isset(self::MESSAGES[$feature])) {
+            throw new \InvalidArgumentException("Ingen gratisnivå för {$feature}");
+        }
         $settings = GlosisSettings::for($game);
         $appId = $settings->freeEnabled() ? $settings->appAttestAppId() : null;
         if ($appId === null) {

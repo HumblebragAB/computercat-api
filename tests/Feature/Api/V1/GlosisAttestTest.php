@@ -291,20 +291,17 @@ class GlosisAttestTest extends TestCase
     {
         $defaults = new GlosisSettings([]);
         $this->assertFalse($defaults->freeEnabled());
-        $this->assertSame(40, $defaults->freeScanDailyLimit());
-        $this->assertSame(10, $defaults->freeScanIpDailyLimit());
         $this->assertSame(800, $defaults->freeTtsDailyNewLimit());
         $this->assertSame(300, $defaults->freeTtsIpDailyNewLimit());
         $this->assertSame(20_000_000, $defaults->freeMonthlyBudgetMicroUsd());
         $this->assertNull($defaults->appAttestAppId());
         $this->assertFalse((new GlosisSettings(['free' => ['enabled' => 'true']]))->freeEnabled());
 
-        $set = new GlosisSettings(['free' => ['enabled' => true, 'scan_daily_limit' => 5, 'scan_ip_daily_limit' => 2, 'tts_daily_new_limit' => 50,
+        $set = new GlosisSettings(['free' => ['enabled' => true, 'tts_daily_new_limit' => 50,
             'tts_ip_daily_new_limit' => 20, 'monthly_budget_usd' => 1.5], 'app_attest' => ['team_id' => self::TEAM]]);
         $this->assertTrue($set->freeEnabled());
-        $this->assertSame([5, 2, 50, 20, 1_500_000], [$set->freeScanDailyLimit(), $set->freeScanIpDailyLimit(), $set->freeTtsDailyNewLimit(), $set->freeTtsIpDailyNewLimit(), $set->freeMonthlyBudgetMicroUsd()]);
+        $this->assertSame([50, 20, 1_500_000], [$set->freeTtsDailyNewLimit(), $set->freeTtsIpDailyNewLimit(), $set->freeMonthlyBudgetMicroUsd()]);
         $this->assertSame(self::APP_ID, $set->appAttestAppId());
-        $this->assertSame(1, GlosisSettings::FREE_SCAN_WEEKLY_PER_KEY);
         $this->assertSame(100, GlosisSettings::TTS_DAILY_NEW_PER_KEY);
     }
 

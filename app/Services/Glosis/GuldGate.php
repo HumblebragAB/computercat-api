@@ -138,7 +138,8 @@ final class GuldGate
         return substr(hash('sha256', $transaction->originalTransactionId), 0, 16);
     }
 
-    private function reject(int $status, string $code, string $feature): GlosisRejection
+    /** Avvisning med funktionens text, t.ex. 402 guld_required när en gratisförfrågan kommer till skanningen. */
+    public function reject(int $status, string $code, string $feature): GlosisRejection
     {
         return new GlosisRejection($status, $code, self::MESSAGES[$feature][$code]);
     }

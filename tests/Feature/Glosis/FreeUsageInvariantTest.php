@@ -52,13 +52,17 @@ class FreeUsageInvariantTest extends TestCase
         $this->artisan('glosis:check-free-usage')->expectsOutputToContain('per nyckel')->assertExitCode(1);
     }
 
-    public function test_over_dagstaket_for_skanningar_larmar(): void
+    public function test_en_enda_gratisskanning_larmar(): void
     {
-        $this->game->update(['settings' => ['free' => ['scan_daily_limit' => 1]]]);
-        $id = $this->key()->id;
-        $this->row(['feature' => 'scan', 'app_attest_key_id' => $id]);
-        $this->row(['feature' => 'scan', 'app_attest_key_id' => $id]);
-        $this->artisan('glosis:check-free-usage')->expectsOutputToContain('gratisskanningar')->assertExitCode(1);
+        // Fotot kräver Guld (beslut 2026-10-13): också en gratisskanning med nyckel är ett fel.
+        $this->row(['feature' => 'scan', 'app_attest_key_id' => $this->key()->id]);
+        $this->artisan('glosis:check-free-usage')->expectsOutputToContain('1 gratisskanningar, fotot kräver Guld')->assertExitCode(1);
+    }
+
+    public function test_guldskanning_larmar_inte(): void
+    {
+        $this->row(['feature' => 'scan', 'tier' => 'guld']);
+        $this->artisan('glosis:check-free-usage')->assertExitCode(0);
     }
 
     public function test_over_delbudgeten_larmar(): void
@@ -89,7 +93,7 @@ class FreeUsageInvariantTest extends TestCase
         $rows = [
             ['app-cache-glosis-attest-used:a', $past],      // går
             ['app-cache-glosis-tts:free-day:1:2026-10-12', $past], // går
-            ['app-cache-glosis-scan:free:x:2026-W42:slot:0', $past], // går
+            ['app-cache-glosis-scan:free:x:2026-W42:slot:0', $past], // rest av gratisfotot, går
             ['app-cache-glosis-scan:free:y:2026-W42:slot:0', $future], // giltig, kvar
             ['app-cache-other-thing', $past],               // annat prefix, kvar
             ['other-cache-glosis-tts:x', $past],            // annan app, kvar

@@ -8,8 +8,6 @@ use App\Models\Game;
 use App\Services\Glosis\AiBudget;
 use App\Services\Glosis\AiCost;
 use App\Services\Glosis\BudgetReservation;
-use App\Services\Glosis\FreeGate;
-use App\Services\Glosis\FreeScanWeek;
 use App\Services\Glosis\GlosisCaller;
 use App\Services\Glosis\GlosisRejection;
 use App\Services\Glosis\GlosisSettings;
@@ -21,7 +19,6 @@ use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Throwable;
@@ -34,15 +31,10 @@ use Throwable;
  * (GuldGate), gränsen räknas per originalTransactionId (Google: orderId) och ISO-vecka i Stockholm, och varje anrop till Claude
  * bokförs i ai_usage mot en global månadsbudget (AiBudget).
  *
- * Gratisnivån (iOS, beslut 2026-10-12): i stället för proof skickas
- * attest = JSON-sträng {keyId, assertion, clientData} där clientData =
- * {"action":"scan","challenge":…,"imageSha256":"<hex av de uppladdade bytesen>"}.
- * Servern räknar om bildens SHA-256 och jämför, så att bilden inte går att byta
- * efter signeringen. Ett foto per nyckel och ISO-vecka (Stockholm), plus ett
- * globalt dagstak och ett dagstak per IP, och gratisnivåns delbudget.
- * proof och attest samtidigt: 422 invalid_request. Gratisfel: 429 free_scan_used
- * (retry_after till måndag), 429 free_busy, 401 unknown_key, 422 invalid_attest
- * (också fel bildhash), 503 free_unavailable.
+ * Att fota läxan kräver Guldstjärnan (beslut 2026-10-13). Gratisnivån (App
+ * Attest) gäller bara studiorösten. En förfrågan med fältet attest (appversioner
+ * från gratisfotots tid) nekas direkt med 402 guld_required, före bild, budget
+ * och Claude, så att appen visar säljsidan. Också när proof skickas samtidigt.
  *
  * Integritet: bilden läses bara in i minnet från PHP:s tillfälliga
  * uppladdningsfil, sparas aldrig och loggas aldrig. Loggarna får bara
@@ -73,37 +65,30 @@ class GlosisScanController extends Controller
         return 'glosis-scan:tx:'.hash('sha256', $originalTransactionId).':'.$week;
     }
 
-    public function __invoke(Request $request, Game $game, GuldGate $gate, FreeGate $free, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
+    public function __invoke(Request $request, Game $game, GuldGate $gate, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
     {
         try {
-            return $this->scan($request, $game, $gate, $free, $scanner, $budget);
+            return $this->scan($request, $game, $gate, $scanner, $budget);
         } catch (GlosisRejection $e) {
             return $e->toResponse();
         }
     }
 
-    private function scan(Request $request, Game $game, GuldGate $gate, FreeGate $free, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
+    private function scan(Request $request, Game $game, GuldGate $gate, HomeworkScanner $scanner, AiBudget $budget): JsonResponse
     {
-        // has(): också ett tomt fält (null efter ConvertEmptyStringsToNull) räknas som skickat.
-        $isFree = $request->has('attest');
-        if ($isFree && $request->has('proof')) {
-            return $this->error(422, 'invalid_request', 'Något blev fel. Försök igen.');
+        // Ingen gratisskanning (beslut 2026-10-13). has(): också ett tomt fält
+        // (null efter ConvertEmptyStringsToNull) räknas som skickat. Inget ur
+        // attest läses eller loggas.
+        if ($request->has('attest')) {
+            Log::info('Glosis scan: gratisförfrågan nekad, fotot kräver Guld');
+
+            throw $gate->reject(402, 'guld_required', GuldGate::FEATURE_SCAN);
         }
 
-        // 1. Köpbevisets form (multipart: beviset är en JSON-sträng). Gratis:
-        // App Attest direkt, så att avstängd gratisnivå (503 free_unavailable),
-        // okända nycklar och fel signatur stoppas innan bilden ens läses.
-        $storeProof = null;
-        $freeRequest = null;
-        if ($isFree) {
-            $attestRaw = $request->input('attest');
-            $attest = is_string($attestRaw) && strlen($attestRaw) <= 20_000 ? json_decode($attestRaw, true, 4) : null;
-            $freeRequest = $free->verify($attest, $game, GuldGate::FEATURE_SCAN, $request->ip());
-        } else {
-            $rawProof = $request->input('proof');
-            $proof = is_string($rawProof) && strlen($rawProof) <= 20_000 ? json_decode($rawProof, true) : null;
-            $storeProof = $gate->parse($proof, GuldGate::FEATURE_SCAN);
-        }
+        // 1. Köpbevisets form (multipart: beviset är en JSON-sträng).
+        $rawProof = $request->input('proof');
+        $proof = is_string($rawProof) && strlen($rawProof) <= 20_000 ? json_decode($rawProof, true) : null;
+        $storeProof = $gate->parse($proof, GuldGate::FEATURE_SCAN);
 
         // 2. Bilden
         $image = $this->readImage($request->file('image'));
@@ -112,23 +97,10 @@ class GlosisScanController extends Controller
         }
         [$imageBytes, $mime] = $image;
 
-        // 3–4. Guld: köpet hos Apple (offline) eller Google Play, Guld-läsår som
-        // gäller, inte återbetalt. Gratis: bilden är den som signerades. Bilden är
-        // det enda som inte ligger i clientData, så dess SHA-256 gör det; inget
-        // annat fält läses ur den osignerade kroppen.
-        $transaction = null;
-        if ($freeRequest !== null) {
-            $caller = $freeRequest->caller;
-            $signed = $freeRequest->clientData['imageSha256'] ?? null;
-            if (! is_string($signed) || strlen($signed) !== 64 || ! hash_equals(hash('sha256', $imageBytes), strtolower($signed))) {
-                Log::warning('Glosis scan: bilden är inte den som signerades', ['key' => $caller->logHash()]);
-
-                throw $free->reject(422, 'invalid_attest', GuldGate::FEATURE_SCAN);
-            }
-        } else {
-            $transaction = $gate->verify($storeProof, $game, GuldGate::FEATURE_SCAN);
-            $caller = GlosisCaller::guld($transaction);
-        }
+        // 3–4. Köpet hos Apple (offline) eller Google Play, Guld-läsår som
+        // gäller, inte återbetalt.
+        $transaction = $gate->verify($storeProof, $game, GuldGate::FEATURE_SCAN);
+        $caller = GlosisCaller::guld($transaction);
         $txHash = $caller->logHash();
 
         // 5. API-nyckeln
@@ -140,39 +112,24 @@ class GlosisScanController extends Controller
         $nowStockholm = CarbonImmutable::now(GuldStatus::TIME_ZONE);
         $secondsToMonday = max(1, (int) ceil($nowStockholm->diffInSeconds($nowStockholm->startOfWeek(CarbonImmutable::MONDAY)->addWeek())));
 
-        if ($transaction === null) {
-            // 6–7 gratis. Gränserna före budgeten: en nyckel som använt veckans
-            // foto får 429 free_scan_used (inte budget_exhausted), och nekade
-            // anrop håller aldrig någon reservation.
-            [$week, $rollback] = $this->freeLimits($game, $caller, $free, $nowStockholm, $secondsToMonday);
-            $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN, $caller->tier);
-            if ($reservation === null) {
-                $rollback();
+        // 6. Månadsbudgeten: reservera en övre uppskattning, rättas efter svaret.
+        $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN);
+        if ($reservation === null) {
+            return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
+        }
 
-                return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
-            }
-        } else {
-            $week = null;
+        // 7. Veckogräns per köp och ISO-vecka i Stockholm (Filament:
+        // settings.scan.weekly_limit, sandbox lägre). Räknas först och avgörs på
+        // värdet hit() returnerar: cachens increment är atomisk (databas-store:
+        // lockForUpdate i en transaktion), så parallella anrop kan inte alla se
+        // en räknare under gränsen. Räknas bara när indata och köp godkänts.
+        $hits = RateLimiter::hit(self::weeklyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMonday + 60);
+        if ($hits > GlosisSettings::for($game)->scanWeeklyLimit($transaction->environment)) {
+            $budget->release($reservation);
+            Log::info('Glosis scan: veckogränsen nådd', ['environment' => $transaction->environment, 'tx' => $txHash]);
 
-            // 6. Månadsbudgeten: reservera en övre uppskattning, rättas efter svaret.
-            $reservation = $budget->reserve($game, AiCost::SCAN_RESERVE_MICRO_USD, AiUsage::FEATURE_SCAN);
-            if ($reservation === null) {
-                return $this->error(503, 'budget_exhausted', 'Fota läxan har tagit paus för den här månaden. Skriv in orden så länge.');
-            }
-
-            // 7. Veckogräns per köp och ISO-vecka i Stockholm (Filament:
-            // settings.scan.weekly_limit, sandbox lägre). Räknas först och avgörs på
-            // värdet hit() returnerar: cachens increment är atomisk (databas-store:
-            // lockForUpdate i en transaktion), så parallella anrop kan inte alla se
-            // en räknare under gränsen. Räknas bara när indata och köp godkänts.
-            $hits = RateLimiter::hit(self::weeklyLimitKey($transaction->originalTransactionId, $nowStockholm), $secondsToMonday + 60);
-            if ($hits > GlosisSettings::for($game)->scanWeeklyLimit($transaction->environment)) {
-                $budget->release($reservation);
-                Log::info('Glosis scan: veckogränsen nådd', ['environment' => $transaction->environment, 'tx' => $txHash]);
-
-                throw new GlosisRejection(429, 'rate_limited', 'Du har fotat många läxor den här veckan. Försök igen på måndag!',
-                    ['retry_after' => $secondsToMonday], ['Retry-After' => (string) $secondsToMonday]);
-            }
+            throw new GlosisRejection(429, 'rate_limited', 'Du har fotat många läxor den här veckan. Försök igen på måndag!',
+                ['retry_after' => $secondsToMonday], ['Retry-After' => (string) $secondsToMonday]);
         }
 
         // 8. Claude
@@ -185,7 +142,6 @@ class GlosisScanController extends Controller
             } else {
                 $budget->release($reservation);
             }
-            $refunded = $week !== null && $this->refundFreeScan($week, $caller);
             Log::warning('Glosis scan: avläsningen misslyckades', [
                 'environment' => $caller->environment,
                 'tier' => $caller->tier,
@@ -194,28 +150,16 @@ class GlosisScanController extends Controller
                 'duration_ms' => (int) round((microtime(true) - $started) * 1000),
                 'input_tokens' => $e->inputTokens,
                 'output_tokens' => $e->outputTokens,
-                'weekly_refunded' => $refunded,
             ]);
 
             return $this->error(502, 'scan_failed', 'Jag kunde inte läsa bilden. Ta en ny bild rakt ovanifrån i bra ljus och försök igen.');
         } catch (Throwable $e) {
             $budget->release($reservation);
-            if ($week !== null) {
-                // Ett fel i cachen här får inte dölja det ursprungliga felet.
-                try {
-                    $this->refundFreeScan($week, $caller);
-                } catch (Throwable $refundError) {
-                    Log::error('Glosis scan: veckans gratisfoto gick inte att återföra', ['key' => $caller->logHash(), 'error' => $refundError::class]);
-                }
-            }
 
             throw $e;
         }
 
         $this->recordUsage($game, $budget, $reservation, $caller, $result->model, $result->inputTokens, $result->outputTokens);
-
-        // Inga ord: barnet ska inte förlora veckans foto på en suddig bild.
-        $refunded = $week !== null && count($result->words) === 0 && $this->refundFreeScan($week, $caller);
 
         Log::info('Glosis scan: klar', [
             'environment' => $caller->environment,
@@ -226,79 +170,9 @@ class GlosisScanController extends Controller
             'model' => $result->model,
             'input_tokens' => $result->inputTokens,
             'output_tokens' => $result->outputTokens,
-            'weekly_refunded' => $refunded,
         ]);
 
         return response()->json($result->toResponse());
-    }
-
-    /**
-     * Gratisgränserna: veckans foto per nyckel (FreeScanWeek), ett globalt
-     * dagstak och ett dagstak per IP. Dagstaken räknas med Cache::add +
-     * Cache::increment och rullas tillbaka med Cache::decrement, alla atomiska
-     * (inte RateLimiter, vars increment kan skriva över ett parallellt anrop med
-     * put). Dagstaken återförs aldrig efter Claude: de begränsar också återförda
-     * anrop.
-     *
-     * @return array{0: FreeScanWeek, 1: \Closure(): void} veckan och en återställning för avslag före Claude
-     *
-     * @throws GlosisRejection 429 free_scan_used | free_busy
-     */
-    private function freeLimits(Game $game, GlosisCaller $caller, FreeGate $free, CarbonImmutable $now, int $secondsToMonday): array
-    {
-        $settings = GlosisSettings::for($game);
-        $day = $now->format('Y-m-d');
-        $dayTtl = (int) ceil($now->diffInSeconds($now->addDay()->startOfDay())) + 60;
-        $week = FreeScanWeek::for($caller, $now, $secondsToMonday + 60);
-        $globalKey = 'glosis-scan:free-day:'.$game->id.':'.$day;
-        $ipKey = 'glosis-scan:free-ip:'.$caller->ipLimitId().':'.$day;
-
-        $slot = $week->claim();
-        if ($slot === null) {
-            Log::info('Glosis scan: veckans gratisfoto använt', ['key' => $caller->logHash()]);
-
-            throw $free->reject(429, 'free_scan_used', GuldGate::FEATURE_SCAN, ['retry_after' => $secondsToMonday], ['Retry-After' => (string) $secondsToMonday]);
-        }
-
-        $counted = [];
-        $rollback = function () use ($week, $slot, &$counted) {
-            foreach ($counted as $key) {
-                Cache::decrement($key);
-            }
-            $week->release($slot);
-        };
-        $over = null;
-        foreach ([[$globalKey, $settings->freeScanDailyLimit(), 'global'], [$ipKey, $settings->freeScanIpDailyLimit(), 'ip']] as [$key, $limit, $scope]) {
-            Cache::add($key, 0, $dayTtl);
-            $hits = Cache::increment($key);
-            if ($hits !== false) {
-                $counted[] = $key;
-            }
-            // Räknaren svarar inte: stäng hellre än att släppa igenom.
-            if ($hits === false || $hits > $limit) {
-                $over ??= $scope;
-            }
-        }
-        if ($over !== null) {
-            $rollback();
-            Log::warning('Glosis scan: gratistaket nått', ['key' => $caller->logHash(), 'scope' => $over]);
-
-            throw $free->reject(429, 'free_busy', GuldGate::FEATURE_SCAN);
-        }
-
-        return [$week, $rollback];
-    }
-
-    /** Återför veckans gratisfoto (högst FreeScanWeek::MAX_REFUNDS gånger per vecka; nekade försök räknas också). */
-    private function refundFreeScan(FreeScanWeek $week, GlosisCaller $caller): bool
-    {
-        if (! $week->refund()) {
-            Log::info('Glosis scan: veckans återföringar av gratisfotot är slut', ['key' => $caller->logHash()]);
-
-            return false;
-        }
-
-        return true;
     }
 
     private function recordUsage(Game $game, AiBudget $budget, BudgetReservation $reservation, GlosisCaller $caller, string $model, int $inputTokens, int $outputTokens): void

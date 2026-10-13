@@ -287,22 +287,18 @@ class GameResource extends Resource
                 ]),
 
             Forms\Components\Section::make('Glosis: gratisnivå')
-                ->description('Studioröst och ett foto i veckan utan Guldstjärnan, skyddat med Apple App Attest (iOS). Stäng av här för att stoppa allt gratis direkt; Guld påverkas inte.')
+                ->description('Studiorösten utan Guldstjärnan, skyddad med Apple App Attest (iOS). Att fota läxan kräver alltid Guld. Stäng av här för att stoppa allt gratis direkt; Guld påverkas inte.')
                 ->collapsed()
                 ->visible(fn (?Game $record) => $record?->slug === 'glosis')
                 ->schema([
                     Forms\Components\Toggle::make('settings.free.enabled')
                         ->label('Gratisnivån på')
                         ->default(false)
-                        ->helperText('Av = appen får 503 free_unavailable och visar telefonens röst och "pausat" för fotot.'),
+                        ->helperText('Av = appen får 503 free_unavailable och använder telefonens röst.'),
                     Forms\Components\TextInput::make('settings.app_attest.team_id')
                         ->label('Apple Team ID')
                         ->regex('/^[A-Z0-9]{10}\z/')
                         ->helperText('10 tecken, Apple Developer → Membership. Krävs för App Attest (RP ID = Team ID + bundle-id).'),
-                    Forms\Components\TextInput::make('settings.free.scan_daily_limit')->label('Gratisskanningar per dygn (alla)')->integer()->minValue(0)
-                        ->placeholder((string) GlosisSettings::DEFAULT_FREE_SCAN_DAILY_LIMIT)->helperText('Per nyckel gäller alltid 1 i veckan.'),
-                    Forms\Components\TextInput::make('settings.free.scan_ip_daily_limit')->label('Gratisskanningar per IP och dygn')->integer()->minValue(0)
-                        ->placeholder((string) GlosisSettings::DEFAULT_FREE_SCAN_IP_DAILY_LIMIT),
                     Forms\Components\TextInput::make('settings.free.tts_daily_new_limit')->label('Nya gratisord per dygn (alla)')->integer()->minValue(0)
                         ->placeholder((string) GlosisSettings::DEFAULT_FREE_TTS_DAILY_NEW_LIMIT)->helperText('Egen räknare, äter inte av Guld-taket. Per nyckel gäller alltid '.GlosisSettings::TTS_DAILY_NEW_PER_KEY.'.'),
                     Forms\Components\TextInput::make('settings.free.tts_ip_daily_new_limit')->label('Nya gratisord per IP och dygn')->integer()->minValue(0)

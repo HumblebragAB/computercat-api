@@ -128,7 +128,6 @@ class FreeGateTest extends TestCase
     public function test_varje_mojlig_avvisning_har_en_text_och_okanda_kombinationer_kastar(): void
     {
         $combos = [
-            GuldGate::FEATURE_SCAN => ['free_unavailable', 'invalid_attest', 'unknown_key', 'free_scan_used', 'free_busy'],
             GuldGate::FEATURE_TTS => ['free_unavailable', 'invalid_attest', 'unknown_key'],
         ];
         foreach ($combos as $feature => $codes) {
@@ -140,7 +139,20 @@ class FreeGateTest extends TestCase
             }
         }
         $this->expectException(\InvalidArgumentException::class);
-        $this->gate()->reject(429, 'free_scan_used', GuldGate::FEATURE_TTS);
+        $this->gate()->reject(429, 'free_busy', GuldGate::FEATURE_TTS);
+    }
+
+    public function test_skanningen_har_ingen_gratisniva(): void
+    {
+        // Fotot kräver Guld (beslut 2026-10-13): varken verify eller reject har en gren för scan.
+        try {
+            $this->gate()->verify(self::credential($this->key, $this->priv, 'scan', [], 1), $this->game, GuldGate::FEATURE_SCAN, '1.2.3.4');
+            $this->fail('verify godtog scan');
+        } catch (\InvalidArgumentException) {
+        }
+        $this->assertSame(0, $this->key->fresh()->sign_count);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->gate()->reject(422, 'invalid_attest', GuldGate::FEATURE_SCAN);
     }
 
     private function assertRejected(int $status, string $code, \Closure $fn): void
