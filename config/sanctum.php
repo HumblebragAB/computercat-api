@@ -47,7 +47,11 @@ return [
     |
     */
 
-    'expiration' => 10080, // 7 days in minutes
+    // 90 dagar, samma gräns som users:prune-anonymous (--days=90, schemalagt
+    // i routes/console.php). Räknas från tokenets created_at; varje token får
+    // dessutom ett eget expires_at med samma livslängd. Klienter förnyar via
+    // POST /api/v1/auth/refresh, så en spelare som spelar behåller sitt konto.
+    'expiration' => (int) env('SANCTUM_EXPIRATION_MINUTES', 129600),
 
     /*
     |--------------------------------------------------------------------------

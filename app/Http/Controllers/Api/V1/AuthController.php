@@ -7,9 +7,11 @@ use App\Http\Resources\Api\V1\UserResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use RuntimeException;
 
 class AuthController extends Controller
 {
@@ -29,7 +31,7 @@ class AuthController extends Controller
             'is_anonymous' => true,
         ]);
 
-        $token = $user->createToken('anonymous')->plainTextToken;
+        $token = $user->createToken('anonymous', ['*'], $this->tokenExpiresAt())->plainTextToken;
 
         return response()->json([
             'user' => new UserResource($user),
@@ -70,7 +72,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $token = $user->createToken('auth')->plainTextToken;
+        $token = $user->createToken('auth', ['*'], $this->tokenExpiresAt())->plainTextToken;
 
         return response()->json([
             'user' => new UserResource($user),
@@ -95,7 +97,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Account is banned.'], 403);
         }
 
-        $token = $user->createToken('auth')->plainTextToken;
+        $token = $user->createToken('auth', ['*'], $this->tokenExpiresAt())->plainTextToken;
 
         return response()->json([
             'user' => new UserResource($user),
@@ -139,5 +141,22 @@ class AuthController extends Controller
         $user->delete();
 
         return response()->json(['message' => 'Account deleted.']);
+    }
+
+    // Varje token får ett uttryckligt expires_at med livslängden ur
+    // sanctum.expiration. Guarden prövar både created_at mot den gränsen och
+    // tokenets expires_at (Laravel\Sanctum\Guard::isValidAccessToken), så
+    // värdet syns i databasen i stället för att vara implicit.
+    private function tokenExpiresAt(): Carbon
+    {
+        $minutes = (int) config('sanctum.expiration');
+
+        // 0 eller tomt betyder i Sanctum att token aldrig går ut. Det ska
+        // aldrig hända av misstag via en tom miljövariabel.
+        if ($minutes <= 0) {
+            throw new RuntimeException('sanctum.expiration måste vara ett positivt antal minuter.');
+        }
+
+        return now()->addMinutes($minutes);
     }
 }
