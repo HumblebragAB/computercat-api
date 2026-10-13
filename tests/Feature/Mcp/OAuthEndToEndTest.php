@@ -123,6 +123,54 @@ class OAuthEndToEndTest extends TestCase
         $exchange($verifier)->assertStatus(400);
     }
 
+    /** claude.ai förnyar access-tokenen varje timme med refresh_token-grant (publik klient, ingen secret). */
+    public function test_refresh_token_grant_issues_working_bearer_and_rotates_refresh_token(): void
+    {
+        $user = User::factory()->staff()->create();
+        $clientId = $this->postJson('/oauth/register', ['client_name' => 'Claude', 'redirect_uris' => [self::REDIRECT]])->json('client_id');
+        $verifier = Str::random(64);
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+
+        $this->actingAs($user, 'web');
+        $page = $this->get(route('passport.authorizations.authorize', [
+            'client_id' => $clientId, 'redirect_uri' => self::REDIRECT, 'response_type' => 'code',
+            'scope' => 'mcp:use', 'state' => 's', 'code_challenge' => $challenge, 'code_challenge_method' => 'S256',
+        ]))->assertOk();
+        preg_match('/name="auth_token" value="([^"]+)"/', $page->getContent(), $m);
+        $location = $this->post(route('passport.authorizations.approve'), ['state' => '', 'client_id' => $clientId, 'auth_token' => $m[1]])
+            ->headers->get('Location');
+        parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
+        $this->logoutWeb();
+
+        $first = $this->post('/oauth/token', [
+            'grant_type' => 'authorization_code', 'client_id' => $clientId,
+            'redirect_uri' => self::REDIRECT, 'code_verifier' => $verifier, 'code' => $query['code'],
+        ])->assertOk()->json();
+        $oldRefresh = $first['refresh_token'];
+
+        $refresh = fn (string $token) => $this->post('/oauth/token', [
+            'grant_type' => 'refresh_token', 'refresh_token' => $token, 'client_id' => $clientId,
+        ]);
+
+        // Förnyelsen ger ny access-token (1 h) och ny refresh-token, och scopet räcker för /mcp.
+        $second = $refresh($oldRefresh)->assertOk()->json();
+        $this->assertSame('Bearer', $second['token_type']);
+        $this->assertEqualsWithDelta(3600, $second['expires_in'], 5);
+        $this->assertNotEmpty($second['access_token']);
+        $this->assertNotSame($first['access_token'], $second['access_token']);
+        $this->assertNotEmpty($second['refresh_token']);
+        $this->assertNotSame($oldRefresh, $second['refresh_token']);
+        $this->mcp($second['access_token'], 'tools/list')->assertOk();
+
+        // Passport återkallar den gamla refresh-tokenen vid rotation, så den kan inte användas igen.
+        $this->assertContains($refresh($oldRefresh)->getStatusCode(), [400, 401]);
+
+        // Utan staff kan OAuth-lagret ändå utfärda en token, men /mcp stänger ute den (EnsureStaff, 403).
+        $user->forceFill(['is_staff' => false])->save();
+        $third = $refresh($second['refresh_token'])->assertOk()->json();
+        $this->mcp($third['access_token'], 'tools/list')->assertForbidden();
+    }
+
     /**
      * Varje anrop ska autentiseras på nytt, som i en ny PHP-process. Guards
      * cachar användaren mellan anrop i samma test, så de glöms före varje anrop.
