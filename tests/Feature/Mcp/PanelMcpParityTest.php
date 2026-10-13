@@ -8,6 +8,7 @@ use App\Filament\Resources\GameResource\RelationManagers\LeaderboardTypesRelatio
 use App\Filament\Resources\GameResource\RelationManagers\RemoteConfigsRelationManager;
 use Filament\Tables\Actions\CreateAction;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 // Samma ogiltiga indata ska ge fel både i panelen och via MCP.
 class PanelMcpParityTest extends McpTestCase
@@ -22,7 +23,7 @@ class PanelMcpParityTest extends McpTestCase
         ];
     }
 
-    /** @dataProvider invalidLeaderboards */
+    #[DataProvider('invalidLeaderboards')]
     public function test_panel_and_mcp_reject_the_same_input(array $override): void
     {
         $game = $this->game();

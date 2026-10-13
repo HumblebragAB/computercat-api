@@ -5,6 +5,7 @@ namespace Tests\Feature\Mcp;
 use App\Models\StaffUser;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class SanctumPassportCoexistenceTest extends TestCase
@@ -69,9 +70,8 @@ class SanctumPassportCoexistenceTest extends TestCase
     /**
      * Klienter som inte skickar Accept: application/json (claude.ai skickar
      * text/event-stream) får inte heller redirectas till login.
-     *
-     * @dataProvider acceptHeaders
      */
+    #[DataProvider('acceptHeaders')]
     public function test_unauthenticated_mcp_call_without_json_accept_gets_401(?string $accept): void
     {
         $headers = ['Content-Type' => 'application/json'];
