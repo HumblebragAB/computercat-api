@@ -168,4 +168,16 @@ class StaffAccessTest extends TestCase
         $response->assertSeeInOrder(['Svaret skickas till', 'claude.ai']);
         $response->assertSee('Godkänn bara om du själv just startade kopplingen i claude.ai.');
     }
+
+    public function test_authorize_page_uses_the_theme_and_is_always_dark(): void
+    {
+        $this->actingAs($this->staff());
+
+        $html = $this->get($this->authorizeUrl('Claude'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('css/cc-theme.css', $html);
+        $this->assertStringNotContainsString('prefers-color-scheme', $html);
+        $this->assertStringNotContainsString('fonts.googleapis.com', $html);
+        $this->assertStringNotContainsString('fonts.bunny.net', $html);
+    }
 }

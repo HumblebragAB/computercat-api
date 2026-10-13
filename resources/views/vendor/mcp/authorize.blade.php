@@ -9,6 +9,7 @@
     redan kontrollerat redirect_uri mot klientens registrerade adresser, och
     dynamisk registrering godtar bara claude.ai.
     Alla dynamiska värden escapas med {{ }}.
+    Temat (typsnitt och tokens) kommer från public/css/cc-theme.css på samma domän.
 --}}
 @php
     $redirectUri = $request->query('redirect_uri');
@@ -22,28 +23,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex">
     <title>Godkänn åtkomst - {{ config('app.name') }}</title>
+    <link rel="stylesheet" href="{{ \App\Support\ThemeAsset::url('css/cc-theme.css') }}">
     <style>
-        :root { --bg: #f5f5f5; --card: #fff; --text: #171717; --muted: #666; --border: #e5e5e5; --primary: #171717; --on-primary: #fff; }
-        @media (prefers-color-scheme: dark) {
-            :root { --bg: #0a0a0a; --card: #171717; --text: #f5f5f5; --muted: #a3a3a3; --border: #2e2e2e; --primary: #f5f5f5; --on-primary: #171717; }
-        }
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
-               background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }
-        .card { width: 100%; max-width: 28rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
-        h1 { font-size: 1.4rem; margin: 0 0 8px; text-align: center; }
+               background: var(--cc-bg, #0d0b08); color: var(--cc-text, #efe6d2);
+               font-family: var(--cc-font, ui-monospace, monospace); font-size: 14px; line-height: 1.6; }
+        .card { width: 100%; max-width: 28rem; background: var(--cc-surface, #15110a); border: 1px solid var(--cc-line, #2e2412); padding: 28px 24px; }
+        h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: .04em; margin: 0 0 8px; text-align: center; color: var(--cc-amber, #f2b544); }
         p { margin: 0; }
-        .muted { color: var(--muted); font-size: 0.9rem; }
+        .muted { color: var(--cc-muted, #a0824a); font-size: .85rem; }
         .center { text-align: center; }
-        .box { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 20px 0 16px; }
+        .box { border: 1px dashed var(--cc-line, #2e2412); padding: 12px 16px; margin: 20px 0 16px; }
         .email { font-weight: 600; overflow-wrap: anywhere; }
         ul { margin: 8px 0 0; padding-left: 20px; }
         .actions { display: flex; gap: 12px; margin-top: 24px; }
         .actions form { flex: 1; }
-        button { width: 100%; height: 40px; border-radius: 6px; font: inherit; font-weight: 500; cursor: pointer; }
-        button:disabled { opacity: 0.6; cursor: default; }
-        .secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
-        .primary { background: var(--primary); color: var(--on-primary); border: 1px solid var(--primary); }
+        button { width: 100%; height: 40px; border-radius: 0; font: inherit; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+        button:disabled { opacity: .6; cursor: default; }
+        button:focus-visible { outline: 2px solid var(--cc-amber, #f2b544); outline-offset: 2px; }
+        .secondary { background: transparent; color: var(--cc-text, #efe6d2); border: 1px solid var(--cc-line, #2e2412); }
+        .secondary:hover { border-color: var(--cc-muted, #a0824a); }
+        .primary { background: var(--cc-amber, #f2b544); color: var(--cc-bg, #0d0b08); border: 1px solid var(--cc-amber, #f2b544); }
+        .primary:hover { background: var(--cc-amber-hover, #f6c76e); }
     </style>
 </head>
 <body>
