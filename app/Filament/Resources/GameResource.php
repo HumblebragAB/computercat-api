@@ -12,6 +12,7 @@ use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Validation\Rule;
 
 class GameResource extends Resource
 {
@@ -108,6 +109,8 @@ class GameResource extends Resource
                     Forms\Components\TagsInput::make('allowed_origins')
                         ->label('Tillåtna origins (CORS)')
                         ->placeholder('https://ordjakt.apps.humblebrag.se')
+                        // Samma tak som MCP-verktyget set_allowed_origins.
+                        ->rules(['nullable', 'array', 'max:20'])
                         ->nestedRecursiveRules([new \App\Rules\GameOrigin])
                         ->helperText('Webbadresser som spelets frontend körs på. https, utan path.'),
                 ]),
@@ -119,6 +122,9 @@ class GameResource extends Resource
                         ->label('Preset')
                         ->options(collect(self::ANTI_CHEAT_PRESETS)->mapWithKeys(fn ($p, $k) => [$k => $p['label']]))
                         ->default('none')
+                        // Select validerar inte mot sina options. Tomt är tillåtet: äldre
+                        // spel saknar preset och helperText faller då tillbaka på none.
+                        ->rules(['nullable', Rule::in(array_keys(self::ANTI_CHEAT_PRESETS))])
                         ->live()
                         ->afterStateUpdated(function ($state, Forms\Set $set) {
                             $preset = self::ANTI_CHEAT_PRESETS[$state] ?? null;

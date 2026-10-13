@@ -8,12 +8,15 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\Rule;
 
 class MembersRelationManager extends RelationManager
 {
     protected static string $relationship = 'members';
 
     protected static ?string $title = 'Medlemmar (MCP)';
+
+    private const ROLES = ['owner' => 'Ägare', 'member' => 'Medlem'];
 
     public function table(Table $table): Table
     {
@@ -37,7 +40,9 @@ class MembersRelationManager extends RelationManager
                                 }
                             },
                         ]),
-                        Forms\Components\Select::make('role')->options(['owner' => 'Ägare', 'member' => 'Medlem'])->default('member')->required(),
+                        // Select validerar inte mot sina options; rollen avgörs på servern.
+                        Forms\Components\Select::make('role')->options(self::ROLES)->default('member')->required()
+                            ->rules(['required', Rule::in(array_keys(self::ROLES))]),
                     ]),
             ])
             ->actions([Tables\Actions\DetachAction::make()]);

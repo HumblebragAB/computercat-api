@@ -9,6 +9,7 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Validation\Rule;
 
 class PurchaseResource extends Resource
 {
@@ -20,17 +21,21 @@ class PurchaseResource extends Resource
 
     protected static ?int $navigationSort = 6;
 
+    private const STATUSES = [
+        'pending' => 'Pending',
+        'verified' => 'Verified',
+        'refunded' => 'Refunded',
+        'failed' => 'Failed',
+    ];
+
     public static function form(Form $form): Form
     {
         return $form->schema([
             Forms\Components\Select::make('status')
-                ->options([
-                    'pending' => 'Pending',
-                    'verified' => 'Verified',
-                    'refunded' => 'Refunded',
-                    'failed' => 'Failed',
-                ])
-                ->required(),
+                ->options(self::STATUSES)
+                ->required()
+                // Select validerar inte mot sina options; kolumnen är en enum.
+                ->rules([Rule::in(array_keys(self::STATUSES))]),
         ]);
     }
 

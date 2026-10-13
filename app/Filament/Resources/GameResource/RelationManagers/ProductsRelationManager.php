@@ -11,12 +11,26 @@ use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Validation\Rule;
 
 class ProductsRelationManager extends RelationManager
 {
     protected static string $relationship = 'products';
 
     protected static ?string $title = 'Products (IAP)';
+
+    private const PRODUCT_TYPES = [
+        'non_consumable' => 'Non-Consumable (permanent)',
+        'consumable' => 'Consumable (can be bought multiple times)',
+        'subscription' => 'Subscription',
+    ];
+
+    private const GRANT_TYPES = [
+        'pack' => 'Content pack',
+        'theme_pack' => 'Theme pack',
+        'supporter' => 'Supporter (unlocks everything)',
+        'custom' => 'Custom',
+    ];
 
     public function form(Form $form): Form
     {
@@ -33,13 +47,11 @@ class ProductsRelationManager extends RelationManager
                         ->maxLength(100)
                         ->helperText('Internal name shown in App Store Connect admin'),
                     Forms\Components\Select::make('product_type')
-                        ->options([
-                            'non_consumable' => 'Non-Consumable (permanent)',
-                            'consumable' => 'Consumable (can be bought multiple times)',
-                            'subscription' => 'Subscription',
-                        ])
+                        ->options(self::PRODUCT_TYPES)
                         ->default('non_consumable')
-                        ->required(),
+                        ->required()
+                        // Select validerar inte mot sina options.
+                        ->rules([Rule::in(array_keys(self::PRODUCT_TYPES))]),
                     Forms\Components\Toggle::make('is_active')->default(true),
                 ]),
 
@@ -48,13 +60,9 @@ class ProductsRelationManager extends RelationManager
                 ->columns(2)
                 ->schema([
                     Forms\Components\Select::make('grant_type')
-                        ->options([
-                            'pack' => 'Content pack',
-                            'theme_pack' => 'Theme pack',
-                            'supporter' => 'Supporter (unlocks everything)',
-                            'custom' => 'Custom',
-                        ])
+                        ->options(self::GRANT_TYPES)
                         ->required()
+                        ->rules([Rule::in(array_keys(self::GRANT_TYPES))])
                         ->live(),
                     Forms\Components\TextInput::make('grant_id')
                         ->label('Grant ID')
@@ -132,7 +140,7 @@ class ProductsRelationManager extends RelationManager
                         default => 'gray',
                     }),
                 Tables\Columns\TextColumn::make('price')
-                    ->suffix(fn ($record) => ' ' . $record->currency),
+                    ->suffix(fn ($record) => ' '.$record->currency),
                 Tables\Columns\TextColumn::make('apple_state')
                     ->label('Synced to Apple')
                     ->badge()
