@@ -41,7 +41,7 @@ Fem fel som är lätta att missa; varje rad har ett test i den task som äger ko
 1. **Offline tolkas som utloggad.** Ett nätverksfel eller 5xx mot `GET /auth/me` får inte slänga token och skapa en ny anonym spelare (spelaren tappar då sin plats på topplistan och kön skickas som en annan person). Bara 401 byter spelare, och bara en gång per anrop. Test i Task 3 ("nätverksfel behåller token", "500 behåller token", "två 401 i rad ger fel, ingen loop").
 2. **Fel svarsform från `/auth/me`.** Servern svarar `{"user": …}`. En klient som läser `data` (som Tocco) kraschar tyst och skapar en ny spelare vid varje sidladdning. Test i Task 3 ("verify läser user ur GET /auth/me och skapar ingen ny spelare").
 3. **Anti-cheat-signatur över UTF-16 i stället för UTF-8.** `charCodeAt` ger samma signatur som PHP bara för ASCII; ett `pid` med `å` (svenska speltitlar) avvisas då med "Proof signature mismatch." Test i Task 4 med en testvektor räknad med serverns PHP-algoritm: `kattsvep-å|1|x|1` → `wt2f7k`.
-4. **Kön skickar dubbletter eller fastnar på ett giftigt resultat.** Två samtidiga `flush` får inte skicka samma resultat två gånger, ett 422 (anti-cheat) får inte blockera resten av kön för alltid, och ett nätverksfel får inte kasta något. Test i Task 5 ("två samtidiga flush skickar varje resultat en gång", "422 kastas synligt och blockerar inte kön", "nätverksfel stoppar och behåller ordningen").
+4. **Kön skickar dubbletter eller fastnar på ett giftigt resultat.** Två samtidiga `flush` får inte skicka samma resultat två gånger, ett 422 (anti-cheat) får inte blockera resten av kön för alltid, och ett nätverksfel får inte kasta något. Kön delas dessutom av alla flikar med samma spel (samma `localStorage`-nyckel): en flik som skriver från sitt minne skulle skriva över resultat en annan flik lagt till. Därför läser kön lagringen på nytt före varje ändring. Test i Task 5 ("två samtidiga flush skickar varje resultat en gång", "422 kastas synligt och blockerar inte kön", "nätverksfel stoppar och behåller ordningen", "två flikar mot samma lagring tappar inget och skickar inget två gånger", "resultat från en annan flik under pågående flush finns kvar och skickas en gång").
 5. **Idé-markören i README försvinner eller dubbleras.** `create_game` (2c, steget `repo`) skriver idén mellan två markörer; ändras mallens README så att markörerna saknas, dubbleras eller byter ordning går provisioneringen sönder först i produktion. Test i Task 10 ("README har exakt en idé-markör av varje slag, i rätt ordning").
 
 ---
@@ -1316,7 +1316,7 @@ cd $WT && git add -A && git commit -m "Computercat-klient: topplistor och anti-c
 - Producerar:
   - `type QueuedScore = { id: string; type: string; score: number; metadata: Record<string, unknown> | null; queuedAt: number }`
   - `type FlushResult = { sent: number; dropped: { item: QueuedScore; reason: string }[]; remaining: number }`
-  - `DEFAULT_MAX_AGE_MS = 86_400_000`, `createScoreQueue({storage, game, submit, now?, maxAgeMs?})` → `{ enqueue(type, score, metadata?), flush(): Promise<FlushResult>, pending(): QueuedScore[] }`. Lagringsnyckel `computercat:<game>:score-queue`.
+  - `DEFAULT_MAX_AGE_MS = 86_400_000`, `createScoreQueue({storage, game, submit, now?, maxAgeMs?})` → `{ enqueue(type, score, metadata?), flush(): Promise<FlushResult>, pending(): QueuedScore[] }`. Lagringsnyckel `computercat:<game>:score-queue`. Kön har inget eget minne: varje läsning och varje ändring (lägg till, ta bort, töm) läser lagringen på nytt och skriver tillbaka hela listan i ett synkront steg, så flera flikar mot samma lagring tappar inga resultat. En flush kan i två flikar samtidigt skicka samma resultat; servern behåller bästa resultat per spelare och period, så en dubblett är ofarlig, men en flush hoppar över poster som en annan flik redan tagit bort.
   - `startBackgroundSync(flush, target, intervalMs = 60_000)` → `stop()`.
 
 - [ ] **Steg 1: Skriv de fallerande testerna**
@@ -1368,6 +1368,53 @@ describe('createScoreQueue', () => {
     expect(submit).toHaveBeenCalledTimes(2);
     expect(a.sent + b.sent).toBe(2);
     expect(q.pending()).toEqual([]);
+  });
+
+  it('två flikar mot samma lagring tappar inget och skickar inget två gånger', async () => {
+    const storage = memoryStorage();
+    const submitA = vi.fn(ok);
+    const submitB = vi.fn(ok);
+    const a = createScoreQueue({ storage, game: GAME, submit: submitA });
+    const b = createScoreQueue({ storage, game: GAME, submit: submitB });
+
+    a.enqueue('daily-clicks', 1);
+    b.enqueue('daily-clicks', 2);
+    a.enqueue('daily-clicks', 3);
+    b.enqueue('daily-clicks', 4);
+    expect(a.pending().map((i) => i.score)).toEqual([1, 2, 3, 4]);
+    expect(b.pending().map((i) => i.score)).toEqual([1, 2, 3, 4]);
+
+    expect(await a.flush()).toEqual({ sent: 4, dropped: [], remaining: 0 });
+    expect(await b.flush()).toEqual({ sent: 0, dropped: [], remaining: 0 });
+    expect(submitA.mock.calls.map((c) => c[1])).toEqual([1, 2, 3, 4]);
+    expect(submitB).not.toHaveBeenCalled();
+    expect(JSON.parse(storage.getItem(`computercat:${GAME}:score-queue`)!)).toEqual([]);
+  });
+
+  it('resultat från en annan flik under pågående flush finns kvar och skickas en gång', async () => {
+    const storage = memoryStorage();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const submitA = vi.fn(async () => {
+      await gate;
+      return {};
+    });
+    const submitB = vi.fn(ok);
+    const a = createScoreQueue({ storage, game: GAME, submit: submitA });
+    const b = createScoreQueue({ storage, game: GAME, submit: submitB });
+
+    a.enqueue('daily-clicks', 1);
+    const flushing = a.flush();
+    await vi.waitFor(() => expect(submitA).toHaveBeenCalledTimes(1)); // A väntar på nätet med resultat 1
+    b.enqueue('daily-clicks', 2); // flik B lägger till under tiden
+    release();
+
+    expect(await flushing).toEqual({ sent: 1, dropped: [], remaining: 1 });
+    expect(a.pending().map((i) => i.score)).toEqual([2]); // A:s borttagning skrev inte över B:s post
+    expect(await b.flush()).toEqual({ sent: 1, dropped: [], remaining: 0 });
+    expect(submitA).toHaveBeenCalledTimes(1);
+    expect(submitB).toHaveBeenCalledTimes(1);
+    expect(submitB.mock.calls[0][1]).toBe(2);
   });
 
   it('422 kastas synligt och blockerar inte kön', async () => {
@@ -1513,15 +1560,20 @@ export function createScoreQueue(deps: QueueDeps) {
   const key = `computercat:${deps.game}:score-queue`;
   const now = deps.now ?? Date.now;
   const maxAge = deps.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
-  let items: QueuedScore[] = readJson(deps.storage, key, isQueue) ?? [];
   let seq = 0;
   let chain: Promise<unknown> = Promise.resolve();
 
-  const persist = () => writeJson(deps.storage, key, items);
-  const remove = (id: string) => {
-    items = items.filter((i) => i.id !== id);
-    persist();
+  // Lagringen delas av alla flikar med samma spel. Inget hålls i minnet: varje
+  // läsning går mot lagringen, och varje ändring läser, ändrar och skriver tillbaka
+  // i ett enda synkront steg (inget await emellan), så en annan flik kan inte
+  // komma emellan i den här fliken och ingen ändring skriver över en annans.
+  const load = (): QueuedScore[] => readJson(deps.storage, key, isQueue) ?? [];
+  const change = (fn: (current: QueuedScore[]) => QueuedScore[]): QueuedScore[] => {
+    const next = fn(load());
+    writeJson(deps.storage, key, next);
+    return next;
   };
+  const remove = (id: string) => change((current) => current.filter((i) => i.id !== id));
 
   function enqueue(type: string, score: number, metadata: Record<string, unknown> | null = null): QueuedScore {
     assertScore(score);
@@ -1533,14 +1585,15 @@ export function createScoreQueue(deps: QueueDeps) {
       metadata,
       queuedAt: t,
     };
-    items = [...items, item];
-    persist();
+    change((current) => [...current, item]);
     return item;
   }
 
   async function run(): Promise<FlushResult> {
     const result: FlushResult = { sent: 0, dropped: [], remaining: 0 };
-    for (const item of [...items]) {
+    for (const item of load()) {
+      // En annan flik kan ha skickat eller kastat posten sedan vi började.
+      if (!load().some((i) => i.id === item.id)) continue;
       if (now() - item.queuedAt > maxAge) {
         remove(item.id);
         result.dropped.push({ item, reason: 'äldre än 24 h' });
@@ -1559,18 +1612,18 @@ export function createScoreQueue(deps: QueueDeps) {
         console.error(`[computercat] resultat ${item.score} till ${item.type} avvisades: ${reason}`);
       }
     }
-    result.remaining = items.length;
+    result.remaining = load().length;
     return result;
   }
 
-  /** Körningar läggs på kö efter varandra, så samma resultat skickas aldrig två gånger parallellt. */
+  /** Körningar läggs på kö efter varandra, så samma resultat skickas aldrig två gånger parallellt i en flik. */
   function flush(): Promise<FlushResult> {
     const p = chain.then(run);
     chain = p.catch(() => undefined);
     return p;
   }
 
-  return { enqueue, flush, pending: () => [...items] };
+  return { enqueue, flush, pending: () => load() };
 }
 ```
 
@@ -1607,7 +1660,7 @@ export function startBackgroundSync(
 cd $WT && npx vitest run src/lib/computercat && npm run typecheck
 ```
 
-Förväntat: `Tests 40 passed (40)`; typkontroll utan fel.
+Förväntat: `Tests 42 passed (42)`; typkontroll utan fel.
 
 - [ ] **Steg 5: Commit**
 
@@ -1822,7 +1875,7 @@ export function createSaves(game: string, authed: Authed) {
 cd $WT && npx vitest run src/lib/computercat && npm run typecheck
 ```
 
-Förväntat: `Tests 49 passed (49)`; typkontroll utan fel.
+Förväntat: `Tests 51 passed (51)`; typkontroll utan fel.
 
 - [ ] **Steg 5: Commit**
 
@@ -2033,7 +2086,7 @@ export function getComputercat(): ComputercatResult {
 cd $WT && npx vitest run && npm run typecheck && npm run lint
 ```
 
-Förväntat: `Test Files 11 passed (11)`, `Tests 56 passed (56)`; typkontroll och lint utan fel.
+Förväntat: `Test Files 11 passed (11)`, `Tests 58 passed (58)`; typkontroll och lint utan fel.
 
 - [ ] **Steg 5: Commit**
 
@@ -2059,7 +2112,8 @@ cd $WT && git add -A && git commit -m "Computercat-klient: fasad, singleton per 
 
 ```js
 // Kontrollerar att den statiska exporten finns och, om NEXT_PUBLIC_COMPUTERCAT_GAME
-// är satt, att slugen faktiskt bakats in i klientkoden (annars skickar spelet inget).
+// är satt (i miljön eller i en .env-fil som Next läser vid bygget), att slugen
+// faktiskt bakats in i klientkoden (annars skickar spelet inget).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -2074,16 +2128,36 @@ const walk = (dir) =>
     return statSync(p).isDirectory() ? walk(p) : [p];
   });
 
+const NAME = 'NEXT_PUBLIC_COMPUTERCAT_GAME';
+
+// Samma ordning som Next vid `next build`: miljön först, sedan filerna uppifrån och ned.
+// Utan det här kontrollerar skriptet ingenting för den som bara har slugen i .env.local.
+function slugFromEnvFiles() {
+  for (const file of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = line.match(new RegExp(`^\\s*(?:export\\s+)?${NAME}\\s*=\\s*(.*?)\\s*$`));
+      const value = m?.[1].replace(/^(['"])(.*)\1$/, '$2').trim();
+      if (value) return { value, source: file };
+    }
+  }
+  return null;
+}
+
 if (!existsSync('out/index.html')) {
   fail('out/index.html saknas. Är output: "export" satt i next.config.ts?');
 }
 
-const game = process.env.NEXT_PUBLIC_COMPUTERCAT_GAME?.trim();
+const fromEnv = process.env[NAME]?.trim();
+const found = fromEnv ? { value: fromEnv, source: 'miljön' } : slugFromEnvFiles();
+const game = found?.value;
 if (game) {
   const baked = walk('out/_next')
     .filter((f) => f.endsWith('.js'))
     .some((f) => readFileSync(f, 'utf8').includes(game));
-  if (!baked) fail(`slugen "${game}" finns inte i någon JS-fil under out/_next; variabeln har inte bakats in.`);
+  if (!baked) {
+    fail(`slugen "${game}" (från ${found.source}) finns inte i någon JS-fil under out/_next; variabeln har inte bakats in.`);
+  }
 }
 
 console.log(`check-export: OK (out/index.html${game ? `, slug "${game}" inbakad` : ', ingen slug satt'})`);
@@ -2102,9 +2176,12 @@ I `package.json`, under `scripts`, lägg till efter `typecheck`:
 ```bash
 cd $WT && npm run check
 NEXT_PUBLIC_COMPUTERCAT_GAME=finns-inte-i-koden-xyz node scripts/check-export.mjs; echo "exit=$?"
+printf 'NEXT_PUBLIC_COMPUTERCAT_GAME=finns-inte-i-koden-xyz\n' > .env.local
+node scripts/check-export.mjs; echo "exit=$?"
+rm .env.local
 ```
 
-Förväntat: första kommandot slutar med `check-export: OK (out/index.html, ingen slug satt)`. Andra: `check-export: slugen "finns-inte-i-koden-xyz" finns inte …` och `exit=1` (bevisar att kontrollen kan falla; bygget gjordes utan slug).
+Förväntat: första kommandot slutar med `check-export: OK (out/index.html, ingen slug satt)`. Andra: `check-export: slugen "finns-inte-i-koden-xyz" (från miljön) finns inte …` och `exit=1` (bevisar att kontrollen kan falla; bygget gjordes utan slug). Tredje: samma fel men `(från .env.local)` och `exit=1` (bevisar att kontrollen läser `.env.local`, där Next också hämtar värdet vid bygget). `.env.local` är en testfil med en påhittad slug som skapades här och tas bort direkt; fanns en `.env.local` redan i worktreen: stanna och flytta inte på den utan att fråga.
 
 - [ ] **Steg 4: Commit**
 
@@ -2123,7 +2200,7 @@ cd $WT && git add -A && git commit -m "npm run check: typkontroll, lint, test, b
 
 **Gränssnitt:**
 - Konsumerar: `getComputercat`, `readConfig`, `describeError`, `startBackgroundSync`, `LeaderboardPage` (Task 7).
-- Producerar: `LEADERBOARD_TYPE = 'daily-clicks'`; `ROUND_MS = 10_000`; `useClickStore` med `phase`, `clicks`, `startedAt`, `lastScore`, `best`, `start(now)`, `click(now)`, `finish()`, `reset()`; persist-nyckel `spelmall-click` (bara `best`).
+- Producerar: `LEADERBOARD_TYPE = 'daily-clicks'`; `ROUND_MS = 10_000`; `createClickStore(getStorage)` (lagringen injiceras; testerna använder `memoryStorage()` och rör aldrig `globalThis.localStorage`, som i Node 25+ är en getter som inte går att skriva över); `useClickStore = createClickStore(() => localStorage)` med `phase`, `clicks`, `startedAt`, `lastScore`, `best`, `start(now)`, `click(now)`, `finish()`, `reset()`; persist-nyckel `spelmall-click` (bara `best`).
 - Topplistan som Claude skapar via connectorn (dokumenteras i Task 10): `upsert_leaderboard_type` med `{"game": "<slug>", "slug": "daily-clicks", "name": "Dagens klick", "sort_direction": "desc", "score_label": "Klick", "period": "daily"}` (fälten enligt `UpsertLeaderboardTypeTool.php:16-27`).
 
 - [ ] **Steg 1: Skriv de fallerande testerna**
@@ -2131,27 +2208,20 @@ cd $WT && git add -A && git commit -m "npm run check: typkontroll, lint, test, b
 `src/game/clickStore.test.ts`:
 
 ```ts
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-// Zustand persist läser localStorage när storen skapas, alltså före importerna nedan.
-vi.hoisted(() => {
-  const map = new Map<string, string>();
-  (globalThis as { localStorage?: unknown }).localStorage = {
-    getItem: (k: string) => map.get(k) ?? null,
-    setItem: (k: string, v: string) => void map.set(k, String(v)),
-    removeItem: (k: string) => void map.delete(k),
-    clear: () => map.clear(),
-    key: () => null,
-    length: 0,
-  };
-});
-
-import { ROUND_MS, useClickStore } from './clickStore';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { memoryStorage, type KeyValueStore } from '../lib/computercat/storage';
+import { createClickStore, ROUND_MS } from './clickStore';
 
 const T0 = 1_000_000;
 
+// Storen får sin lagring injicerad; testet rör aldrig globalThis.localStorage, som i
+// Node 25+ är en getter som inte går att skriva över (och som varnar utan --localstorage-file).
+let storage: KeyValueStore;
+let useClickStore: ReturnType<typeof createClickStore>;
+
 beforeEach(() => {
-  useClickStore.setState({ phase: 'idle', clicks: 0, startedAt: null, lastScore: null, best: 0 });
+  storage = memoryStorage();
+  useClickStore = createClickStore(() => storage);
 });
 
 describe('useClickStore', () => {
@@ -2201,7 +2271,7 @@ describe('useClickStore', () => {
     s.start(T0);
     s.click(T0 + 1);
     useClickStore.getState().finish();
-    const saved = JSON.parse(localStorage.getItem('spelmall-click')!);
+    const saved = JSON.parse(storage.getItem('spelmall-click')!);
     expect(saved.state).toEqual({ best: 1 });
   });
 });
@@ -2231,7 +2301,7 @@ export const LEADERBOARD_TYPE = 'daily-clicks';
 
 ```ts
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 
 export const ROUND_MS = 10_000;
 
@@ -2250,42 +2320,51 @@ type ClickState = {
   reset: () => void;
 };
 
-export const useClickStore = create<ClickState>()(
-  persist(
-    (set, get) => ({
-      phase: 'idle',
-      clicks: 0,
-      startedAt: null,
-      lastScore: null,
-      best: 0,
-      start(now) {
-        if (get().phase === 'running') return;
-        set({ phase: 'running', clicks: 0, startedAt: now, lastScore: null });
+/**
+ * Lagringen kommer utifrån så att testerna kan ge en egen. I webbläsaren är den
+ * localStorage; saknas den (Node, privat läge) körs spelet utan sparat bästa resultat.
+ */
+export function createClickStore(getStorage: () => StateStorage) {
+  return create<ClickState>()(
+    persist(
+      (set, get) => ({
+        phase: 'idle',
+        clicks: 0,
+        startedAt: null,
+        lastScore: null,
+        best: 0,
+        start(now) {
+          if (get().phase === 'running') return;
+          set({ phase: 'running', clicks: 0, startedAt: now, lastScore: null });
+        },
+        click(now) {
+          const s = get();
+          if (s.phase !== 'running' || s.startedAt === null || now - s.startedAt >= ROUND_MS) return;
+          set({ clicks: s.clicks + 1 });
+        },
+        finish() {
+          const s = get();
+          if (s.phase !== 'running') return null;
+          set({ phase: 'finished', startedAt: null, lastScore: s.clicks, best: Math.max(s.best, s.clicks) });
+          return s.clicks;
+        },
+        reset() {
+          set({ phase: 'idle', clicks: 0, startedAt: null });
+        },
+      }),
+      {
+        name: 'spelmall-click',
+        storage: createJSONStorage(getStorage),
+        partialize: (s) => ({ best: s.best }),
+        // Den statiska HTML:en renderas utan localStorage; läs in efter mount så att hydreringen stämmer.
+        skipHydration: true,
       },
-      click(now) {
-        const s = get();
-        if (s.phase !== 'running' || s.startedAt === null || now - s.startedAt >= ROUND_MS) return;
-        set({ clicks: s.clicks + 1 });
-      },
-      finish() {
-        const s = get();
-        if (s.phase !== 'running') return null;
-        set({ phase: 'finished', startedAt: null, lastScore: s.clicks, best: Math.max(s.best, s.clicks) });
-        return s.clicks;
-      },
-      reset() {
-        set({ phase: 'idle', clicks: 0, startedAt: null });
-      },
-    }),
-    {
-      name: 'spelmall-click',
-      storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ best: s.best }),
-      // Den statiska HTML:en renderas utan localStorage; läs in efter mount så att hydreringen stämmer.
-      skipHydration: true,
-    },
-  ),
-);
+    ),
+  );
+}
+
+// `() => localStorage` anropas först när lagringen behövs; saknas den fångar createJSONStorage felet.
+export const useClickStore = createClickStore(() => localStorage);
 ```
 
 - [ ] **Steg 4: Kör testerna**
@@ -2548,7 +2627,7 @@ I `src/app/layout.tsx`: lägg till importen `import { BackgroundSync } from '@/c
 cd $WT && npm run check
 ```
 
-Förväntat: `Tests 62 passed (62)`, bygget listar `○ /`, sist `check-export: OK (out/index.html, ingen slug satt)`. Lint får inte ge `react-hooks`-fel; ger regeln `react-hooks/set-state-in-effect` fel på någon komponent, flytta `setState` in i en `.then`/callback som i `Leaderboard` (stäng inte av regeln).
+Förväntat: `Tests 64 passed (64)`, bygget listar `○ /`, sist `check-export: OK (out/index.html, ingen slug satt)`. Lint får inte ge `react-hooks`-fel; ger regeln `react-hooks/set-state-in-effect` fel på någon komponent, flytta `setState` in i en `.then`/callback som i `Leaderboard` (stäng inte av regeln).
 
 - [ ] **Steg 8: Commit**
 
@@ -2614,6 +2693,7 @@ describe('README och CLAUDE.md', () => {
       'get_provisioning_status',
       'computercat-api',
       'npm run check',
+      'npm audit --omit=dev --audit-level=high',
     ]) {
       expect(md, s).toContain(s);
     }
@@ -2667,7 +2747,7 @@ npm test        # enhetstester (vitest), inget nätverk
 npm run check   # typkontroll, lint, test, bygge och kontroll av out/
 ```
 
-`npm run check` ska vara grön innan något pushas.
+`npm run check` ska vara grön, och `npm audit --omit=dev --audit-level=high` får inte ge något (high eller critical i produktionsberoenden), innan något pushas.
 
 ## Backend
 
@@ -2735,7 +2815,7 @@ npm test                       # enhetstester, inget nätverk
 npm run check                  # typkontroll, lint, test, bygge, kontroll av out/
 ```
 
-Kör `npm run check` innan varje push till `main`. Bygget är en statisk export (`output: 'export'`): inga API-routes, inga serverkomponenter som hämtar data, ingen `next/font/google` (bygget ska klara sig utan nätverk).
+**Före varje push till `main`:** (1) `npm run check` grön, (2) `npm audit --omit=dev --audit-level=high` utan träff (avslutar med fel vid high eller critical i produktionsberoenden; åtgärda med `npm audit fix` eller uppdatera paketet, tysta aldrig). Bygget är en statisk export (`output: 'export'`): inga API-routes, inga serverkomponenter som hämtar data, ingen `next/font/google` (bygget ska klara sig utan nätverk).
 
 ## Computercat i koden
 
@@ -2773,7 +2853,7 @@ NEXT_PUBLIC_COMPUTERCAT_GAME=
 cd $WT && npm run check && git status --short
 ```
 
-Förväntat: `Tests 65 passed (65)`, `check-export: OK …`; `git status` visar `README.md`, `CLAUDE.md`, `.env.example`, `test/docs.test.ts` (inte `.env.local`).
+Förväntat: `Tests 67 passed (67)`, `check-export: OK …`; `git status` visar `README.md`, `CLAUDE.md`, `.env.example`, `test/docs.test.ts` (inte `.env.local`).
 
 - [ ] **Steg 7: Commit**
 
@@ -2827,13 +2907,14 @@ cd $WT && rm -rf out .next && NEXT_TELEMETRY_DISABLED=1 npm run build && grep -c
 
 Förväntat: `1` (bannern finns i den statiska HTML:en).
 
-- [ ] **Steg 4: Hela kontrollen en sista gång och läs diffen**
+- [ ] **Steg 4: Hela kontrollen och beroendeaudit en sista gång och läs diffen**
 
 ```bash
-cd $WT && npm run check && git log --oneline main..HEAD && git status --short
+cd $WT && npm run check && npm audit --omit=dev --audit-level=high; echo "audit-exit=$?"
+git log --oneline main..HEAD && git status --short
 ```
 
-Förväntat: grönt, 10 commits sedan `main`, ren working tree. Läs hela `git diff main..HEAD` en gång med en angripares ögon (token i loggar, `NEXT_PUBLIC_*` med hemligheter, `dangerouslySetInnerHTML`, `DELETE`-anrop) och kör `completion-gate`.
+Förväntat: `npm run check` grön; `npm audit` slutar med `found 0 vulnerabilities` (eller bara low/moderate) och `audit-exit=0`. `audit-exit=1` betyder att något produktionsberoende har en high- eller critical-sårbarhet: uppdatera paketet (`npm audit fix`, kör sedan `npm run check` igen) eller, om ingen fix finns, stanna och fråga Erik (AskUserQuestion); mallen lämnas inte vidare med en känd high/critical. Audit behöver nätverk mot npm-registret (till skillnad från bygget) och ligger därför inte i `npm run check`. Sedan: 10 commits sedan `main`, ren working tree. Läs hela `git diff main..HEAD` en gång med en angripares ögon (token i loggar, `NEXT_PUBLIC_*` med hemligheter, `dangerouslySetInnerHTML`, `DELETE`-anrop) och kör `completion-gate`.
 
 - [ ] **Steg 5: Avsluta worktreen**
 

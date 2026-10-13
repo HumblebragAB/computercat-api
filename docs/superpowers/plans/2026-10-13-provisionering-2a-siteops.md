@@ -4,7 +4,7 @@
 
 **Goal:** SiteOps API:t kan skapa en webb med en enda Demo-miljö (basic auth, övervakning), slå upp en webb på exakt URL, ändra miljöns basic auth och övervakning, och avaktivera webben, så att Computercats provisioneringssaga (2c) kan registrera och arkivera Demo-spel utan att en människa klickar i SiteOps.
 
-**Architecture:** Allt ligger i befintliga `ApiController` bakom `oauth`-middlewaren och `requireScope()`. `POST /sites` får ett valfritt `environment`-objekt som skapas i samma transaktion som webben och reservlösningen. `GET /sites?url=` blir ett exakt uppslag (webbens adress eller någon miljös adress). Två nya skrivroutes (`PATCH /sites/{id}/environments/{env}`, `POST /sites/{id}/deactivate`) får bara röra webbar som samma API-klient skapade (ny kolumn `sites.api_client_id`). Miljöer serialiseras på ett enda ställe (`formatApiEnvironment`) som aldrig lämnar ut basic auth. Ett nytt artisan-kommando skapar API-klienten med uttryckliga scopes.
+**Architecture:** Allt ligger i befintliga `ApiController` bakom `oauth`-middlewaren och `requireScope()`. `POST /sites` får ett valfritt `environment`-objekt som skapas i samma transaktion som webben och reservlösningen. `GET /sites?url=` blir ett exakt uppslag (webbens adress eller någon miljös adress). Två nya skrivroutes (`PATCH /sites/{id}/environments/{env}`, `POST /sites/{id}/deactivate`) får bara röra webbar som samma API-klient skapade med `environment` (ny kolumn `sites.api_client_id`, som bara sätts när `POST /sites` har `environment`, alltså för Computercats Demo-webbar). Webbar skapade utan `environment` får `api_client_id = null` och ger 403 vid PATCH/deactivate för varje API-klient. Miljöer serialiseras på ett enda ställe (`formatApiEnvironment`) som aldrig lämnar ut basic auth. Två nya artisan-kommandon skapar API-klienten med uttryckliga scopes (`api-clients:create`) och byter dess nyckel utan att byta klient (`api-clients:rotate`, så att ägarskapet i `sites.api_client_id` består).
 
 **Tech Stack:** Laravel 12.69, PHP 8.4, PHPUnit 11 (inte Pest), SQLite in-memory i testerna, Pint.
 
@@ -28,6 +28,7 @@
 - Basic auth lagras krypterat via modellens `encrypted`-cast, som i UI:t. Varken användarnamn eller lösenord visas i något API-svar; svaret har bara `has_basic_auth` (bool).
 - `POST /sites` med `environment` skapar bara den miljön, ingen tom Production-miljö.
 - `environment` och `credentials` i samma anrop → 422.
+- `sites.api_client_id` sätts BARA när `POST /sites` innehåller `environment` (Computercat-Demo-webbar). Webbar skapade utan `environment` behåller `api_client_id = null`; PATCH och deactivate ger 403 på dem för varje API-klient.
 - Avaktivering sätter `active = false` och `monitoring_enabled = false`. Ingen radering via API.
 - Webben får som idag en egen reservlösning (`BelongsToSolution`).
 - Anroparen skickar `Accept: application/json` (annars renderar Laravel valideringsfel som redirect).
@@ -61,21 +62,19 @@ Auth: header `X-Api-Key: <nyckel>` (eller `Authorization: Bearer <jwt>`), plus `
 - Request: valfri delmängd av `{"basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":true}`, minst ett fält. `basic_auth_user` och `basic_auth_password` skickas alltid tillsammans; båda `null` tar bort basic auth.
 - 200: `{"data":{"id":12,"site_id":34,"name":"Demo","type":"demo","url":"https://kattsvep.apps.humblebrag.se","is_monitored":true,"has_basic_auth":true}}`
 - 404: `{"error":"Site not found"}` / `{"error":"Environment not found"}` (miljön måste höra till webben, webben till nyckelns team).
-- 403: scope saknas, eller webben skapades inte av samma API-klient. Ett 403 ändrar ingenting (testat i Task 4). **2c använder detta som ägarskapsbevis:** när `POST /sites` ger 409 eller uppslaget hittar en webb, adopterar 2c den bara om `PATCH` mot dess demo-miljö ger 200; 403 betyder att webben inte är Computercats och sagan stannar med fel.
+- 403: scope saknas, eller webben skapades inte av samma API-klient med `environment` (webbar skapade utan `environment`, i UI:t eller av annan klient har `api_client_id = null` och ger 403 för alla). Ett 403 ändrar ingenting (testat i Task 4). **2c använder detta som ägarskapsbevis:** när `POST /sites` ger 409 eller uppslaget hittar en webb, adopterar 2c den bara om `PATCH` mot dess demo-miljö ger 200; 403 betyder att webben inte är Computercats och sagan stannar med fel.
 - 422: valideringsfel, ensamt basic auth-fält, tom body.
 
 **4. Avaktivera** — `POST /api/v1/sites/{id}/deactivate` (scope `sites:write`, ingen body)
 - 200: `{"data":{"id":34,"is_active":false,"monitoring_enabled":false}}`. Idempotent: ett andra anrop ger samma svar.
-- 404: `{"error":"Site not found"}`. 403: scope saknas eller webben skapades inte av samma API-klient.
+- 404: `{"error":"Site not found"}`. 403: scope saknas eller webben skapades inte av samma API-klient med `environment` (se kontrakt 3).
 
 **Utökade läsytor (för 2c:s invariant):**
 - `GET /api/v1/sites/{id}` får fältet `monitoring_enabled` (bool).
 - `GET /api/v1/sites/{id}/environments` får per miljö `type` (string) och `has_basic_auth` (bool).
 
-**Avvikelser från specen som Erik ska godkänna innan exekvering:**
-1. `PATCH` och `deactivate` kräver att webben skapades av samma API-klient (`sites.api_client_id`). Specen säger bara scope `sites:write`. Utan spärren kan en läckt Computercat-nyckel tysta övervakningen av varje kundwebb i teamet (`is_monitored: false` eller `deactivate`).
-2. (Löst 2026-10-13: specens förutsättning 6 är rättad till `sites:read` + `sites:write`, som 2a och Säkerhet redan sa. Uppslaget kräver `sites:read`.)
-3. Specen säger inte hur klienten skapas. Det finns varken UI eller kommando för maskinnycklar med egna scopes idag (bara DCR utan team och desktop-grant). Planen lägger till `php artisan api-clients:create`.
+**Kommandon utöver specen:**
+1. Specen säger inte hur klienten skapas eller byter nyckel. Det finns varken UI eller kommando för maskinnycklar med egna scopes idag (bara DCR utan team och desktop-grant). Planen lägger till `php artisan api-clients:create` (Task 7) och `php artisan api-clients:rotate` (Task 7b).
 
 ---
 
@@ -87,9 +86,9 @@ De fem troligaste felmoderna som annars inte täcks, och testet som fångar var 
 2. **En tom Production-miljö skapas bredvid Demo-miljön** (t.ex. för att `credentials` och `environment` kombineras, eller att någon återanvänder `createEmptyProductionEnvironment`). Test: `test_creates_site_with_only_the_demo_environment` och `test_environment_and_credentials_together_is_rejected` i Task 3.
 3. **Uppslaget matchar delsträngar eller missar avslutande snedstreck,** så att `kattsvep` hittar `kattsvep2` och 2c kopplar fel webb, eller inte hittar sin egen och skapar en dubblett. Test: `test_lookup_matches_exact_site_url_only` och `test_lookup_ignores_trailing_slash` i Task 2, `test_duplicate_url_returns_409_with_existing_site_id` i Task 3.
 4. **Tvärs över team eller webbar:** PATCH på en miljö som hör till en annan webb i samma team, eller en webb i ett annat team. Test: `test_environment_of_another_site_is_404` och `test_site_of_another_team_is_404` i Task 4, `test_lookup_never_returns_other_teams_site` i Task 2.
-5. **Scope eller ägarskap kontrolleras inte i den riktiga middlewarekedjan** (befintliga tester kringgår `OAuthMiddleware` och sätter attribut för hand). Alla nya tester går genom riktig `X-Api-Key`. Test: `test_requires_sites_write` i Task 3, 4 och 5, `test_site_created_by_another_client_is_403` i Task 4 och 5, `test_lookup_requires_sites_read` i Task 2.
+5. **Scope eller ägarskap kontrolleras inte i den riktiga middlewarekedjan** (befintliga tester kringgår `OAuthMiddleware` och sätter attribut för hand). Alla nya tester går genom riktig `X-Api-Key`. Test: `test_requires_sites_write` i Task 3, 4 och 5, `test_site_created_by_another_client_is_403` i Task 4 och 5, `test_site_created_without_environment_by_same_client_is_403` i Task 5, `test_lookup_requires_sites_read` i Task 2.
 
-Dessutom: transaktionen (`test_failed_environment_insert_leaves_no_site_or_solution`, Task 3) och att ingen DELETE-route finns (`test_there_is_no_delete_route`, Task 5).
+Dessutom: rotation som byter nyckel men behåller klienten (`test_rotation_keeps_client_id_so_ownership_survives`, Task 7b), att `api_client_id` bara sätts med `environment` (`test_without_environment_client_is_not_recorded`, Task 3), transaktionen (`test_failed_environment_insert_leaves_no_site_or_solution`, Task 3) och att ingen DELETE-route finns (`test_there_is_no_delete_route`, Task 5).
 
 ---
 
@@ -99,6 +98,7 @@ Dessutom: transaktionen (`test_failed_environment_insert_leaves_no_site_or_solut
 /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo/
 ├── app/
 │   ├── Console/Commands/CreateApiClient.php                       (ny, Task 7)
+│   ├── Console/Commands/RotateApiClient.php                       (ny, Task 7b)
 │   ├── Http/Controllers/ApiController.php                         (ändras, Task 2–6)
 │   ├── Http/Controllers/OAuthController.php                       (ändras, Task 7)
 │   └── Models/OAuthClient.php                                     (ändras, Task 7)
@@ -112,7 +112,8 @@ Dessutom: transaktionen (`test_failed_environment_insert_leaves_no_site_or_solut
         ├── UpdateSiteEnvironmentApiTest.php                       (ny, Task 4)
         ├── DeactivateSiteApiTest.php                              (ny, Task 5)
         ├── SiteReadSurfacesApiTest.php                            (ny, Task 6)
-        └── CreateApiClientCommandTest.php                         (ny, Task 7)
+        ├── CreateApiClientCommandTest.php                         (ny, Task 7)
+        └── RotateApiClientCommandTest.php                         (ny, Task 7b)
 ```
 
 `WT=/Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo` används nedan som förkortning; skriv ut hela sökvägen i varje kommando.
@@ -401,7 +402,7 @@ cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && git add app/
 - Produces (PHP):
   - `private function createApiEnvironment(Site $site, int $teamId, array $env): Environment`
   - `private function formatApiEnvironment(Environment $env): array` → `['id' => int, 'site_id' => int, 'name' => string, 'type' => string, 'url' => ?string, 'is_monitored' => bool, 'has_basic_auth' => bool]`. Används av Task 4.
-  - Kolumn `sites.api_client_id` (string 80, nullable, index) = `oauth_clients.client_id` för klienten som skapade webben via API:t. Används av Task 4 och 5.
+  - Kolumn `sites.api_client_id` (string 80, nullable, index) = `oauth_clients.client_id` för klienten som skapade webben via `POST /sites` med `environment`; null för alla andra webbar. Används av Task 4 och 5.
 
 - [ ] **Steg 1: Skriv det fallerande testet.**
 
@@ -636,9 +637,9 @@ class CreateSiteWithEnvironmentApiTest extends TestCase
         $this->assertSame(0, Site::where('team_id', $team->id)->count());
     }
 
-    public function test_without_environment_behaviour_is_unchanged_but_client_is_recorded(): void
+    public function test_without_environment_client_is_not_recorded(): void
     {
-        [$team, $key, $client] = $this->apiClient(['sites:write']);
+        [$team, $key] = $this->apiClient(['sites:write']);
 
         $this->api($key)->postJson('/api/v1/sites', ['name' => 'Vanlig', 'url' => 'https://vanlig.se'])
             ->assertCreated()
@@ -646,7 +647,9 @@ class CreateSiteWithEnvironmentApiTest extends TestCase
 
         $site = Site::where('team_id', $team->id)->sole();
         $this->assertSame(0, $site->environments()->count());
-        $this->assertSame($client->client_id, $site->api_client_id);
+        // Utan environment är det inte ett Computercat-Demo-spel: ingen ägare,
+        // så PATCH/deactivate ger 403 för varje API-klient (Task 4 och 5).
+        $this->assertNull($site->api_client_id);
     }
 }
 ```
@@ -673,9 +676,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('sites', function (Blueprint $table) {
-            // Klienten som skapade webben via API:t (oauth_clients.client_id).
-            // Null för webbar skapade i UI:t. Bara den klienten får avaktivera
-            // webben eller ändra miljöns övervakning och basic auth via API:t.
+            // Klienten som skapade webben via POST /sites MED environment
+            // (oauth_clients.client_id). Null för webbar skapade i UI:t eller utan
+            // environment. Bara den klienten får avaktivera webben eller ändra
+            // miljöns övervakning och basic auth via API:t.
             $table->string('api_client_id', 80)->nullable()->index();
         });
     }
@@ -757,7 +761,8 @@ return new class extends Migration
                 'active' => true,
                 'monitoring_enabled' => true,
                 'ops_mode' => 'supervised',
-                'api_client_id' => $request->attributes->get('oauth_client_id'),
+                // Ägarskap bara för Computercat-Demo-webbar (med environment).
+                'api_client_id' => isset($data['environment']) ? $request->attributes->get('oauth_client_id') : null,
             ]);
 
             $environment = isset($data['environment'])
@@ -1039,6 +1044,7 @@ class UpdateSiteEnvironmentApiTest extends TestCase
     {
         [$team, $key] = $this->apiClient(['sites:write']);
         [$site, $env] = $this->demoSite($team, 'api-nagon-annan');
+        // Webb utan ägare (skapad i UI:t eller via API utan environment): 403 för alla klienter.
         [$uiSite, $uiEnv] = $this->demoSite($team, 'x');
         $uiSite->update(['api_client_id' => null]);
 
@@ -1128,9 +1134,11 @@ Lägg till under `// --- Helpers ---`, efter `sitesWithExactUrl()`:
 ```php
     /**
      * Ändringar som kan tysta övervakningen (avaktivera, miljöns is_monitored
-     * och basic auth) får bara göras av klienten som skapade webben via API:t.
-     * En läckt Computercat-nyckel ska inte kunna stänga av bevakningen av
-     * kundernas webbar. Webbar skapade i UI:t (api_client_id null) ändras där.
+     * och basic auth) får bara göras av klienten som skapade webben via API:t
+     * med environment (Computercats Demo-webbar). En läckt Computercat-nyckel
+     * ska inte kunna stänga av bevakningen av kundernas webbar. Webbar utan
+     * ägare (api_client_id null: skapade i UI:t eller utan environment) ger 403
+     * för alla API-klienter och ändras i UI:t.
      */
     private function requireCreatedByClient(Request $request, Site $site): void
     {
@@ -1235,6 +1243,18 @@ class DeactivateSiteApiTest extends TestCase
         $this->assertTrue($otherClientSite->fresh()->active);
     }
 
+    public function test_site_created_without_environment_by_same_client_is_403(): void
+    {
+        [$team, $key] = $this->apiClient(['sites:write']);
+
+        $siteId = $this->api($key)->postJson('/api/v1/sites', ['name' => 'Vanlig', 'url' => 'https://vanlig.se'])
+            ->assertCreated()->json('data.id');
+
+        $this->api($key)->postJson("/api/v1/sites/{$siteId}/deactivate")->assertForbidden();
+        $this->assertTrue(Site::findOrFail($siteId)->active);
+        $this->assertTrue(Site::findOrFail($siteId)->monitoring_enabled);
+    }
+
     public function test_requires_sites_write(): void
     {
         [$team, $key, $client] = $this->apiClient(['sites:read']);
@@ -1261,7 +1281,7 @@ class DeactivateSiteApiTest extends TestCase
 cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && php artisan test --filter=DeactivateSiteApiTest
 ```
 
-Förväntat: routen saknas, så varje POST ger Laravels 404. FAIL i `test_deactivates_without_deleting_anything`, `test_is_idempotent`, `test_site_created_by_another_client_is_403`, `test_requires_sites_write` (404 i stället för 200/403) och `test_site_of_another_team_is_404` (kroppen är `{"message":…}`, inte `{"error":"Site not found"}`). `test_there_is_no_delete_route` går redan igenom (405, eftersom `GET /sites/{id}` finns) och ska fortsätta göra det.
+Förväntat: routen saknas, så varje POST ger Laravels 404. FAIL i `test_deactivates_without_deleting_anything`, `test_is_idempotent`, `test_site_created_by_another_client_is_403`, `test_site_created_without_environment_by_same_client_is_403`, `test_requires_sites_write` (404 i stället för 200/403) och `test_site_of_another_team_is_404` (kroppen är `{"message":…}`, inte `{"error":"Site not found"}`). `test_there_is_no_delete_route` går redan igenom (405, eftersom `GET /sites/{id}` finns) och ska fortsätta göra det.
 
 - [ ] **Steg 3: Route.** I `routes/api.php`, direkt efter PATCH-routen från Task 4:
 
@@ -1629,7 +1649,232 @@ Förväntat: alla gröna.
 cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && git add app/Console/Commands/CreateApiClient.php app/Models/OAuthClient.php app/Http/Controllers/OAuthController.php tests/Feature/Api/CreateApiClientCommandTest.php && git commit -m "feat(api): api-clients:create skapar maskinnyckel med uttryckliga scopes"
 ```
 
-**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** Kommandot skriver ut nyckeln; därför kör **Erik** det i sin egen terminal och lägger nyckeln direkt i 1Password/Forge, aldrig via Claudes transkript. Team-id slås upp först (`php artisan tinker --execute="echo App\\Models\\Team::where('name','like','Humblebrag%')->get(['id','name'])"`). Nyckeln får inte återskapas med ny klient: `sites.api_client_id` binder ägarskapet till `client_id`, och en ny klient ger 403 på alla befintliga Demo-webbar (se Eriks beslut om rotation). på SiteOps-servern `php artisan migrate` och sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Nyckeln går direkt till Computercats `.env` som `SITEOPS_API_KEY` (spec 2c, förutsättning 6–7).
+**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** på SiteOps-servern `php artisan migrate`, sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Team-id slås upp först (`php artisan tinker --execute="echo App\\Models\\Team::where('name','like','Humblebrag%')->get(['id','name'])"`). Kommandot skriver ut nyckeln en gång; därför kör **Erik** det i sin egen terminal och lägger nyckeln direkt i 1Password/Forge (Computercats `.env` som `SITEOPS_API_KEY`, spec 2c förutsättning 6-7), aldrig via Claude eller ett transkript.
+
+## Task 7b: `api-clients:rotate` för nyckelbyte
+
+Nyckeln får inte bytas genom att skapa en ny klient: `sites.api_client_id` binder ägarskapet till `client_id`, och en ny klient ger 403 på alla befintliga Demo-webbar. Rotationen byter därför bara `client_secret_hash` på samma rad.
+
+**Files:**
+- Create: `app/Console/Commands/RotateApiClient.php`
+- Create: `tests/Feature/Api/RotateApiClientCommandTest.php`
+
+**Interfaces:**
+- Consumes: `CreatesApiClient` (Task 1), `sites.api_client_id` (Task 3).
+- Produces (CLI): `php artisan api-clients:rotate {client_id} [--force]` → frågar om bekräftelse (hoppas över bara med `--force`, för tester och skript), byter `client_secret_hash` på samma rad, skriver `API-nyckel: <64 hex>` en gång; den gamla nyckeln ger 401 direkt. Exit 1 vid okänd, inaktiv eller icke-maskinklient (bara `client_id` som börjar med `api-` och utan `user_id`) och när bekräftelsen nekas.
+
+- [ ] **Steg 1: Skriv det fallerande testet.**
+
+```php
+<?php
+
+namespace Tests\Feature\Api;
+
+use App\Models\Environment;
+use App\Models\OAuthClient;
+use App\Models\Site;
+use Illuminate\Support\Facades\Artisan;
+use Tests\Concerns\CreatesApiClient;
+use Tests\TestCase;
+
+class RotateApiClientCommandTest extends TestCase
+{
+    use CreatesApiClient;
+
+    private function rotate(string $clientId): string
+    {
+        $exit = Artisan::call('api-clients:rotate', ['client_id' => $clientId, '--force' => true]);
+        $this->assertSame(0, $exit);
+        $this->assertSame(1, preg_match('/API-nyckel: ([0-9a-f]{64})/', Artisan::output(), $m));
+
+        return $m[1];
+    }
+
+    public function test_old_key_stops_working_and_new_key_works(): void
+    {
+        [, $oldKey, $client] = $this->apiClient(['sites:read', 'sites:write']);
+        $this->api($oldKey)->getJson('/api/v1/sites')->assertOk();
+
+        $newKey = $this->rotate($client->client_id);
+
+        $this->assertNotSame($oldKey, $newKey);
+        $this->api($oldKey)->getJson('/api/v1/sites')->assertUnauthorized();
+        $this->api($newKey)->getJson('/api/v1/sites')->assertOk();
+    }
+
+    public function test_rotation_keeps_client_id_so_ownership_survives(): void
+    {
+        [$team, $oldKey, $client] = $this->apiClient(['sites:read', 'sites:write']);
+        $created = $this->api($oldKey)->postJson('/api/v1/sites', [
+            'name' => 'Kattsvep',
+            'url' => 'https://kattsvep.apps.humblebrag.se',
+            'type' => 'app',
+            'environment' => ['type' => 'demo', 'name' => 'Demo', 'url' => 'https://kattsvep.apps.humblebrag.se'],
+        ])->assertCreated();
+        $siteId = $created->json('data.id');
+        $envId = $created->json('data.environment.id');
+
+        $newKey = $this->rotate($client->client_id);
+
+        $this->assertSame(1, OAuthClient::count());
+        $fresh = $client->fresh();
+        $this->assertSame($client->client_id, $fresh->client_id);
+        $this->assertSame($client->id, $fresh->id);
+        $this->assertSame(['sites:read', 'sites:write'], $fresh->scopes);
+        $this->assertSame($team->id, $fresh->team_id);
+        $this->assertSame(hash('sha256', $newKey), $fresh->client_secret_hash);
+        $this->assertFalse($fresh->expose_cases);
+
+        // Samma klient: nya nyckeln äger fortfarande sina webbar.
+        $this->api($newKey)->patchJson("/api/v1/sites/{$siteId}/environments/{$envId}", ['is_monitored' => true])->assertOk();
+        $this->api($newKey)->postJson("/api/v1/sites/{$siteId}/deactivate")->assertOk();
+    }
+
+    public function test_other_clients_and_customer_sites_stay_403_after_rotation(): void
+    {
+        [$team, , $client] = $this->apiClient(['sites:read', 'sites:write']);
+        [, $otherKey, $other] = $this->apiClient(['sites:read', 'sites:write'], $team);
+        $newKey = $this->rotate($client->client_id);
+
+        $ownedByOther = Site::factory()->create(['team_id' => $team->id, 'api_client_id' => $other->client_id]);
+        $customerSite = Site::factory()->create(['team_id' => $team->id, 'api_client_id' => null]);
+        $env = Environment::factory()->forSite($customerSite)->create(['type' => 'demo']);
+
+        $this->api($newKey)->postJson("/api/v1/sites/{$ownedByOther->id}/deactivate")->assertForbidden();
+        $this->api($newKey)->postJson("/api/v1/sites/{$customerSite->id}/deactivate")->assertForbidden();
+        $this->api($newKey)->patchJson("/api/v1/sites/{$customerSite->id}/environments/{$env->id}", ['is_monitored' => true])->assertForbidden();
+        // Den andra klientens nyckel rördes inte av rotationen.
+        $this->api($otherKey)->postJson("/api/v1/sites/{$ownedByOther->id}/deactivate")->assertOk();
+        $this->assertTrue($customerSite->fresh()->active);
+    }
+
+    public function test_declined_confirmation_changes_nothing(): void
+    {
+        [, $oldKey, $client] = $this->apiClient(['sites:read']);
+        $hash = $client->client_secret_hash;
+
+        $this->artisan('api-clients:rotate', ['client_id' => $client->client_id])
+            ->expectsConfirmation('Byta nyckel för ' . $client->client_id . '? Den gamla nyckeln slutar fungera direkt.', 'no')
+            ->assertExitCode(1);
+
+        $this->assertSame($hash, $client->fresh()->client_secret_hash);
+        $this->api($oldKey)->getJson('/api/v1/sites')->assertOk();
+    }
+
+    public function test_accepted_confirmation_rotates(): void
+    {
+        [, $oldKey, $client] = $this->apiClient(['sites:read']);
+
+        $this->artisan('api-clients:rotate', ['client_id' => $client->client_id])
+            ->expectsConfirmation('Byta nyckel för ' . $client->client_id . '? Den gamla nyckeln slutar fungera direkt.', 'yes')
+            ->expectsOutputToContain('API-nyckel: ')
+            ->assertExitCode(0);
+
+        $this->api($oldKey)->getJson('/api/v1/sites')->assertUnauthorized();
+    }
+
+    public function test_refuses_unknown_inactive_and_non_machine_clients(): void
+    {
+        [, $key, $inactive] = $this->apiClient(['sites:read']);
+        $inactive->update(['is_active' => false]);
+        $desktop = OAuthClient::create([
+            'name' => 'Desktop', 'client_id' => 'desktop-abc', 'client_secret_hash' => hash('sha256', 'd'),
+            'team_id' => $inactive->team_id, 'scopes' => ['sites:read'], 'is_active' => true,
+        ]);
+
+        $this->assertSame(1, Artisan::call('api-clients:rotate', ['client_id' => 'api-finns-inte', '--force' => true]));
+        $this->assertSame(1, Artisan::call('api-clients:rotate', ['client_id' => $inactive->client_id, '--force' => true]));
+        $this->assertSame(1, Artisan::call('api-clients:rotate', ['client_id' => $desktop->client_id, '--force' => true]));
+
+        $this->assertSame(hash('sha256', $key), $inactive->fresh()->client_secret_hash);
+        $this->assertSame(hash('sha256', 'd'), $desktop->fresh()->client_secret_hash);
+    }
+}
+```
+
+- [ ] **Steg 2: Kör och se det falla.**
+
+```bash
+cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && php artisan test --filter=RotateApiClientCommandTest
+```
+
+Förväntat: FAIL, alla 6 tester med `CommandNotFoundException` (kommandot `api-clients:rotate` finns inte).
+
+- [ ] **Steg 3: Kommandot.** `app/Console/Commands/RotateApiClient.php`:
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\OAuthClient;
+use Illuminate\Console\Command;
+
+/**
+ * Byter nyckeln på en befintlig maskinklient. Samma rad, samma client_id:
+ * sites.api_client_id (ägarskapet till Demo-webbarna) pekar på client_id, så
+ * en ny klient hade gett 403 på alla befintliga webbar. Den gamla nyckeln
+ * ogiltigförklaras av samma UPDATE; det finns inget överlappsfönster.
+ */
+class RotateApiClient extends Command
+{
+    protected $signature = 'api-clients:rotate
+        {client_id : Klientens client_id, t.ex. api-1a2b...}
+        {--force : Hoppa över bekräftelsen (tester och skript; Erik kör utan)}';
+
+    protected $description = 'Byter nyckel för en API-klient (samma client_id), visar den nya nyckeln en gång';
+
+    public function handle(): int
+    {
+        $client = OAuthClient::where('client_id', $this->argument('client_id'))->first();
+
+        // Bara maskinnycklar från api-clients:create. Desktop- och DCR-klienter
+        // har egna flöden och ska inte kunna roteras härifrån.
+        if (!$client || !str_starts_with($client->client_id, 'api-') || $client->user_id !== null) {
+            $this->error('Ingen API-klient med det client_id.');
+
+            return self::FAILURE;
+        }
+
+        if (!$client->is_active) {
+            $this->error('Klienten är inaktiv. Aktivera den först om nyckeln ska bytas.');
+
+            return self::FAILURE;
+        }
+
+        if (!$this->option('force') && !$this->confirm("Byta nyckel för {$client->client_id}? Den gamla nyckeln slutar fungera direkt.", false)) {
+            $this->warn('Avbrutet. Ingenting ändrades.');
+
+            return self::FAILURE;
+        }
+
+        $rawKey = bin2hex(random_bytes(32));
+        $client->update(['client_secret_hash' => hash('sha256', $rawKey)]);
+
+        $this->info("Nyckeln för {$client->client_id} ({$client->name}) är bytt. Den gamla är ogiltig.");
+        $this->line("API-nyckel: {$rawKey}");
+        $this->warn('Nyckeln visas bara nu. Lägg den direkt i 1Password/Forge, aldrig i git, chatt eller ärenden.');
+
+        return self::SUCCESS;
+    }
+}
+```
+
+- [ ] **Steg 4: Kör och se det gå igenom.**
+
+```bash
+cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && php artisan test --filter='RotateApiClientCommandTest|CreateApiClientCommandTest|UpdateSiteEnvironmentApiTest|DeactivateSiteApiTest'
+```
+
+Förväntat: alla gröna.
+
+- [ ] **Steg 5: Commit.**
+
+```bash
+cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && git add app/Console/Commands/RotateApiClient.php tests/Feature/Api/RotateApiClientCommandTest.php && git commit -m "feat(api): api-clients:rotate byter nyckel utan att byta klient"
+```
+
+**Runbook, nyckelrotation (produktion, kräver Eriks OK):** Erik kör `php artisan api-clients:rotate <client_id>` på SiteOps-servern i sin egen terminal, svarar yes, och lägger den utskrivna nyckeln direkt i 1Password och Forge (Computercats `SITEOPS_API_KEY`), aldrig via Claude eller ett transkript. Den gamla nyckeln är ogiltig i samma ögonblick, så ordningen är: kör kommandot, uppdatera Forge-miljövariabeln, deploya/starta om Computercat. Mellan stegen får Computercats SiteOps-anrop 401 och 2c:s saga stannar synligt (fail loud) tills nyckeln är på plats; kör det därför när ingen provisionering pågår. `client_id` hittas med `php artisan tinker --execute="echo App\\Models\\OAuthClient::where('name','Computercat')->value('client_id')"`.
 
 ---
 
