@@ -2,11 +2,13 @@
 
 namespace App\Filament\Resources\GameResource\RelationManagers;
 
+use App\Support\ConfigRules\GameEventRules;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 
 class GameEventsRelationManager extends RelationManager
 {
@@ -18,6 +20,7 @@ class GameEventsRelationManager extends RelationManager
             Forms\Components\TextInput::make('slug')
                 ->required()
                 ->maxLength(100)
+                ->rules(fn (?Model $record) => GameEventRules::rules($this->getOwnerRecord(), $record)['slug'])
                 ->helperText('URL-friendly identifier (e.g., "spring-2026-challenge")'),
             Forms\Components\TextInput::make('name')
                 ->required()
@@ -33,7 +36,8 @@ class GameEventsRelationManager extends RelationManager
             Forms\Components\DateTimePicker::make('starts_at')
                 ->required(),
             Forms\Components\DateTimePicker::make('ends_at')
-                ->required(),
+                ->required()
+                ->after('starts_at'),
             Forms\Components\Toggle::make('is_active')->default(true),
         ]);
     }

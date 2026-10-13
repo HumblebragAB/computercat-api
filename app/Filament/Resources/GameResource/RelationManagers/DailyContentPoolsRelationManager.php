@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\GameResource\RelationManagers;
 
+use App\Support\ConfigRules\ContentPoolRules;
 use Closure;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Model;
 
 class DailyContentPoolsRelationManager extends RelationManager
 {
@@ -19,17 +21,15 @@ class DailyContentPoolsRelationManager extends RelationManager
             Forms\Components\TextInput::make('pool_key')
                 ->required()
                 ->maxLength(100)
+                ->rules(fn (?Model $record) => ContentPoolRules::rules($this->getOwnerRecord(), $record)['pool_key'])
                 ->helperText('Unique key for this content pool (e.g., "daily-puzzle", "word-of-the-day")'),
             Forms\Components\Textarea::make('content')
                 ->required()
                 ->helperText('JSON array of content items (max 5000)')
                 ->rules([
                     fn () => function (string $attribute, $value, Closure $fail) {
-                        $decoded = json_decode((string) $value, true);
-                        if (! is_array($decoded) || ! array_is_list($decoded)) {
-                            $fail('Content must be a valid JSON array, e.g. ["a", "b"] or [{"id": 1}].');
-                        } elseif (count($decoded) > 5000) {
-                            $fail('Content can hold at most 5000 items.');
+                        if ($error = ContentPoolRules::contentError(json_decode((string) $value, true))) {
+                            $fail($error);
                         }
                     },
                 ])
@@ -55,7 +55,7 @@ class DailyContentPoolsRelationManager extends RelationManager
                 Tables\Columns\IconColumn::make('is_active')->boolean(),
                 Tables\Columns\IconColumn::make('random_access')->boolean()->label('Random'),
                 Tables\Columns\TextColumn::make('content')
-                    ->formatStateUsing(fn ($state) => is_array($state) ? count($state) . ' items' : '—')
+                    ->formatStateUsing(fn ($state) => is_array($state) ? count($state).' items' : '—')
                     ->label('Items'),
             ])
             ->headerActions([Tables\Actions\CreateAction::make()])
