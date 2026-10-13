@@ -4,6 +4,11 @@
 (function() {
     'use strict';
 
+    // Fosfor-paletten, samma värden som cc-theme.css.
+    const CC = { bg: '#0d0b08', surface: '#15110a', text: '#efe6d2', amber: '#f2b544',
+                 muted: '#a0824a', ok: '#9fd36b', danger: '#e8664a',
+                 font: "'IBM Plex Mono', ui-monospace, monospace" };
+
     // -- 1. KONAMI CODE → Matrix cat rain --
     const KONAMI = [38,38,40,40,37,39,37,39,66,65];
     let konamiPos = 0;
@@ -40,17 +45,18 @@
         document.body.appendChild(canvas);
         const ctx = canvas.getContext('2d');
 
-        const cats = ['🐱','🐈','😺','😸','😹','😻','🙀','😾','🐈‍⬛','🐾'];
+        // En glyf per kolumn (16px breda), hämtade ur =^.^= /\\_/\\ och meow.
+        const cats = '=^._/\\>< meow01'.replace(/ /g, '').split('');
         const fontSize = 16;
         const cols = Math.floor(canvas.width / fontSize);
         const drops = Array(cols).fill(0);
 
         let frames = 0;
         function draw() {
-            ctx.fillStyle = 'rgba(10,10,26,0.05)';
+            ctx.fillStyle = 'rgba(13,11,8,0.08)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#00f0ff';
-            ctx.font = fontSize + 'px monospace';
+            ctx.fillStyle = CC.amber;
+            ctx.font = fontSize + 'px ' + CC.font;
 
             for (let i = 0; i < cols; i++) {
                 const char = cats[Math.floor(Math.random() * cats.length)];
@@ -82,43 +88,43 @@
 
         const body = document.createElement('div');
         body.style.cssText = 'width:4px;height:4px;position:absolute;top:0;left:0;background:transparent;box-shadow:' +
-            '20px 0px 0 #e0e0ff,24px -4px 0 #e0e0ff,28px 0px 0 #e0e0ff,' +
-            '52px 0px 0 #e0e0ff,56px -4px 0 #e0e0ff,60px 0px 0 #e0e0ff,' +
-            '24px 4px 0 #e0e0ff,28px 4px 0 #e0e0ff,32px 4px 0 #e0e0ff,' +
-            '36px 4px 0 #e0e0ff,40px 4px 0 #e0e0ff,44px 4px 0 #e0e0ff,' +
-            '48px 4px 0 #e0e0ff,52px 4px 0 #e0e0ff,56px 4px 0 #e0e0ff,' +
-            '20px 8px 0 #e0e0ff,24px 8px 0 #e0e0ff,28px 8px 0 #e0e0ff,' +
-            '32px 8px 0 #e0e0ff,36px 8px 0 #e0e0ff,40px 8px 0 #e0e0ff,' +
-            '44px 8px 0 #e0e0ff,48px 8px 0 #e0e0ff,52px 8px 0 #e0e0ff,' +
-            '56px 8px 0 #e0e0ff,60px 8px 0 #e0e0ff,' +
-            '20px 12px 0 #e0e0ff,24px 12px 0 #e0e0ff,' +
-            '28px 12px 0 #0a0a1a,32px 12px 0 #00f0ff,' +
-            '36px 12px 0 #e0e0ff,40px 12px 0 #e0e0ff,44px 12px 0 #e0e0ff,' +
-            '48px 12px 0 #0a0a1a,52px 12px 0 #00f0ff,' +
-            '56px 12px 0 #e0e0ff,60px 12px 0 #e0e0ff,' +
-            '20px 16px 0 #e0e0ff,24px 16px 0 #e0e0ff,28px 16px 0 #e0e0ff,' +
-            '32px 16px 0 #e0e0ff,36px 16px 0 #e0e0ff,40px 16px 0 #ff00aa,' +
-            '44px 16px 0 #e0e0ff,48px 16px 0 #e0e0ff,52px 16px 0 #e0e0ff,' +
-            '56px 16px 0 #e0e0ff,60px 16px 0 #e0e0ff,' +
-            '8px 20px 0 #7878a0,12px 20px 0 #7878a0,' +
-            '68px 20px 0 #7878a0,72px 20px 0 #7878a0,' +
-            '20px 20px 0 #e0e0ff,24px 20px 0 #e0e0ff,28px 20px 0 #e0e0ff,' +
-            '32px 20px 0 #e0e0ff,36px 20px 0 #e0e0ff,40px 20px 0 #e0e0ff,' +
-            '44px 20px 0 #e0e0ff,48px 20px 0 #e0e0ff,52px 20px 0 #e0e0ff,' +
-            '56px 20px 0 #e0e0ff,60px 20px 0 #e0e0ff,' +
-            '24px 24px 0 #e0e0ff,28px 24px 0 #e0e0ff,32px 24px 0 #e0e0ff,' +
-            '36px 24px 0 #e0e0ff,40px 24px 0 #e0e0ff,44px 24px 0 #e0e0ff,' +
-            '48px 24px 0 #e0e0ff,52px 24px 0 #e0e0ff,56px 24px 0 #e0e0ff,' +
-            '20px 28px 0 #e0e0ff,24px 28px 0 #e0e0ff,28px 28px 0 #e0e0ff,' +
-            '32px 28px 0 #e0e0ff,36px 28px 0 #e0e0ff,40px 28px 0 #e0e0ff,' +
-            '44px 28px 0 #e0e0ff,48px 28px 0 #e0e0ff,52px 28px 0 #e0e0ff,' +
-            '56px 28px 0 #e0e0ff,60px 28px 0 #e0e0ff,' +
-            '20px 32px 0 #e0e0ff,24px 32px 0 #e0e0ff,28px 32px 0 #e0e0ff,' +
-            '32px 32px 0 #e0e0ff,36px 32px 0 #e0e0ff,40px 32px 0 #e0e0ff,' +
-            '44px 32px 0 #e0e0ff,48px 32px 0 #e0e0ff,52px 32px 0 #e0e0ff,' +
-            '56px 32px 0 #e0e0ff,60px 32px 0 #e0e0ff,' +
-            '64px 28px 0 #e0e0ff,68px 28px 0 #e0e0ff,' +
-            '72px 24px 0 #e0e0ff,76px 20px 0 #e0e0ff,80px 20px 0 #e0e0ff;';
+            '20px 0px 0 #f2b544,24px -4px 0 #f2b544,28px 0px 0 #f2b544,' +
+            '52px 0px 0 #f2b544,56px -4px 0 #f2b544,60px 0px 0 #f2b544,' +
+            '24px 4px 0 #f2b544,28px 4px 0 #f2b544,32px 4px 0 #f2b544,' +
+            '36px 4px 0 #f2b544,40px 4px 0 #f2b544,44px 4px 0 #f2b544,' +
+            '48px 4px 0 #f2b544,52px 4px 0 #f2b544,56px 4px 0 #f2b544,' +
+            '20px 8px 0 #f2b544,24px 8px 0 #f2b544,28px 8px 0 #f2b544,' +
+            '32px 8px 0 #f2b544,36px 8px 0 #f2b544,40px 8px 0 #f2b544,' +
+            '44px 8px 0 #f2b544,48px 8px 0 #f2b544,52px 8px 0 #f2b544,' +
+            '56px 8px 0 #f2b544,60px 8px 0 #f2b544,' +
+            '20px 12px 0 #f2b544,24px 12px 0 #f2b544,' +
+            '28px 12px 0 #0d0b08,32px 12px 0 #efe6d2,' +
+            '36px 12px 0 #f2b544,40px 12px 0 #f2b544,44px 12px 0 #f2b544,' +
+            '48px 12px 0 #0d0b08,52px 12px 0 #efe6d2,' +
+            '56px 12px 0 #f2b544,60px 12px 0 #f2b544,' +
+            '20px 16px 0 #f2b544,24px 16px 0 #f2b544,28px 16px 0 #f2b544,' +
+            '32px 16px 0 #f2b544,36px 16px 0 #f2b544,40px 16px 0 #e8664a,' +
+            '44px 16px 0 #f2b544,48px 16px 0 #f2b544,52px 16px 0 #f2b544,' +
+            '56px 16px 0 #f2b544,60px 16px 0 #f2b544,' +
+            '8px 20px 0 #a0824a,12px 20px 0 #a0824a,' +
+            '68px 20px 0 #a0824a,72px 20px 0 #a0824a,' +
+            '20px 20px 0 #f2b544,24px 20px 0 #f2b544,28px 20px 0 #f2b544,' +
+            '32px 20px 0 #f2b544,36px 20px 0 #f2b544,40px 20px 0 #f2b544,' +
+            '44px 20px 0 #f2b544,48px 20px 0 #f2b544,52px 20px 0 #f2b544,' +
+            '56px 20px 0 #f2b544,60px 20px 0 #f2b544,' +
+            '24px 24px 0 #f2b544,28px 24px 0 #f2b544,32px 24px 0 #f2b544,' +
+            '36px 24px 0 #f2b544,40px 24px 0 #f2b544,44px 24px 0 #f2b544,' +
+            '48px 24px 0 #f2b544,52px 24px 0 #f2b544,56px 24px 0 #f2b544,' +
+            '20px 28px 0 #f2b544,24px 28px 0 #f2b544,28px 28px 0 #f2b544,' +
+            '32px 28px 0 #f2b544,36px 28px 0 #f2b544,40px 28px 0 #f2b544,' +
+            '44px 28px 0 #f2b544,48px 28px 0 #f2b544,52px 28px 0 #f2b544,' +
+            '56px 28px 0 #f2b544,60px 28px 0 #f2b544,' +
+            '20px 32px 0 #f2b544,24px 32px 0 #f2b544,28px 32px 0 #f2b544,' +
+            '32px 32px 0 #f2b544,36px 32px 0 #f2b544,40px 32px 0 #f2b544,' +
+            '44px 32px 0 #f2b544,48px 32px 0 #f2b544,52px 32px 0 #f2b544,' +
+            '56px 32px 0 #f2b544,60px 32px 0 #f2b544,' +
+            '64px 28px 0 #f2b544,68px 28px 0 #f2b544,' +
+            '72px 24px 0 #f2b544,76px 20px 0 #f2b544,80px 20px 0 #f2b544;';
         cat.appendChild(body);
 
         const legs = document.createElement('div');
@@ -133,16 +139,16 @@
     const eggStyle = document.createElement('style');
     eggStyle.textContent = `
         @keyframes eggLegWalk {
-            0%, 100% { box-shadow: 16px 36px 0 #e0e0ff, 20px 40px 0 #e0e0ff, 56px 36px 0 #e0e0ff, 60px 40px 0 #e0e0ff; }
-            50% { box-shadow: 20px 36px 0 #e0e0ff, 16px 40px 0 #e0e0ff, 60px 36px 0 #e0e0ff, 56px 40px 0 #e0e0ff; }
+            0%, 100% { box-shadow: 16px 36px 0 #f2b544, 20px 40px 0 #f2b544, 56px 36px 0 #f2b544, 60px 40px 0 #f2b544; }
+            50% { box-shadow: 20px 36px 0 #f2b544, 16px 40px 0 #f2b544, 60px 36px 0 #f2b544, 56px 40px 0 #f2b544; }
         }
         .cc-egg-legs {
-            box-shadow: 16px 36px 0 #e0e0ff, 20px 40px 0 #e0e0ff, 56px 36px 0 #e0e0ff, 60px 40px 0 #e0e0ff;
+            box-shadow: 16px 36px 0 #f2b544, 20px 40px 0 #f2b544, 56px 36px 0 #f2b544, 60px 40px 0 #f2b544;
             animation: eggLegWalk 0.4s steps(1) infinite;
         }
         .cc-egg-legs.sitting {
             animation: none;
-            box-shadow: 20px 36px 0 #e0e0ff, 24px 36px 0 #e0e0ff, 56px 36px 0 #e0e0ff, 60px 36px 0 #e0e0ff;
+            box-shadow: 20px 36px 0 #f2b544, 24px 36px 0 #f2b544, 56px 36px 0 #f2b544, 60px 36px 0 #f2b544;
         }
     `;
     document.head.appendChild(eggStyle);
@@ -159,7 +165,7 @@
 
         const speech = document.createElement('div');
         speech.textContent = 'Meow!';
-        speech.style.cssText = 'position:absolute;top:-24px;left:50%;transform:translateX(-50%);background:#12122a;border:1px solid #00f0ff;color:#00f0ff;padding:3px 8px;font-family:"Press Start 2P","JetBrains Mono",monospace;font-size:0.4rem;white-space:nowrap;border-radius:0;';
+        speech.style.cssText = 'position:absolute;top:-26px;left:50%;transform:translateX(-50%);background:' + CC.surface + ';border:1px solid ' + CC.amber + ';color:' + CC.amber + ';padding:2px 8px;font-family:' + CC.font + ';font-size:11px;white-space:nowrap;border-radius:0;';
         wrapper.appendChild(speech);
 
         document.body.appendChild(wrapper);
@@ -182,14 +188,14 @@
 
     // -- 3. TYPE "NYAN" → Rainbow trail on cursor for 10 seconds --
     function nyanMode() {
-        const colors = ['#ff0000','#ff8800','#ffff00','#00ff00','#0088ff','#8800ff'];
+        const colors = ['#f2b544', '#f6c76e', '#e8a23a', '#d98e2b', '#efe6d2', '#a0824a'];
         let active = true;
 
         function trail(e) {
             if (!active) return;
             const dot = document.createElement('div');
             const color = colors[Math.floor(Math.random() * colors.length)];
-            dot.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;width:8px;height:8px;background:${color};pointer-events:none;z-index:99998;box-shadow:0 0 6px ${color};transition:all 0.8s;`;
+            dot.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;width:8px;height:8px;background:${color};pointer-events:none;z-index:99998;transition:all 0.8s;`;
             document.body.appendChild(dot);
             requestAnimationFrame(() => {
                 dot.style.opacity = '0';
@@ -233,8 +239,8 @@
         let flashes = 0;
         const glitchInterval = setInterval(() => {
             overlay.style.background = flashes % 2 === 0
-                ? 'rgba(0,240,255,0.1)'
-                : 'rgba(255,0,170,0.1)';
+                ? 'rgba(242,181,68,0.08)'
+                : 'rgba(13,11,8,0.35)';
             document.body.style.transform = flashes % 2 === 0
                 ? 'translateX(2px)' : 'translateX(-2px)';
             flashes++;
@@ -245,8 +251,8 @@
 
                 // Show ACCESS GRANTED
                 const msg = document.createElement('div');
-                msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;font-family:"Press Start 2P",monospace;font-size:1.2rem;color:#39ff14;text-shadow:0 0 10px #39ff14,0 0 30px rgba(57,255,20,0.3);text-align:center;pointer-events:none;';
-                msg.innerHTML = '> ACCESS_GRANTED<br><span style="font-size:0.6rem;color:#00f0ff;">welcome back, operator</span>';
+                msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;font-family:' + CC.font + ';font-weight:600;font-size:1.6rem;letter-spacing:.2em;color:' + CC.amber + ';background:' + CC.bg + ';border:1px solid ' + CC.amber + ';padding:1rem 1.5rem;text-align:center;pointer-events:none;';
+                msg.innerHTML = '&gt; ACCESS_GRANTED<br><span style="font-size:.8rem;letter-spacing:.1em;color:' + CC.text + ';">welcome back, operator</span>';
                 document.body.appendChild(msg);
 
                 setTimeout(() => {
@@ -283,7 +289,7 @@
 
         const bubble = document.createElement('div');
         bubble.textContent = 'Still there?';
-        bubble.style.cssText = 'position:absolute;top:-20px;left:50%;transform:translateX(-50%);background:#12122a;border:1px solid #00f0ff;color:#00f0ff;padding:3px 8px;font-family:"Press Start 2P","JetBrains Mono",monospace;font-size:0.4rem;white-space:nowrap;opacity:0;transition:opacity 0.3s;';
+        bubble.style.cssText = 'position:absolute;top:-26px;left:50%;transform:translateX(-50%);background:' + CC.surface + ';border:1px solid ' + CC.amber + ';color:' + CC.amber + ';padding:2px 8px;font-family:' + CC.font + ';font-size:11px;white-space:nowrap;border-radius:0;opacity:0;transition:opacity 0.3s;';
         peek.appendChild(bubble);
         setTimeout(() => bubble.style.opacity = '1', 600);
 
