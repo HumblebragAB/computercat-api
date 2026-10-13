@@ -79,6 +79,8 @@ class ThemeSweepTest extends TestCase
 
         // Aktiv flik syns annars bara på textfärgen (Filaments bg-gray-50 är osynligt mot vitt).
         $this->assertMatchesRegularExpression('#\\.fi-tabs-item\\.fi-active[^{]*\\{[^}]*background:\\s*var\\(--cc-ink\\)#', $admin);
+        // Aktiv flik/menyval och fokus ger båda bläckfyllning; fokus behöver en egen kontur (WCAG 2.4.7).
+        $this->assertMatchesRegularExpression('#\\.fi-tabs-item:focus-visible[^{]*\\.fi-sidebar-item-button:focus-visible\\s*\\{[^}]*outline:\\s*2px dashed var\\(--cc-paper\\)#', $admin);
         $this->assertMatchesRegularExpression('#\\.fi-no-notification[^{]*\\{[^}]*border:\\s*2px solid var\\(--cc-ink\\)#', $admin);
         $this->assertMatchesRegularExpression('#\\.cc-markdown li::marker\\s*\\{[^}]*var\\(--cc-ink\\)#', $devkit);
     }

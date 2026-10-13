@@ -75,6 +75,10 @@ body.fi-body {
 .fi-tabs-item:focus-visible .fi-tabs-item-label, .fi-tabs-item:focus-visible .fi-tabs-item-icon { color: var(--cc-paper); }
 .fi-tabs-item:not(.fi-active):hover { background: var(--cc-desk); }
 
+/* Fokus på flik/menyval ger samma bläckfyllning som aktivt val, och Filament sätter outline-none.
+   Därför en streckad paper-kontur inåt (.fi-tabs har overflow-x-auto och skulle klippa en yttre kontur). */
+.fi-tabs-item:focus-visible, .fi-sidebar-item-button:focus-visible { outline: 2px dashed var(--cc-paper); outline-offset: -5px; }
+
 /* -- Notiser (toasts): Mac-fönster -- */
 .fi-no-notification { background: var(--cc-paper); border: 2px solid var(--cc-ink); border-radius: 0; box-shadow: 4px 4px 0 var(--cc-ink); --tw-ring-shadow: 0 0 #0000; }
 
