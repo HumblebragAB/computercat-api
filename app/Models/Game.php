@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Support\GameCorsOrigins;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Game extends Model
@@ -88,5 +89,10 @@ class Game extends Model
     public function products(): HasMany
     {
         return $this->hasMany(Product::class);
+    }
+
+    public function members(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class)->withPivot('role')->withTimestamps();
     }
 }

@@ -427,6 +427,7 @@ class GameResource extends Resource
             RelationManagers\DailyContentPoolsRelationManager::class,
             RelationManagers\RemoteConfigsRelationManager::class,
             RelationManagers\GameEventsRelationManager::class,
+            RelationManagers\MembersRelationManager::class,
         ];
     }
 
