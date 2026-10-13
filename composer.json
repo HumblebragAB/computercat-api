@@ -10,6 +10,8 @@
         "anthropic-ai/sdk": "^0.54.0",
         "filament/filament": "^3.0",
         "laravel/framework": "^12.0",
+        "laravel/mcp": "^1",
+        "laravel/passport": "^13",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.10.1",
         "symfony/http-client": "^8.1",

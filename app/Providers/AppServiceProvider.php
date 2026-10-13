@@ -6,6 +6,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Passport\Passport;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -18,6 +19,13 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // MCP/OAuth: kortlivade access-tokens, refresh-token i 30 dagar.
+        Passport::tokensExpireIn(now()->addHour());
+        Passport::refreshTokensExpireIn(now()->addDays(30));
+
+        // Passport levererar ingen godkännandevy; laravel/mcp har en men registrerar den inte.
+        Passport::authorizationView('mcp::authorize');
+
         RateLimiter::for('auth', function (Request $request) {
             return Limit::perMinute(10)->by($request->ip());
         });
@@ -65,6 +73,13 @@ class AppServiceProvider extends ServiceProvider
         // API-gränsen.
         RateLimiter::for('glosis-attest-register', function (Request $request) {
             return Limit::perHour(60)->by('glosis-attest-reg:'.$request->ip());
+        });
+
+        // MCP:s discovery (.well-known) och dynamiska klientregistrering (POST /oauth/register)
+        // är oautentiserade. Egen nyckel: throttle:10,1 utan prefix delar räknare med
+        // API-gränsen och /oauth/token för samma IP.
+        RateLimiter::for('mcp-oauth', function (Request $request) {
+            return Limit::perMinute(10)->by('mcp-oauth:'.$request->ip());
         });
 
         RateLimiter::for('score-submit', function (Request $request) {

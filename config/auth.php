@@ -40,6 +40,13 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
+
+        // MCP-servern (/mcp): Passport-tokens utfärdade via OAuth till claude.ai.
+        // Sanctum (app-API:t, guarden sanctum) påverkas inte.
+        'mcp' => [
+            'driver' => 'passport',
+            'provider' => 'staff',
+        ],
     ],
 
     /*
@@ -63,6 +70,12 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', App\Models\User::class),
+        ],
+
+        // Samma users-tabell, men modellen med Passports HasApiTokens.
+        'staff' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\StaffUser::class,
         ],
 
         // 'users' => [
