@@ -20,7 +20,9 @@ class LoginPageTest extends TestCase
         $this->assertMatchesRegularExpression('#id="cat-track"[^>]*wire:ignore|wire:ignore[^>]*id="cat-track"#', $html);
         $this->assertMatchesRegularExpression('#id="cat-track-bottom"[^>]*wire:ignore|wire:ignore[^>]*id="cat-track-bottom"#', $html);
         $this->assertStringContainsString('wire:submit="authenticate"', $html);
-        $this->assertStringContainsString('ready_', $html);
+        $this->assertStringContainsString('class="cc-titlebar"', $html);
+        $this->assertStringContainsString('Computer Cat</span>', $html);
+        $this->assertStringNotContainsString('ready_', $html);
         $this->assertStringNotContainsString('cc-particle', $html);
         // Filament skriver själv ut <style>-block, så vi kontrollerar att login-vyns egen CSS/JS inte längre är inline.
         $this->assertStringNotContainsString('.cc-cat-body {', $html);

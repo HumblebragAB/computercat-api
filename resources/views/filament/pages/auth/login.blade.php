@@ -14,24 +14,21 @@
                 <div class="cc-fly" id="the-fly"></div>
             </div>
 
-            <div class="cc-login-header">
-                <div class="cc-logo-text">COMPUTER<span class="cc-logo-accent">CAT</span></div>
-                <div class="cc-subtitle">// admin_panel</div>
-            </div>
+            <div class="cc-titlebar"><span class="cc-titlebar-close" aria-hidden="true"></span><span class="cc-titlebar-text">Computer Cat</span></div>
 
-            <div class="cc-form-area">
-                <x-filament-panels::form wire:submit="authenticate">
-                    {{ $this->form }}
+            <div class="cc-window-body">
+                <p class="cc-welcome">Välkommen. Logga in för att fortsätta.<span class="cc-blink-cursor" aria-hidden="true">_</span></p>
 
-                    <x-filament-panels::form.actions
-                        :actions="$this->getCachedFormActions()"
-                        :full-width="$this->hasFullWidthFormActions()"
-                    />
-                </x-filament-panels::form>
-            </div>
+                <div class="cc-form-area">
+                    <x-filament-panels::form wire:submit="authenticate">
+                        {{ $this->form }}
 
-            <div class="cc-login-footer">
-                <span class="cc-blink-cursor">&gt;</span> ready_
+                        <x-filament-panels::form.actions
+                            :actions="$this->getCachedFormActions()"
+                            :full-width="$this->hasFullWidthFormActions()"
+                        />
+                    </x-filament-panels::form>
+                </div>
             </div>
 
             <div class="cc-cat-track cc-cat-track-bottom" id="cat-track-bottom" wire:ignore></div>

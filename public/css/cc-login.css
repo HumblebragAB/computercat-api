@@ -1,11 +1,11 @@
-/* Login, Fosfor. Tokens kommer från cc-theme.css (laddas via Filaments ->font()). */
+/* Login, System 1. Tokens kommer från cc-theme.css (laddas via Filaments ->font()). Svart pixelkatt på papper. */
 :root {
-    --cc-cat-fur: var(--cc-amber);
-    --cc-cat-eye: var(--cc-bg);
-    --cc-cat-glint: var(--cc-text);
-    --cc-cat-nose: var(--cc-danger);
+    --cc-cat-fur: var(--cc-ink);
+    --cc-cat-eye: var(--cc-paper);
+    --cc-cat-glint: var(--cc-ink);
+    --cc-cat-nose: var(--cc-paper);
     --cc-cat-whisker: var(--cc-muted);
-    --cc-fly: var(--cc-ok);
+    --cc-fly: var(--cc-ink);
 }
 
 /* -- Reset Filament defaults -- */
@@ -21,7 +21,6 @@
 }
 .fi-simple-header { display: none !important; }
 
-body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
 
 .cc-login-wrapper {
     position: relative;
@@ -36,9 +35,10 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
 
 .cc-login-card {
     position: relative; width: 100%; max-width: 420px;
-    background: var(--cc-surface);
-    border: 1px solid var(--cc-line);
-    padding: 2.5rem 2rem 1.5rem; z-index: 10;
+    background: var(--cc-paper);
+    border: 2px solid var(--cc-ink);
+    box-shadow: 4px 4px 0 var(--cc-ink);
+    padding: 0; z-index: 10;
 }
 
 /* -- Cat track: clips at card edges -- */
@@ -219,7 +219,7 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
 .cc-cat-zzz {
     position: absolute; top: -18px; right: -6px;
     font-family: var(--cc-font); font-weight: 600;
-    font-size: 11px; color: var(--cc-amber);
+    font-size: 11px; color: var(--cc-ink);
     opacity: 0; pointer-events: none;
 }
 .cc-cat.sleeping .cc-cat-zzz { animation: zzzFloat 2s ease-in-out infinite; }
@@ -244,77 +244,48 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
 }
 
 
-/* -- Header -- */
-.cc-login-header { text-align: center; margin-bottom: 2rem; }
-.cc-logo-text {
-    font-family: var(--cc-font); font-weight: 600;
-    font-size: 1.15rem; color: var(--cc-text); letter-spacing: .25em;
+/* -- Fönster: titellist med stängruta, som en Mac-dialog -- */
+.cc-titlebar {
+    position: relative; height: 24px; display: flex; align-items: center; justify-content: center;
+    border-bottom: 2px solid var(--cc-ink); padding: 3px 4px; box-sizing: border-box; background-clip: content-box;
+    background-image: repeating-linear-gradient(0deg, var(--cc-paper) 0 2px, var(--cc-ink) 2px 3px);
 }
-.cc-logo-accent { color: var(--cc-amber); }
-.cc-subtitle {
-    font-family: var(--cc-font);
-    font-size: .75rem; color: var(--cc-muted);
-    margin-top: .5rem; letter-spacing: .12em;
+.cc-titlebar-text { background: var(--cc-paper); padding: 0 10px; font-family: var(--cc-font-display); font-size: 12px; }
+.cc-titlebar-close {
+    position: absolute; left: 10px; width: 12px; height: 12px;
+    border: 2px solid var(--cc-ink); background: var(--cc-paper); box-sizing: border-box;
 }
-
-/* -- Form styling -- */
-.cc-form-area { position: relative; }
-.cc-form-area .fi-fo-field-wrp label {
-    font-family: var(--cc-font) !important;
-    color: var(--cc-muted) !important; font-size: .7rem !important;
-    letter-spacing: .12em !important; text-transform: uppercase !important;
-}
-.cc-form-area .fi-input {
-    background: var(--cc-bg) !important;
-    color: var(--cc-text) !important;
-    font-family: var(--cc-font) !important;
-}
-.cc-form-area .fi-input-wrp {
-    border-radius: 0 !important;
-    --tw-ring-color: var(--cc-line) !important;
-}
-.cc-form-area .fi-input-wrp:focus-within { --tw-ring-color: var(--cc-amber) !important; }
-.cc-form-area .fi-input::placeholder { color: var(--cc-muted) !important; }
-.cc-form-area .fi-btn.fi-color-primary {
-    background: var(--cc-amber) !important;
-    color: var(--cc-bg) !important;
-    font-family: var(--cc-font) !important; font-weight: 600 !important;
-    font-size: .8rem !important; letter-spacing: .15em !important;
-    text-transform: uppercase;
-    padding: .75rem 1.5rem !important;
-    border-radius: 0 !important;
-}
-.cc-form-area .fi-btn.fi-color-primary:hover { background: var(--cc-amber-hover) !important; }
-.cc-form-area .fi-checkbox-input:checked {
-    background-color: var(--cc-amber) !important;
-    border-color: var(--cc-amber) !important;
-}
-.cc-form-area .fi-link { font-family: var(--cc-font) !important; font-size: .75rem !important; }
-
-/* -- Footer -- */
-.cc-login-footer {
-    text-align: center; margin-top: 1.5rem;
-    font-family: var(--cc-font);
-    font-size: .75rem; color: var(--cc-muted);
-}
-.cc-blink-cursor { color: var(--cc-amber); animation: cursorBlink 1s steps(1) infinite; }
+.cc-window-body { padding: 1.5rem 1.75rem 1.75rem; }
+.cc-welcome { margin: 0 0 1.25rem; color: var(--cc-muted); font-family: var(--cc-font); font-size: .8rem; text-align: center; }
+.cc-blink-cursor { color: var(--cc-ink); animation: cursorBlink 1s steps(1) infinite; }
 @keyframes cursorBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cc-blink-cursor { animation: none; } }
 
-/* -- Speech bubble -- */
+/* -- Formulär -- */
+.cc-form-area { position: relative; }
+.cc-form-area .fi-fo-field-wrp label { font-family: var(--cc-font); color: var(--cc-ink); font-size: .8rem; }
+.cc-form-area .fi-input { background: #fff; color: var(--cc-ink); font-family: var(--cc-font); }
+.cc-form-area .fi-input::placeholder { color: var(--cc-muted); }
+/* Standardknapp: högerställd, inte fullbredd. Knappen ligger i Filaments .fi-ac-grid. */
+.cc-form-area .fi-ac { display: flex; justify-content: flex-end; }
+.cc-form-area .fi-btn.fi-color-primary { width: auto; padding: .5rem 1.25rem; font-weight: 600; }
+.cc-form-area .fi-link { font-family: var(--cc-font); font-size: .75rem; }
+
+/* -- Pratbubbla -- */
 .cc-speech {
-    position: absolute; top: -30px; left: 50%;
+    position: absolute; top: -32px; left: 50%;
     transform: translateX(-50%);
-    background: var(--cc-surface); border: 1px solid var(--cc-amber);
+    background: var(--cc-paper); border: 2px solid var(--cc-ink);
     padding: 2px 8px;
     font-family: var(--cc-font);
-    font-size: 11px; color: var(--cc-amber);
+    font-size: 11px; color: var(--cc-ink);
     white-space: nowrap; opacity: 0;
     transition: opacity .3s; pointer-events: none; z-index: 50;
 }
 .cc-speech.show { opacity: 1; }
 .cc-speech::after {
-    content: ''; position: absolute; bottom: -5px; left: 50%;
+    content: ''; position: absolute; bottom: -6px; left: 50%;
     transform: translateX(-50%);
     border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 4px solid var(--cc-amber);
+    border-top: 4px solid var(--cc-ink);
 }
