@@ -34,6 +34,7 @@ class IntegrationGuideTest extends McpTestCase
         $this->assertStringNotContainsString('403 means the account is banned', $manual);
         $this->assertStringContainsString('`POST /auth/login` returns 403', $manual);
         $this->assertStringContainsString('Token refresh: 30/min per user', $manual);
+        $this->assertStringContainsString('the old token stays valid until the new one has been used', $manual);
     }
 
     public function test_tool_returns_manual_and_respects_features(): void

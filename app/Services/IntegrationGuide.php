@@ -177,7 +177,7 @@ class IntegrationGuide
             $lines[] = '```';
             $lines[] = 'Response: `{"token": "2|def...", "user": {"id": 1, "display_name": "Player", "is_anonymous": true}, "expires_at": "2027-01-11T12:00:00+00:00"}`';
             $lines[] = '';
-            $lines[] = 'Replace the stored token and its issue time with the new ones. The old token keeps working for up to 10 minutes, so requests already in flight (or other tabs) do not fail. A player who opens the game at least once every 90 days keeps the same account.';
+            $lines[] = 'Replace the stored token and its issue time with the new ones. If the response is lost, keep using the old token: the old token stays valid until the new one has been used. From the first request with the new token, the old one keeps working for up to 10 more minutes, so requests already in flight (or other tabs) do not fail. A player who opens the game at least once every 90 days keeps the same account.';
             $lines[] = '';
             $lines[] = 'If the refresh (or any other request) returns 401, the token has expired, the user was removed or the account is banned: create a new anonymous user and re-sync. A banned account gets 401 on every authenticated route, including refresh; only `POST /auth/login` returns 403 for a banned account. 429 on refresh means rate limited: keep the current token and try again on next launch.';
             $lines[] = '';
