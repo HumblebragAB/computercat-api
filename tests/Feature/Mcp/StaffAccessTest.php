@@ -86,10 +86,10 @@ class StaffAccessTest extends TestCase
         $this->mcpPing($user)->assertForbidden();
     }
 
-    private function authorizeUrl(): string
+    private function authorizeUrl(string $clientName = 'Claude'): string
     {
         $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
-            name: 'Claude', redirectUris: ['https://claude.ai/api/mcp/auth_callback'], confidential: false,
+            name: $clientName, redirectUris: ['https://claude.ai/api/mcp/auth_callback'], confidential: false,
         );
 
         return route('passport.authorizations.authorize', [
@@ -126,9 +126,34 @@ class StaffAccessTest extends TestCase
         $this->assertSame(Request::create($url)->fullUrl(), session('url.intended'));
 
         // Efter inloggning via Filament ska intended leda tillbaka till authorize.
-        // Vyn mcp::authorize laddar resources/css/app.css via @vite; testerna bygger inga assets.
-        $this->withoutVite();
+        $this->withoutBuiltAssets();
         $this->actingAs($this->staff());
         $this->get(redirect()->intended('/admin')->getTargetUrl())->assertOk()->assertSee('Claude');
+    }
+
+    // Produktionen bygger inga Vite-assets. Godkännandevyn måste renderas utan
+    // public/build/manifest.json, även om någon har byggt lokalt.
+    private function withoutBuiltAssets(): void
+    {
+        $this->app->usePublicPath(sys_get_temp_dir().'/computercat-no-build-'.uniqid());
+    }
+
+    public function test_authorize_page_renders_without_vite_and_escapes_client_name(): void
+    {
+        $this->withoutBuiltAssets();
+        $user = $this->staff();
+        $this->actingAs($user);
+
+        // Namnet sätts av vem som helst via dynamisk registrering.
+        $response = $this->get($this->authorizeUrl('<b>x</b>'))->assertOk();
+
+        $response->assertSee('&lt;b&gt;x&lt;/b&gt;', false);
+        $response->assertDontSee('<b>x</b>', false);
+        $response->assertSee($user->email);
+        $response->assertSee('name="auth_token"', false);
+        $response->assertSee('name="_token"', false);
+        $response->assertSee('name="_method" value="DELETE"', false);
+        $response->assertSee('action="'.route('passport.authorizations.approve').'"', false);
+        $response->assertDontSee('/build/', false);
     }
 }
