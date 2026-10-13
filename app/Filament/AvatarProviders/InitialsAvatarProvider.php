@@ -8,7 +8,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Initialer som inline-SVG i Fosfor-färger. Ersätter Filaments UiAvatarsProvider,
+ * Initialer som inline-SVG i System 1-färger. Ersätter Filaments UiAvatarsProvider,
  * som hämtar bilden från ui-avatars.com och därmed skickar personalens initialer
  * och IP till tredje part.
  */
@@ -27,8 +27,8 @@ class InitialsAvatarProvider implements AvatarProvider
         $text = htmlspecialchars($initials, ENT_QUOTES | ENT_XML1, 'UTF-8');
 
         $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-            .'<rect width="64" height="64" fill="#2e2412"/>'
-            .'<text x="32" y="33" dominant-baseline="middle" text-anchor="middle" fill="#f2b544" '
+            .'<rect width="64" height="64" fill="#111111"/>'
+            .'<text x="32" y="33" dominant-baseline="middle" text-anchor="middle" fill="#fbfaf6" '
             .'font-family="IBM Plex Mono, ui-monospace, monospace" font-size="26" font-weight="600">'.$text.'</text>'
             .'</svg>';
 

@@ -20,7 +20,9 @@ class ThemeSweepTest extends TestCase
     ];
 
     private const FORBJUDET = ['Press Start', 'JetBrains', '#00f0ff', '#ff00aa', '#39ff14', '#0a0a1a', '#12122a',
-        'rgba(0,240,255', 'rgba(57,255,20', 'fonts.googleapis.com', 'fonts.bunny.net'];
+        'rgba(0,240,255', 'rgba(57,255,20', 'fonts.googleapis.com', 'fonts.bunny.net',
+        // Fosfor (amber) ersattes av System 1.
+        '#f2b544', '#0d0b08', '#15110a', '#efe6d2', '#a0824a', 'rgba(242,181,68', 'rgba(13,11,8', '--cc-amber', '--cc-surface'];
 
     public function test_inga_rester_av_neon_temat_eller_tredjepartstypsnitt(): void
     {
@@ -56,15 +58,15 @@ class ThemeSweepTest extends TestCase
         $this->assertSame([], $saknas);
     }
 
-    public function test_kontroller_och_login_css_utan_kanda_kontrastfallor(): void
+    public function test_felmeddelanden_har_varningstecken_och_login_css_ar_ren(): void
     {
         $root = dirname(__DIR__, 2);
         $admin = file_get_contents("$root/public/css/cc-admin.css");
         $login = file_get_contents("$root/public/css/cc-login.css");
 
-        // Delvis markerad checkbox: Filaments vita streck på amber är 1.9:1.
-        $this->assertMatchesRegularExpression('#\.fi-checkbox-input:indeterminate\s*\{[^}]*%230d0b08#', $admin);
-        // Placeholder med opacity .7 hamnar på 3.2:1; fi-btn-primary finns inte i Filament v3.
+        // 1-bit har inget rött: felmeddelanden markeras med ett varningstecken som skärmläsare hoppar över.
+        $this->assertMatchesRegularExpression("#\\.fi-fo-field-wrp-error-message::before\\s*\\{[^}]*content:[^;]*/\\s*''#u", $admin);
+        // Placeholder med opacity sänker kontrasten; fi-btn-primary finns inte i Filament v3.
         $this->assertStringNotContainsString('.fi-btn-primary', $login);
         $this->assertDoesNotMatchRegularExpression('#::placeholder[^}]*opacity#', $login);
     }

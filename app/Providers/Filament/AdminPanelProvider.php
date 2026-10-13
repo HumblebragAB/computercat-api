@@ -24,19 +24,20 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
 {
-    /** Varm gray-skala för Fosfor-temat. 950/900 = --cc-bg/--cc-surface, 500 = --cc-muted. */
+    /** Neutral varm gray-skala för System 1 (ljust läge). 50 = paper, 200 = desk, 950 = ink.
+     *  400–600 används som dämpad text och platshållare och klarar 4.5:1 mot vitt och paper. */
     public const GRAY = [
-        50 => '#faf6ee',
-        100 => '#f2ead9',
-        200 => '#e2d5bb',
-        300 => '#c9b48c',
-        400 => '#b39a6a',
-        500 => '#a0824a',
-        600 => '#6b5733',
-        700 => '#4a3c23',
-        800 => '#2e2412',
-        900 => '#15110a',
-        950 => '#0d0b08',
+        50 => '#fbfaf6',
+        100 => '#f3f1ea',
+        200 => '#e9e6df',
+        300 => '#cfcac0',
+        400 => '#736f66',
+        500 => '#6b675e',
+        600 => '#55524b',
+        700 => '#3d3a35',
+        800 => '#2a2825',
+        900 => '#1c1b19',
+        950 => '#111111',
     ];
 
     public function panel(Panel $panel): Panel
@@ -47,17 +48,18 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
             ->login(Login::class)
             ->brandName('Computer Cat')
+            // 1-bit: alla semantiska färger är bläck. Betydelse visas med form (fylld, ram, ⚠), se cc-admin.css.
             ->colors([
-                'primary' => Color::hex('#f2b544'),
+                'primary' => Color::hex('#111111'),
                 'gray' => self::GRAY,
-                'danger' => Color::hex('#e8664a'),
-                'warning' => Color::hex('#f08a24'),
-                'success' => Color::hex('#9fd36b'),
-                'info' => Color::hex('#8fb3a8'),
+                'danger' => Color::hex('#111111'),
+                'warning' => Color::hex('#111111'),
+                'success' => Color::hex('#111111'),
+                'info' => Color::hex('#111111'),
             ])
             ->font('IBM Plex Mono', ThemeAsset::url('css/cc-theme.css'), LocalFontProvider::class)
             ->defaultAvatarProvider(InitialsAvatarProvider::class)
-            ->darkMode(true, true)
+            ->darkMode(false)
             ->renderHook(
                 'panels::head.end',
                 fn () => '<link rel="stylesheet" href="'.e(ThemeAsset::url('css/cc-admin.css')).'">'

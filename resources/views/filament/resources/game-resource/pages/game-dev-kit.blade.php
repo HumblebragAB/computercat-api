@@ -47,32 +47,34 @@
         .cc-copy-btn {
             font-family: var(--cc-font);
             font-size: 0.75rem;
-            padding: 0.4rem 1rem;
-            background: transparent;
-            border: 1px solid var(--cc-amber);
-            color: var(--cc-amber);
+            font-weight: 600;
+            padding: 0.35rem 1rem;
+            background: var(--cc-paper);
+            border: 2px solid var(--cc-ink);
+            border-radius: 8px;
+            color: var(--cc-ink);
             cursor: pointer;
-            transition: all 0.2s;
-            letter-spacing: 0.5px;
         }
         .cc-copy-btn:hover {
-            background: var(--cc-amber);
-            color: var(--cc-bg);
+            background: var(--cc-ink);
+            color: var(--cc-paper);
         }
+        .cc-copy-btn:focus-visible { outline: 2px dashed var(--cc-ink); outline-offset: 4px; }
         .cc-copy-btn.copied {
-            border-color: var(--cc-ok);
-            color: var(--cc-ok);
+            text-decoration: underline;
         }
         .cc-markdown code {
             font-family: var(--cc-font) !important;
             font-size: 0.8rem !important;
-            background: rgba(242,181,68,.06) !important;
+            background: var(--cc-desk) !important;
             border: 1px solid var(--cc-line) !important;
             padding: 0.1rem 0.3rem !important;
             border-radius: 0 !important;
         }
+        /* prose ger pre-text ljusgrå (#e5e7eb) i ljust läge, vilket blir oläsligt på desk. */
         .cc-markdown pre {
-            background: rgba(242,181,68,.06) !important;
+            background: var(--cc-desk) !important;
+            color: var(--cc-ink) !important;
             border: 1px solid var(--cc-line) !important;
             border-radius: 0 !important;
         }

@@ -4,6 +4,7 @@ namespace Tests\Feature\Filament;
 
 use App\Models\User;
 use App\Providers\Filament\AdminPanelProvider;
+use Filament\Support\Colors\Color;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -49,27 +50,30 @@ class ThemeTest extends TestCase
     {
         $g = AdminPanelProvider::GRAY;
 
-        // Filament i mörkt läge: dämpad text gray-400/500 på gray-900/950.
-        foreach ([400, 500] as $fg) {
-            foreach ([900, 950] as $bg) {
-                $this->assertGreaterThanOrEqual(4.5, contrast($g[$fg], $g[$bg]), "gray-$fg på gray-$bg");
+        // Filament i ljust läge: dämpad text och platshållare gray-400/500/600 på vitt och gray-50.
+        foreach ([400, 500, 600] as $fg) {
+            foreach (['#ffffff', $g[50]] as $bg) {
+                $this->assertGreaterThanOrEqual(4.5, contrast($g[$fg], $bg), "gray-$fg på $bg");
             }
         }
     }
 
-    public function test_info_fargen_ar_temad_och_inte_filament_bla(): void
+    public function test_alla_semantiska_farger_ar_blaeck(): void
     {
         // Panelens färger registreras först när panelen serveras, så läs dem från panelen.
-        $info = \Filament\Support\Colors\Color::hex('#8fb3a8')[500];
-        $this->assertSame($info, filament()->getPanel('admin')->getColors()['info'][500]);
-
-        $this->assertSame('143, 179, 168', $info);
+        $farger = filament()->getPanel('admin')->getColors();
+        foreach (['primary', 'danger', 'success', 'warning', 'info'] as $c) {
+            $this->assertSame(Color::hex('#111111')[500], $farger[$c][500], $c);
+        }
     }
 
-    public function test_mork_knapptext_klarar_aa_pa_alla_fargade_knappar(): void
+    public function test_panelen_ar_alltid_ljus(): void
     {
-        foreach (['#f2b544', '#f6c76e', '#e8664a', '#9fd36b', '#f08a24', '#8fb3a8'] as $bg) {
-            $this->assertGreaterThanOrEqual(4.5, contrast('#0d0b08', $bg), "mörk text på $bg");
-        }
+        $this->assertFalse(filament()->getPanel('admin')->hasDarkMode());
+    }
+
+    public function test_inverterad_text_klarar_aa(): void
+    {
+        $this->assertGreaterThanOrEqual(4.5, contrast('#fbfaf6', '#111111'));
     }
 }

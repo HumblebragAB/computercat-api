@@ -40,7 +40,7 @@
                                         <div class="text-xs text-gray-500">Från det äldre fältet ElevenLabs voice ID under Games → Glosis.</div>
                                     @endif
                                     @if (($voice['category'] ?? null) === \App\Services\Glosis\ElevenLabsVoiceLibrary::EXPIRING_CATEGORY)
-                                        <div class="text-xs font-semibold text-danger-600">Default-röst: upphör 31 dec 2026. Välj en annan röst.</div>
+                                        <div class="text-xs font-semibold text-danger-600"><span aria-hidden="true">⚠ </span>Default-röst: upphör 31 dec 2026. Välj en annan röst.</div>
                                     @endif
                                 @endif
 
