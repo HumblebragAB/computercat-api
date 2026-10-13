@@ -70,10 +70,21 @@ class ConfigRulesPanelTest extends TestCase
             ])->assertHasTableActionErrors(['value']);
         }
 
+        foreach (['99999999999999999999', "5\n", ' 5'] as $value) {
+            $this->rm(RemoteConfigsRelationManager::class)->callTableAction(CreateAction::class, data: [
+                'key' => 'k', 'value' => $value, 'value_type' => 'int', 'is_active' => true,
+            ])->assertHasTableActionErrors(['value']);
+        }
+
+        $this->rm(RemoteConfigsRelationManager::class)->callTableAction(CreateAction::class, data: [
+            'key' => 'n', 'value' => '-12', 'value_type' => 'int', 'is_active' => true,
+        ])->assertHasNoTableActionErrors();
+        $this->assertSame(-12, $this->game->remoteConfigs()->where('key', 'n')->first()->typedValue());
+
         $this->rm(RemoteConfigsRelationManager::class)->callTableAction(CreateAction::class, data: [
             'key' => 'k', 'value' => '{"a": 1}', 'value_type' => 'json', 'is_active' => true,
         ])->assertHasNoTableActionErrors();
-        $this->assertSame(['a' => 1], $this->game->remoteConfigs()->first()->typedValue());
+        $this->assertSame(['a' => 1], $this->game->remoteConfigs()->where('key', 'k')->first()->typedValue());
     }
 
     public function test_event_must_end_after_it_starts(): void

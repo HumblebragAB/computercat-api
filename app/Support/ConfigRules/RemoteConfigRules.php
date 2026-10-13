@@ -19,7 +19,9 @@ class RemoteConfigRules
         }
 
         return match ($type) {
-            'int' => preg_match('/^-?\d+$/', $value) ? null : 'value must be an integer for value_type int.',
+            // filter_var avvisar tal utanför int-intervallet, som (int) annars tyst klämmer till PHP_INT_MAX.
+            // Den trimmar själv blanktecken, så omgivande blanktecken avvisas separat.
+            'int' => trim($value) === $value && filter_var($value, FILTER_VALIDATE_INT) !== false ? null : 'value must be an integer for value_type int.',
             'bool' => in_array(strtolower($value), ['true', 'false', '1', '0'], true) ? null : 'value must be true/false/1/0 for value_type bool.',
             'json' => json_validate($value) ? null : 'value must be valid JSON for value_type json.',
             'string' => strlen($value) <= 65535 ? null : 'value is too long.',
