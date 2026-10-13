@@ -164,5 +164,8 @@ class StaffAccessTest extends TestCase
         $response->assertSee('name="_method" value="DELETE"', false);
         $response->assertSee('action="'.route('passport.authorizations.approve').'"', false);
         $response->assertDontSee('/build/', false);
+        // Vart koden skickas och en varning mot godkännanden man inte själv startat.
+        $response->assertSeeInOrder(['Svaret skickas till', 'claude.ai']);
+        $response->assertSee('Godkänn bara om du själv just startade kopplingen i claude.ai.');
     }
 }

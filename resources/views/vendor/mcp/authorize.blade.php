@@ -5,8 +5,16 @@
     Formulären (fält, CSRF, approve POST / deny DELETE) är desamma som i paketets vy.
     Klientens logo_uri och client_uri visas inte: de sätts av vem som helst via
     dynamisk registrering och hör inte hemma på godkännandesidan.
+    Redirect-värden visas: den adress Passport skickar koden till. Passport har
+    redan kontrollerat redirect_uri mot klientens registrerade adresser, och
+    dynamisk registrering godtar bara claude.ai.
     Alla dynamiska värden escapas med {{ }}.
 --}}
+@php
+    $redirectUri = $request->query('redirect_uri');
+    $redirectUri = is_string($redirectUri) && $redirectUri !== '' ? $redirectUri : ($client->redirect_uris[0] ?? '');
+    $redirectHost = parse_url($redirectUri, PHP_URL_HOST) ?: 'okänd adress';
+@endphp
 <!DOCTYPE html>
 <html lang="sv">
 <head>
@@ -46,7 +54,11 @@
     <div class="box">
         <p class="muted">Inloggad som</p>
         <p class="email">{{ $user->email }}</p>
+        <p class="muted" style="margin-top: 8px">Svaret skickas till</p>
+        <p class="email">{{ $redirectHost }}</p>
     </div>
+
+    <p class="muted" style="margin-bottom: 16px">Godkänn bara om du själv just startade kopplingen i claude.ai.</p>
 
     @if (count($scopes) > 0)
         <p><strong>Behörigheter</strong></p>
