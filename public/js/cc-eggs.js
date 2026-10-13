@@ -215,9 +215,21 @@
     let brandClicks = 0;
     let brandTimer = null;
 
+    let brandNav = null;
+
     document.addEventListener('click', function(e) {
         const brand = e.target.closest('.fi-sidebar-header a, .fi-topbar a[href*="admin"], [class*="brand"], .fi-sidebar-header button');
         if (!brand) { brandClicks = 0; return; }
+
+        // Varumärket är en länk som laddar om sidan, och då nollställs räknaren.
+        // Vanliga klick fördröjs därför 350 ms; kommer fler klick blir det ingen
+        // navigering. Cmd/ctrl/shift/mittenklick (ny flik) lämnas orörda.
+        const isPlainLinkClick = brand.tagName === 'A' && brand.href && e.button === 0
+            && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+        if (isPlainLinkClick) {
+            e.preventDefault();
+            clearTimeout(brandNav);
+        }
 
         brandClicks++;
         clearTimeout(brandTimer);
@@ -226,6 +238,8 @@
         if (brandClicks >= 7) {
             brandClicks = 0;
             hackerMode();
+        } else if (isPlainLinkClick) {
+            brandNav = setTimeout(() => { window.location.href = brand.href; }, 350);
         }
     });
 

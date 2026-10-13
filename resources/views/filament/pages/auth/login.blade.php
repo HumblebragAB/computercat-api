@@ -1,7 +1,5 @@
 <div>
-    <link rel="stylesheet" href="{{ \App\Support\ThemeAsset::url('css/cc-login.css') }}">
-    <script src="{{ \App\Support\ThemeAsset::url('js/cc-login.js') }}" defer></script>
-
+    {{-- cc-login.css och cc-login.js laddas i <head> via en render-hook scopad till Login (AdminPanelProvider). --}}
     <div class="cc-login-wrapper">
         <div class="cc-login-card" id="login-card">
             {{-- Katten flyttas av cc-login.js mellan banorna och till body. wire:ignore

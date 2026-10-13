@@ -27,10 +27,20 @@ class LoginPageTest extends TestCase
         $this->assertStringNotContainsString("getElementById('the-cat')", $html);
     }
 
-    public function test_vanliga_adminsidor_laddar_inte_login_skriptet(): void
+    public function test_vanliga_adminsidor_laddar_inte_login_filerna(): void
     {
         $this->actingAs(User::factory()->staff()->create());
 
-        $this->get('/admin')->assertOk()->assertDontSee('cc-login.js', false);
+        $this->get('/admin')->assertOk()->assertDontSee('cc-login.js', false)->assertDontSee('cc-login.css', false);
+    }
+
+    public function test_login_filerna_ligger_i_head_sa_att_sidan_inte_blinkar_ostylad(): void
+    {
+        $html = $this->get('/admin/login')->assertOk()->getContent();
+        $headSlut = strpos($html, '</head>');
+
+        $this->assertLessThan($headSlut, strpos($html, 'css/cc-login.css'));
+        $this->assertLessThan($headSlut, strpos($html, 'js/cc-login.js'));
+        $this->assertSame(1, substr_count($html, 'css/cc-login.css'));
     }
 }

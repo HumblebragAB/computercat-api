@@ -53,6 +53,7 @@ class AdminPanelProvider extends PanelProvider
                 'danger' => Color::hex('#e8664a'),
                 'warning' => Color::hex('#f08a24'),
                 'success' => Color::hex('#9fd36b'),
+                'info' => Color::hex('#8fb3a8'),
             ])
             ->font('IBM Plex Mono', ThemeAsset::url('css/cc-theme.css'), LocalFontProvider::class)
             ->defaultAvatarProvider(InitialsAvatarProvider::class)
@@ -60,6 +61,13 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(
                 'panels::head.end',
                 fn () => '<link rel="stylesheet" href="'.e(ThemeAsset::url('css/cc-admin.css')).'">'
+            )
+            // Login-filerna bara på login, i <head> så att kortet inte blinkar ostylat.
+            ->renderHook(
+                'panels::head.end',
+                fn () => '<link rel="stylesheet" href="'.e(ThemeAsset::url('css/cc-login.css')).'">'
+                    .'<script src="'.e(ThemeAsset::url('js/cc-login.js')).'" defer></script>',
+                scopes: Login::class,
             )
             ->renderHook(
                 'panels::body.end',

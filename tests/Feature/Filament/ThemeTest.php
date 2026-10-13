@@ -57,9 +57,18 @@ class ThemeTest extends TestCase
         }
     }
 
+    public function test_info_fargen_ar_temad_och_inte_filament_bla(): void
+    {
+        // Panelens färger registreras först när panelen serveras, så läs dem från panelen.
+        $info = \Filament\Support\Colors\Color::hex('#8fb3a8')[500];
+        $this->assertSame($info, filament()->getPanel('admin')->getColors()['info'][500]);
+
+        $this->assertSame('143, 179, 168', $info);
+    }
+
     public function test_mork_knapptext_klarar_aa_pa_alla_fargade_knappar(): void
     {
-        foreach (['#f2b544', '#f6c76e', '#e8664a', '#9fd36b', '#f08a24'] as $bg) {
+        foreach (['#f2b544', '#f6c76e', '#e8664a', '#9fd36b', '#f08a24', '#8fb3a8'] as $bg) {
             $this->assertGreaterThanOrEqual(4.5, contrast('#0d0b08', $bg), "mörk text på $bg");
         }
     }

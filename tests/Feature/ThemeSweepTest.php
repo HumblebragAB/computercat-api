@@ -56,6 +56,19 @@ class ThemeSweepTest extends TestCase
         $this->assertSame([], $saknas);
     }
 
+    public function test_kontroller_och_login_css_utan_kanda_kontrastfallor(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $admin = file_get_contents("$root/public/css/cc-admin.css");
+        $login = file_get_contents("$root/public/css/cc-login.css");
+
+        // Delvis markerad checkbox: Filaments vita streck på amber är 1.9:1.
+        $this->assertMatchesRegularExpression('#\.fi-checkbox-input:indeterminate\s*\{[^}]*%230d0b08#', $admin);
+        // Placeholder med opacity .7 hamnar på 3.2:1; fi-btn-primary finns inte i Filament v3.
+        $this->assertStringNotContainsString('.fi-btn-primary', $login);
+        $this->assertDoesNotMatchRegularExpression('#::placeholder[^}]*opacity#', $login);
+    }
+
     public function test_den_oanvanda_welcome_vyn_ar_borta(): void
     {
         $this->assertFileDoesNotExist(dirname(__DIR__, 2).'/resources/views/welcome.blade.php');

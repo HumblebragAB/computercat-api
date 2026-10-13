@@ -274,8 +274,7 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
     --tw-ring-color: var(--cc-line) !important;
 }
 .cc-form-area .fi-input-wrp:focus-within { --tw-ring-color: var(--cc-amber) !important; }
-.cc-form-area .fi-input::placeholder { color: var(--cc-muted) !important; opacity: .7; }
-.cc-form-area .fi-btn-primary,
+.cc-form-area .fi-input::placeholder { color: var(--cc-muted) !important; }
 .cc-form-area .fi-btn.fi-color-primary {
     background: var(--cc-amber) !important;
     color: var(--cc-bg) !important;
@@ -285,7 +284,6 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
     padding: .75rem 1.5rem !important;
     border-radius: 0 !important;
 }
-.cc-form-area .fi-btn-primary:hover,
 .cc-form-area .fi-btn.fi-color-primary:hover { background: var(--cc-amber-hover) !important; }
 .cc-form-area .fi-checkbox-input:checked {
     background-color: var(--cc-amber) !important;
