@@ -12,7 +12,7 @@
             <x-slot name="heading">Setup Guide</x-slot>
             <x-slot name="description">Overview of {{ $record->name }}'s current configuration.</x-slot>
             <div class="prose prose-sm dark:prose-invert max-w-none cc-markdown">
-                {!! \Illuminate\Support\Str::markdown($this->getSetupGuide()) !!}
+                {!! \Illuminate\Support\Str::markdown($this->getSetupGuide(), ['html_input' => 'escape', 'allow_unsafe_links' => false]) !!}
             </div>
         </x-filament::section>
 
@@ -31,11 +31,11 @@
                     </div>
                 </div>
             </x-slot>
-            <x-slot name="description">Give this to your AI coding assistant. It contains everything needed to integrate with the API, including a dev token.</x-slot>
+            <x-slot name="description">Give this to your AI coding assistant. It contains everything needed to integrate with the API. For testing, the assistant creates an anonymous user the same way the game does.</x-slot>
 
             {{-- Rendered preview --}}
             <div class="prose prose-sm dark:prose-invert max-w-none cc-markdown">
-                {!! \Illuminate\Support\Str::markdown($this->getManual()) !!}
+                {!! \Illuminate\Support\Str::markdown($this->getManual(), ['html_input' => 'escape', 'allow_unsafe_links' => false]) !!}
             </div>
 
             {{-- Hidden raw markdown for copying --}}
