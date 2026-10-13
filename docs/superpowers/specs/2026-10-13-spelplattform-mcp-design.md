@@ -141,7 +141,7 @@ Gemensamt för alla verktyg som tar `game`:
 - Alla skrivverktyg är upserts med slug/nyckel som identitet.
 - Verktygen når även inaktiva spel som användaren är medlem i, så att ett spel kan konfigureras innan det aktiveras.
 - **Validering skärps, den kopieras inte.** Panelens regler sitter idag kedjade på Filament-komponenter och täcker inte allt. De flyttas till en regelklass per byggsten (`App\Rules\Config\LeaderboardTypeRules` osv.) som både relation managern och verktyget anropar. Nya regler som också gäller i panelen:
-  - slug/nyckel: `^[a-z0-9][a-z0-9_-]{0,63}$` och unik per spel (idag ger en dubblett ett 500-fel från DB:n)
+  - slug/nyckel: `^[a-z0-9][a-z0-9_.-]*\z` med dagens maxlängder (50 för topplistor och achievements, 100 för övriga), unik per spel (idag ger en dubblett ett 500-fel från DB:n). Formatet kontrolleras bara när värdet är nytt eller ändras, så befintliga poster med äldre slugs går att redigera.
   - `max_entries_per_period`: minst 1, högst 10 000
   - game event: `ends_at` efter `starts_at`; `settings` är ett JSON-objekt på högst 16 KB som **ersätter** det tidigare värdet (det skickas orört till spelare via `GameEventController`)
   - remote config: `value` måste gå att tolka som `value_type` (idag sparas ogiltig JSON och blir `null` vid läsning)
@@ -196,7 +196,7 @@ Validering av en origin per spel (de statiska posterna i `config/cors.php`, t.ex
 
 ## Test
 
-Pest, i `tests/Feature/Mcp/`.
+PHPUnit-klasser som resten av projektet, i `tests/Feature/Mcp/`.
 
 - Per verktyg: lyckat anrop, valideringsfel, icke-medlem får "Game not found", okänd slug ger "Game not found", inaktivt spel där användaren är medlem fungerar.
 - **Invariant: varje registrerat verktyg som tar `game` nekar icke-medlemmar.** Testet itererar över serverns verktygslista, så ett nytt verktyg utan kontroll fäller testet automatiskt.
