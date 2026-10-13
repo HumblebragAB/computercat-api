@@ -75,10 +75,27 @@ class AuthTokenRefreshTest extends TestCase
         $this->getMe($new)->assertOk();
     }
 
-    public function test_old_token_works_for_10_minutes_after_refresh_then_fails(): void
+    // Om svaret på refresh går förlorat har klienten bara det gamla tokenet.
+    // Det får därför inte kortas förrän det nya faktiskt har använts.
+    public function test_old_token_stays_valid_until_new_token_is_used(): void
+    {
+        $old = $this->anonymousToken();
+        $this->refresh($old)->assertOk();
+
+        $this->travel(30)->days();
+        $this->getMe($old)->assertOk();
+        $this->assertNotNull(PersonalAccessToken::findToken($old)->expires_at);
+        $this->assertTrue(PersonalAccessToken::findToken($old)->expires_at->gt(now()->addDays(59)));
+    }
+
+    public function test_first_use_of_new_token_limits_old_token_to_10_minutes(): void
     {
         $old = $this->anonymousToken();
         $new = $this->refresh($old)->assertOk()->json('token');
+
+        $this->travel(1)->days();
+        $this->getMe($old)->assertOk();
+        $this->getMe($new)->assertOk(); // första användningen
 
         $this->travel(9)->minutes();
         $this->getMe($old)->assertOk();
@@ -88,22 +105,65 @@ class AuthTokenRefreshTest extends TestCase
         $this->getMe($new)->assertOk();
     }
 
-    public function test_refresh_does_not_extend_an_old_token_that_expires_sooner(): void
+    // Senare anrop med det nya tokenet flyttar inte fram det gamlas gräns.
+    public function test_later_use_of_new_token_does_not_extend_old_token(): void
+    {
+        $old = $this->anonymousToken();
+        $new = $this->refresh($old)->assertOk()->json('token');
+
+        $this->getMe($new)->assertOk();
+        $limit = PersonalAccessToken::findToken($old)->expires_at;
+
+        $this->travel(5)->minutes();
+        $this->getMe($new)->assertOk();
+
+        $this->assertTrue(PersonalAccessToken::findToken($old)->expires_at->equalTo($limit));
+    }
+
+    public function test_first_use_does_not_extend_an_old_token_that_expires_sooner(): void
     {
         $old = $this->anonymousToken();
         $model = PersonalAccessToken::findToken($old);
         $soon = now()->addMinutes(3)->startOfSecond();
         $model->forceFill(['expires_at' => $soon])->save();
 
-        $this->refresh($old)->assertOk();
+        $new = $this->refresh($old)->assertOk()->json('token');
+        $this->getMe($new)->assertOk();
 
         $this->assertTrue($model->fresh()->expires_at->equalTo($soon));
     }
 
-    public function test_grace_limited_token_can_refresh_once_more(): void
+    public function test_refresh_records_parent_token(): void
+    {
+        $old = $this->anonymousToken();
+        $new = $this->refresh($old)->assertOk()->json('token');
+
+        $this->assertSame(PersonalAccessToken::findToken($old)->id, PersonalAccessToken::findToken($new)->refreshed_from_id);
+        $this->assertNull(PersonalAccessToken::findToken($old)->refreshed_from_id);
+    }
+
+    public function test_refresh_chain_limits_each_parent_on_first_use(): void
+    {
+        $old = $this->anonymousToken();
+        $new1 = $this->refresh($old)->assertOk()->json('token'); // använder inte new1 ännu
+        $this->travel(1)->days();
+        $new2 = $this->refresh($new1)->assertOk()->json('token'); // första användningen av new1
+
+        $this->travel(11)->minutes();
+        $this->getMe($old)->assertUnauthorized();
+        $this->getMe($new1)->assertOk(); // new2 ännu oanvänt
+
+        $this->getMe($new2)->assertOk();
+        $this->travel(11)->minutes();
+        $this->getMe($new1)->assertUnauthorized();
+        $this->getMe($new2)->assertOk();
+    }
+
+    public function test_old_token_can_refresh_again_after_new_token_was_used(): void
     {
         $old = $this->anonymousToken();
         $first = $this->refresh($old)->assertOk()->json('token');
+        $this->getMe($first)->assertOk();
         $second = $this->refresh($old)->assertOk()->json('token');
 
         $this->assertNotSame($first, $second);
@@ -147,16 +207,21 @@ class AuthTokenRefreshTest extends TestCase
         $this->assertSame($before, PersonalAccessToken::count());
     }
 
-    // Token utfärdade före den här ändringen saknar expires_at.
-    public function test_legacy_token_without_expires_at_is_clamped_on_refresh(): void
+    // Token utfärdade före den här ändringen saknar expires_at och förälder.
+    public function test_legacy_token_without_expires_at_is_limited_when_new_token_is_used(): void
     {
         $user = User::factory()->create();
         $legacy = $user->createToken('anonymous')->plainTextToken;
         $this->assertNull(PersonalAccessToken::findToken($legacy)->expires_at);
 
-        Carbon::setTestNow(now()->addDays(30)->startOfSecond());
-        $this->refresh($legacy)->assertOk();
+        $this->getMe($legacy)->assertOk();
+        $this->assertNull(PersonalAccessToken::findToken($legacy)->expires_at);
 
+        Carbon::setTestNow(now()->addDays(30)->startOfSecond());
+        $new = $this->refresh($legacy)->assertOk()->json('token');
+        $this->assertNull(PersonalAccessToken::findToken($legacy)->expires_at);
+
+        $this->getMe($new)->assertOk();
         $this->assertTrue(PersonalAccessToken::findToken($legacy)->expires_at->equalTo(now()->addMinutes(10)));
     }
 

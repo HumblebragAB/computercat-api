@@ -5,9 +5,11 @@ namespace App\Providers;
 use App\Models\User;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Passport\Passport;
+use Laravel\Sanctum\Events\TokenAuthenticated;
 use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
@@ -56,6 +58,23 @@ class AppServiceProvider extends ServiceProvider
         // Gäller bara Sanctum; MCP/Passport (StaffUser) har EnsureStaff.
         Sanctum::authenticateAccessTokensUsing(function ($accessToken, bool $isValid) {
             return $isValid && ! ($accessToken->tokenable instanceof User && $accessToken->tokenable->is_banned);
+        });
+
+        // Första gången ett förnyat token används kortas tokenet det ersatte
+        // till högst 10 minuter, så att parallella anrop med det gamla hinner
+        // klart. Eventet skickas bara för giltiga token, före last_used_at
+        // sätts, så null betyder första användningen.
+        Event::listen(TokenAuthenticated::class, function (TokenAuthenticated $event) {
+            $token = $event->token;
+
+            if (! $token->refreshed_from_id || $token->last_used_at !== null) {
+                return;
+            }
+
+            $grace = now()->addMinutes(10);
+            Sanctum::$personalAccessTokenModel::whereKey($token->refreshed_from_id)
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', $grace))
+                ->update(['expires_at' => $grace]);
         });
 
         // Intresseanmälan är publik och utan inloggning. Gränsen per adress

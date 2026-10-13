@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
@@ -106,9 +107,10 @@ class AuthController extends Controller
         ]);
     }
 
-    // Byter det aktuella tokenet mot ett nytt med full livslängd. Det gamla
-    // får leva högst 10 minuter till, så att parallella flikar och anrop som
-    // redan är på väg inte får 401 mitt i bytet.
+    // Ger ett nytt token med full livslängd. Det gamla rörs inte här: går
+    // svaret förlorat har klienten bara det gamla kvar. Det nya bär en
+    // koppling (refreshed_from_id), och först när det används första gången
+    // kortas det gamla till högst 10 minuter (AppServiceProvider).
     public function refresh(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -126,12 +128,12 @@ class AuthController extends Controller
         }
 
         $expiresAt = $this->tokenExpiresAt();
-        $new = $user->createToken($current->name, $current->abilities ?? ['*'], $expiresAt);
+        $new = DB::transaction(function () use ($user, $current, $expiresAt) {
+            $new = $user->createToken($current->name, $current->abilities ?? ['*'], $expiresAt);
+            $new->accessToken->forceFill(['refreshed_from_id' => $current->getKey()])->save();
 
-        $grace = now()->addMinutes(10);
-        if (! $current->expires_at || $current->expires_at->gt($grace)) {
-            $current->forceFill(['expires_at' => $grace])->save();
-        }
+            return $new;
+        });
 
         return response()->json([
             'token' => $new->plainTextToken,
