@@ -45,36 +45,35 @@
 
     <style>
         .cc-copy-btn {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--cc-font);
             font-size: 0.75rem;
             padding: 0.4rem 1rem;
             background: transparent;
-            border: 1px solid var(--cc-primary, #00f0ff);
-            color: var(--cc-primary, #00f0ff);
+            border: 1px solid var(--cc-amber);
+            color: var(--cc-amber);
             cursor: pointer;
             transition: all 0.2s;
             letter-spacing: 0.5px;
         }
         .cc-copy-btn:hover {
-            background: var(--cc-primary, #00f0ff);
-            color: var(--cc-bg, #0a0a1a);
-            box-shadow: 0 0 10px rgba(0,240,255,0.3);
+            background: var(--cc-amber);
+            color: var(--cc-bg);
         }
         .cc-copy-btn.copied {
-            border-color: var(--cc-tertiary, #39ff14);
-            color: var(--cc-tertiary, #39ff14);
+            border-color: var(--cc-ok);
+            color: var(--cc-ok);
         }
         .cc-markdown code {
-            font-family: 'JetBrains Mono', monospace !important;
+            font-family: var(--cc-font) !important;
             font-size: 0.8rem !important;
-            background: rgba(0,240,255,0.06) !important;
-            border: 1px solid rgba(0,240,255,0.1) !important;
+            background: rgba(242,181,68,.06) !important;
+            border: 1px solid var(--cc-line) !important;
             padding: 0.1rem 0.3rem !important;
             border-radius: 0 !important;
         }
         .cc-markdown pre {
-            background: rgba(0,240,255,0.04) !important;
-            border: 1px solid rgba(0,240,255,0.1) !important;
+            background: rgba(242,181,68,.06) !important;
+            border: 1px solid var(--cc-line) !important;
             border-radius: 0 !important;
         }
         .cc-markdown pre code {
@@ -86,11 +85,11 @@
             font-size: 0.8rem;
         }
         .cc-markdown th {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--cc-font);
             text-transform: uppercase;
             font-size: 0.7rem;
             letter-spacing: 0.5px;
-            color: var(--cc-muted, #7878a0);
+            color: var(--cc-muted);
         }
     </style>
 
