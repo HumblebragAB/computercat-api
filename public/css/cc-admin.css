@@ -45,7 +45,7 @@ body.fi-body {
 /* -- Menyrad och sidomeny -- */
 .fi-topbar > nav { background: var(--cc-paper); border-bottom: 2px solid var(--cc-ink); box-shadow: none; --tw-ring-shadow: 0 0 #0000; }
 .fi-sidebar { background: var(--cc-paper); border-right: 2px solid var(--cc-ink); }
-.fi-sidebar-header { border-bottom: 2px solid var(--cc-ink); box-shadow: none; --tw-ring-shadow: 0 0 #0000; }
+.fi-sidebar-header { background: var(--cc-paper); border-bottom: 2px solid var(--cc-ink); box-shadow: none; --tw-ring-shadow: 0 0 #0000; }
 .fi-sidebar-header .fi-logo { font-family: var(--cc-font-display); font-weight: 400; font-size: 1rem; letter-spacing: .04em; color: var(--cc-ink); }
 .fi-sidebar-group-label { font-family: var(--cc-font-display); font-weight: 400; font-size: .7rem; color: var(--cc-muted); }
 .fi-sidebar-item-button { border-radius: 0; }
