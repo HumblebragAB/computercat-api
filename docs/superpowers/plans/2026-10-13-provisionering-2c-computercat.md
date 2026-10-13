@@ -28,9 +28,9 @@
 - GitHub, bas `https://api.github.com`, headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`.
   - JWT: RS256, `iss` = `GITHUB_APP_CLIENT_ID`, `iat` = nu − 60 s, `exp` = nu + 9 min (krav ≤ 10 min). Heltalstidsstämplar.
   - `POST /app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens` med JWT, utan body. Svar 201 `{token, expires_at, permissions, repository_selection, repositories}`. Token giltig 1 h; cachas krypterad till `expires_at − 5 min`, glöms efter varje `/generate`.
-  - `POST /repos/HumblebragAB/spelmall/generate` body `{owner: "HumblebragAB", name: <slug>, description: "Computercat-spel <slug> (run <uuid>)", private: true, include_all_branches: false}`. 201 vid lyckat, 422 hanteras.
+  - `POST /repos/HumblebragAB/spelmall/generate` body `{owner: "HumblebragAB", name: <slug>, description: "Computercat-spel <slug> (run <uuid>)", private: true, include_all_branches: false}`. 201 vid lyckat. 422 vars body säger att namnet redan finns (`already exists`, form enligt S12) betyder upptagen slug; alla andra 422 är fel som kastas.
   - `GET /repos/HumblebragAB/<slug>` (fälten `id`, `description`, `archived`, `template_repository.full_name` verifieras i spiken, S10).
-  - `GET /repos/HumblebragAB/<slug>/contents/README.md` → `{sha, content, encoding: "base64"}`; `PUT` samma sökväg med `{message, content (base64), sha}` (verifieras i spiken, S11).
+  - `GET /repos/HumblebragAB/<slug>/contents/README.md` → `{sha, content, encoding: "base64"}`; `PUT` samma sökväg med `{message, content (base64), sha, branch: "main"}` (verifieras i spiken, S11; `branch` enligt 2b:s kontrakt).
   - `PATCH /repos/HumblebragAB/<slug>` body `{archived: true}`.
   - **Aldrig `DELETE` mot `api.github.com`.** `GitHubAppClient::ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH']`.
 - Coolify v4.4.6, bas `{COOLIFY_URL}/api/v1`, `Authorization: Bearer {COOLIFY_TOKEN}`.
@@ -58,7 +58,7 @@
 - Tak: 15 = provisioneringsruns (`kind = provision`) med status `running`, `succeeded` eller `failed`. 5 per dygn = provisioneringsruns skapade av användaren de senaste 24 timmarna, oavsett status (även `released`).
 - Deploy: poll var 30:e sekund, högst 15 minuter från deploystart. README efter `/generate`: poll var 10:e sekund, högst 3 minuter. Coolify-radering: poll var 30:e sekund, högst 10 minuter.
 - Jobb: `AdvanceProvisioningRun::$tries = 0`, `$timeout = 60`, `retryUntil()` = nu + 25 min, `WithoutOverlapping` per run. HTTP-timeout 20 s, connect-timeout 5 s.
-- Redigering: nycklar som innehåller `authorization`, `private_key`, `password`, `token`, `api_key`, eller som heter exakt `value` eller `logs`, ersätts med `[REDACTED]`; kända hemligheter (Coolify-token, SiteOps-nyckel, Slack-URL, utfärdade GitHub-tokens) och mönstren `gh[pousr]_…`/`github_pat_…` byts mot `[REDACTED]` i fri text; max 4096 byte, avkortat med `…` på teckengräns.
+- Redigering: nycklar som innehåller `authorization`, `private_key`, `password`, `token`, `api_key`, eller som heter exakt `value` eller `logs`, ersätts med `[REDACTED]`; kända hemligheter (Coolify-token, SiteOps-nyckel, Slack-URL, utfärdade GitHub-tokens) och mönstren `gh[pousr]_…`/`github_pat_…`, JWT (`eyJ….eyJ….…`) och PEM-block med `PRIVATE KEY` byts mot `[REDACTED]` i fri text; max 4096 byte, avkortat med `…` på teckengräns.
 - `last_error` visas för spelets medlemmar och innehåller bara meddelanden från `SafeMessage`-undantag; övriga fel blir `Internal error (ref <uuid>)` och loggas i sin helhet.
 - Inget HTTP-anrop sker inne i en databastransaktion. Vaktat av ett test i varje provisioneringstest (Task 3).
 
@@ -261,7 +261,7 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 - [ ] **Steg 4: Skapa repot (S8, S9, S11, S10).** Spara `OLDTOKEN=$TOKEN`. `gh POST /repos/HumblebragAB/spelmall/generate '{"owner":"HumblebragAB","name":"e2e-spike","description":"Computercat-spel e2e-spike (run spike-2026-10-13)","private":true,"include_all_branches":false}'`. Förväntat: 201 och `.private == true`. **Är `.private` false: stanna omedelbart och fråga Erik** (repot är publikt). Skriv `SPIKE_REPO_ID=<.id>` till `$SCRATCH/spike/ids.env`. Poll `gh GET /repos/HumblebragAB/e2e-spike/contents/README.md` med `OLDTOKEN` var 5:e sekund i högst 3 minuter och notera sekunder till 200 (S11) och om den gamla token fick 200 eller 404 (S9). Ta ny token och gör samma GET. Kör sedan `gh GET /repos/HumblebragAB/e2e-spike` och notera `.id`, `.description`, `.archived`, `.template_repository.full_name` (S10; förväntat `HumblebragAB/spelmall`).
 
-- [ ] **Steg 5: README-PUT (S11).** Avkoda README, ersätt blocket mellan markörerna med `Spike: idétext`, och `gh PUT /repos/HumblebragAB/e2e-spike/contents/README.md '{"message":"Spike: idé","content":"<base64>","sha":"<sha>"}'`. Förväntat 200. Kontrollera med ny GET att texten finns.
+- [ ] **Steg 5: README-PUT (S11).** Avkoda README, ersätt blocket mellan markörerna med `Spike: idétext`, och `gh PUT /repos/HumblebragAB/e2e-spike/contents/README.md '{"message":"Spike: idé","content":"<base64>","sha":"<sha>","branch":"main"}'`. Förväntat 200. Kontrollera med ny GET att texten finns.
 
 - [ ] **Steg 6: Namnkrock (S12).** Upprepa POST `/generate` från steg 4 oförändrad. Förväntat 422; spara body i `log/S12.json`. Kontrollera med `gh GET /repos/HumblebragAB/e2e-spike` att inget nytt repo skapades (samma `id`).
 
@@ -304,7 +304,7 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 - [ ] **Steg 17: Skriv resultatet i bilagorna.** I `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` och `…-github-app.md`: ersätt varje "UNCONFIRMED" som spiken besvarade med "VERIFIERAT 2026-10-xx (spike): <faktum>", och lägg till ett avsnitt "## Spikresultat" med S1–S21, en rad var, inklusive Node-versionen (S20) och `concurrent_builds` (S21), inklusive tid till README (S11), byggtid och RAM-topp (S7), 422-body (S12) och formen på projekt- och env-listningen (S13, S15). Inga hemligheter, inga tokens.
 
-- [ ] **Steg 18: Stäm av mot planen.** Om något resultat avviker från Global Constraints (t.ex. `git_repository` måste vara full URL, envs-listningen saknar `key`, projekt-endpointen har annan form): stanna, fråga Erik med AskUserQuestion och uppdatera berörda tasks (Task 3 fixturer, Task 10, Task 14, Task 21) innan Task 2 påbörjas.
+- [ ] **Steg 18: Stäm av mot planen.** Om något resultat avviker från Global Constraints (t.ex. `git_repository` måste vara full URL, envs-listningen saknar `key`, projekt-endpointen har annan form, eller 422-bodyn från S12 innehåller inte `already exists`, som `GitHubAppClient::generateFromTemplate()` och `ProvisioningFakes::githubNameTaken()` matchar på): stanna, fråga Erik med AskUserQuestion och uppdatera berörda tasks (Task 3 fixturer, Task 10, Task 14, Task 21) innan Task 2 påbörjas.
 
 - [ ] **Steg 19: Commit.**
 
@@ -759,6 +759,12 @@ final class ProvisioningFakes
         ];
     }
 
+    /** 422 från /generate när namnet redan finns i organisationen (spike S12; justeras efter den sparade bodyn). */
+    public static function githubNameTaken(): array
+    {
+        return ['message' => 'Repository creation failed.', 'errors' => [['resource' => 'Repository', 'code' => 'custom', 'field' => 'name', 'message' => 'name already exists on this account']]];
+    }
+
     public static function templateReadme(): string
     {
         return "# Spel\n\nBeskrivning.\n\n<!-- computercat:idea:start -->\n_Idén fylls i av create_game när spelet skapas._\n<!-- computercat:idea:end -->\n\nMer text.\n";
@@ -1169,6 +1175,27 @@ class RedactorTest extends TestCase
         $this->assertStringNotContainsString('ghs_issuedtoken', $text);
     }
 
+    // Byggs vid körning (inga nyckel- eller JWT-literaler i repot, gitleaks).
+    public function test_app_jwt_and_private_key_are_scrubbed_from_text(): void
+    {
+        ProvisioningFakes::configure();
+        $pem = ProvisioningFakes::keyPair()['private'];
+        // Samma form som GitHubAppClient::jwt() (Task 9), byggd direkt med lcobucci.
+        $jwt = \Lcobucci\JWT\Token\Builder::new(new \Lcobucci\JWT\Encoding\JoseEncoder, \Lcobucci\JWT\Encoding\ChainedFormatter::withUnixTimestampDates())
+            ->issuedBy('Iv23testclientid')
+            ->issuedAt(new \DateTimeImmutable('-60 seconds'))
+            ->expiresAt(new \DateTimeImmutable('+9 minutes'))
+            ->getToken(new \Lcobucci\JWT\Signer\Rsa\Sha256, \Lcobucci\JWT\Signer\Key\InMemory::plainText($pem))
+            ->toString();
+
+        $text = Redactor::scrubSecrets("Authorization: Bearer {$jwt}\n{$pem}\nslut");
+
+        $this->assertStringNotContainsString($jwt, $text);
+        $this->assertStringNotContainsString('PRIVATE KEY', $text);
+        $this->assertStringNotContainsString(substr(explode("\n", $pem)[1], 0, 40), $text);
+        $this->assertStringEndsWith('slut', $text);
+    }
+
     public function test_body_redacts_json_and_limits_size(): void
     {
         $body = Redactor::body(json_encode(['message' => 'fel', 'logs' => str_repeat('L', 10000)]));
@@ -1247,7 +1274,13 @@ final class Redactor
             $text = str_replace($secrets, self::MASK, $text);
         }
 
-        return preg_replace('/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/', self::MASK, $text) ?? $text;
+        // GitHub-tokens, JWT (appens RS256-JWT bär inget hemligt men ger en
+        // installationstoken i 10 min) och PEM-nycklar (appens privata nyckel).
+        return preg_replace([
+            '/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/',
+            '/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/',
+            '/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(-----END [A-Z ]*PRIVATE KEY-----|\z)/s',
+        ], self::MASK, $text) ?? $text;
     }
 
     public static function limit(string $text, int $max = self::MAX_BYTES): string
@@ -1431,7 +1464,7 @@ class ApiCallLoggerTest extends ProvisioningTestCase
 cd $WT && php artisan test --filter='RedactorTest|ApiCallLoggerTest'
 ```
 
-Förväntat: `Tests: 5 passed`.
+Förväntat: `Tests: 6 passed`.
 
 - [ ] **Steg 7: Commit.**
 
@@ -2306,9 +2339,9 @@ cd $WT && git add database/migrations/2026_10_15_100002_create_provisioning_runs
   - `jwt(?DateTimeImmutable $now = null): string`
   - `installationToken(): string`, `forgetInstallationToken(): void`
   - `getRepository(string $name): ?array` (null vid 404)
-  - `generateFromTemplate(string $name, string $description): ?array` (null vid 422)
+  - `generateFromTemplate(string $name, string $description): ?array` (null bara vid 422 där namnet redan finns; andra 422 kastar `ExternalApiException`)
   - `getFile(string $name, string $path): ?array` → `array{sha: string, text: string}` eller null vid 404
-  - `putFile(string $name, string $path, string $text, string $sha, string $message): void`
+  - `putFile(string $name, string $path, string $text, string $sha, string $message): void` (skriver på `main`)
   - `archiveRepository(string $name): array`
 
 - [ ] **Steg 1: Fallerande test.** `tests/Feature/Provisioning/GitHubAppClientTest.php`:
@@ -2394,14 +2427,28 @@ class GitHubAppClientTest extends ProvisioningTestCase
         $this->assertCount(2, Http::recorded(fn ($r) => str_ends_with($r->url(), '/access_tokens')));
     }
 
-    public function test_generate_returns_null_on_422(): void
+    public function test_generate_returns_null_when_the_name_already_exists(): void
     {
         Http::fake([
             self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
-            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(['message' => 'Unprocessable Entity'], 422),
+            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(ProvisioningFakes::githubNameTaken(), 422),
         ]);
 
         $this->assertNull($this->client()->generateFromTemplate('kattsvep', 'd'));
+    }
+
+    // Ett 422 av annat skäl (t.ex. mallen inte markerad som mall) får aldrig
+    // tolkas som "namnet upptaget": då skulle slugen släppas av fel anledning.
+    public function test_generate_throws_on_other_422(): void
+    {
+        Http::fake([
+            self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(['message' => 'Repository is not a template.'], 422),
+        ]);
+
+        $this->expectException(ExternalApiException::class);
+        $this->expectExceptionMessage('GitHub POST /repos/HumblebragAB/spelmall/generate returned 422');
+        $this->client()->generateFromTemplate('kattsvep', 'd');
     }
 
     public function test_get_repository_returns_null_on_404_and_throws_on_500(): void
@@ -2432,7 +2479,7 @@ class GitHubAppClientTest extends ProvisioningTestCase
         $this->client()->putFile('kattsvep', 'README.md', 'Ny text', $file['sha'], 'Meddelande');
 
         $this->assertSame(['sha' => 'readme-sha-1', 'text' => '# Hej å'], $file);
-        Http::assertSent(fn ($r) => $r->method() === 'PUT' && $r->data() === ['message' => 'Meddelande', 'content' => base64_encode('Ny text'), 'sha' => 'readme-sha-1']);
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && $r->data() === ['message' => 'Meddelande', 'content' => base64_encode('Ny text'), 'sha' => 'readme-sha-1', 'branch' => 'main']);
     }
 
     public function test_get_file_returns_null_on_404(): void
@@ -2617,7 +2664,17 @@ class GitHubAppClient
         // täcker ett repo som skapats efteråt. Nästa anrop tar därför en ny.
         $this->forgetInstallationToken();
 
-        return $response->status() === 422 ? null : $response->json();
+        if ($response->status() !== 422) {
+            return $response->json();
+        }
+
+        // Bara "namnet finns redan" betyder null (spike S12 bekräftar bodyn).
+        // Alla andra 422 är fel som ska synas, inte en upptagen slug.
+        if (str_contains(strtolower($response->body()), 'already exists')) {
+            return null;
+        }
+
+        throw new ExternalApiException('GitHub', 'POST', "/repos/{$templateOwner}/{$templateName}/generate", 422, Redactor::body($response->body()));
     }
 
     /** @return array{sha: string, text: string}|null */
@@ -2649,6 +2706,8 @@ class GitHubAppClient
             'message' => $message,
             'content' => base64_encode($text),
             'sha' => $sha,
+            // Kontraktet med mallen (2b): skrivningen sker på main.
+            'branch' => 'main',
         ]);
     }
 
@@ -2707,7 +2766,7 @@ class GitHubAppClient
 cd $WT && php artisan test --filter=GitHubAppClientTest
 ```
 
-Förväntat: `Tests: 10 passed`. Om `test_generate_sends_private_true_and_mints_new_token_afterwards` räknar fel antal token-anrop: kontrollera att `forgetInstallationToken()` anropas även vid 422.
+Förväntat: `Tests: 11 passed`. Om `test_generate_sends_private_true_and_mints_new_token_afterwards` räknar fel antal token-anrop: kontrollera att `forgetInstallationToken()` anropas även vid 422.
 
 - [ ] **Steg 5: Commit.**
 
@@ -3707,6 +3766,8 @@ class AdvanceProvisioningRunTest extends ProvisioningTestCase
         $this->assertTrue($job->retryUntil()->greaterThan(now()->addMinutes(config('provisioning.deploy_timeout_minutes'))));
         // Ett jobb som pågår längre än retry_after körs annars en gång till parallellt.
         $this->assertLessThan(config('queue.connections.database.retry_after'), $job->timeout);
+        // Ett undantag som ändå når kön får inte köras om i en tät loop.
+        $this->assertGreaterThanOrEqual(30, $job->backoff);
 
         // Ett undantag i ett steg når aldrig kön (som med tries = 0 skulle köra om för evigt).
         $run = $this->startedRun();
@@ -3910,6 +3971,11 @@ final class Saga
         }
 
         $run->steps()->where('status', ProvisioningStep::FAILED)->update(['status' => ProvisioningStep::PENDING]);
+        // En run vars start() föll innan alla steg skapats (create_game markerar
+        // den failed) får sina saknade steg här.
+        foreach (array_keys(self::steps($run->kind)) as $name) {
+            $run->steps()->firstOrCreate(['step' => $name], ['status' => ProvisioningStep::PENDING, 'attempts' => 0]);
+        }
         AdvanceProvisioningRun::dispatch($run->id);
 
         return true;
@@ -3965,6 +4031,11 @@ class AdvanceProvisioningRun implements ShouldQueue
     public int $timeout = 60;
 
     public bool $failOnTimeout = true;
+
+    // Ett undantag utanför stegets try (t.ex. databasen borta när steget
+    // markeras) når kön. Med $tries = 0 körs jobbet då om tills retryUntil();
+    // backoff hindrar att det sker i en tät loop.
+    public int $backoff = 30;
 
     public function __construct(public int $runId) {}
 
@@ -4199,7 +4270,8 @@ class ReadmeIdeaTest extends TestCase
         $this->expectExceptionMessage('README.md lacks the idea markers');
         ReadmeIdea::insert($readme, 'Idé');
     }
-}```
+}
+```
 
 `tests/Feature/Provisioning/RepoStepTest.php`:
 
@@ -4298,7 +4370,10 @@ class RepoStepTest extends ProvisioningTestCase
         $this->assertSame(StepResult::RELEASE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
     }
 
-    public function test_422_with_foreign_repo_releases_and_without_repo_fails(): void
+    // Spec: 422 "name already exists" utan match släpper slugen. Appen ser inte
+    // repon den inte skapat ("Only select repositories"), så det vanliga fallet
+    // är 422 följt av 404; ett synligt främmande repo släpper också slugen.
+    public function test_name_taken_releases_whether_or_not_the_repo_is_visible(): void
     {
         $run = $this->run_();
         Http::fake([
@@ -4308,12 +4383,27 @@ class RepoStepTest extends ProvisioningTestCase
                 ->push(ProvisioningFakes::githubRepo('kattsvep', 'annan-run', template: null))
                 ->push(['message' => 'Not Found'], 404)
                 ->push(['message' => 'Not Found'], 404),
-            self::GENERATE => Http::response(['message' => 'Repository creation failed.'], 422),
+            self::GENERATE => Http::response(ProvisioningFakes::githubNameTaken(), 422),
         ]);
 
         $this->assertSame(StepResult::RELEASE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
 
-        $this->expectException(StepFailed::class);
+        $invisible = $this->runStep(RepoStep::class, $run, 'repo');
+        $this->assertSame(StepResult::RELEASE, $invisible->outcome);
+        $this->assertStringContainsString('Slug is taken on GitHub', $invisible->reason);
+    }
+
+    // Ett 422 av annat skäl släpper aldrig slugen: steget fallerar synligt.
+    public function test_other_422_fails_without_releasing(): void
+    {
+        $run = $this->run_();
+        Http::fake([
+            self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
+            self::REPO => Http::response(['message' => 'Not Found'], 404),
+            self::GENERATE => Http::response(['message' => 'Repository is not a template.'], 422),
+        ]);
+
+        $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
         $this->runStep(RepoStep::class, $run, 'repo');
     }
 
@@ -4538,10 +4628,12 @@ final class RepoStep implements Step
                 return null;
             }
 
-            // 422: namnet finns, eller GitHub vägrade av annat skäl.
+            // 422 "name already exists" (andra 422 kastar i klienten). Appen är
+            // installerad på "Only select repositories" och ser bara mallen och
+            // repon den själv skapat, så ett främmande repo ger 404 här.
             $existing = $this->github->getRepository($run->slug);
             if ($existing === null) {
-                throw new StepFailed('GitHub refused to create the repository (422) and no repository with that name exists.');
+                return StepResult::releaseSlug('Slug is taken on GitHub: '.ProvisioningConfig::repoFullName($run->slug).' already exists (not visible to Computercat). Choose another slug.');
             }
         }
 
@@ -4618,7 +4710,7 @@ final class GameStep implements Step
 cd $WT && php artisan test --filter='ReadmeIdeaTest|RepoStepTest|GameStepTest'
 ```
 
-Förväntat: `Tests: 21 passed` (ReadmeIdeaTest 10 inkl. 6 dataset, RepoStepTest 8, GameStepTest 3).
+Förväntat: `Tests: 22 passed` (ReadmeIdeaTest 10 inkl. 6 dataset, RepoStepTest 9, GameStepTest 3).
 
 - [ ] **Steg 8: Commit.**
 
@@ -5329,10 +5421,18 @@ final class DeployStep implements Step
         $uuid = $run->coolify_app_uuid ?? throw new StepFailed('No Coolify application is recorded for this run.');
 
         if (! isset($detail['deployment_uuid'])) {
-            return StepResult::wait(30, [
+            $started = [
                 'deployment_uuid' => $this->coolify->deploy($uuid),
                 'deploy_started_at' => now()->toIso8601String(),
-            ]);
+            ];
+            // Sparas direkt, inte först när motorn slår ihop detail: dör jobbet
+            // mellan svaret och motorns sparning pollar omkörningen samma bygge
+            // i stället för att starta ett andra. Kvar finns bara fönstret där
+            // själva svaret går förlorat; då köar Coolify ett andra bygge
+            // (concurrent_builds = 1, S21), vilket är ofarligt.
+            $step->update(['detail' => [...$detail, ...$started]]);
+
+            return StepResult::wait(30, $started);
         }
 
         $deployment = $detail['deployment_uuid'];
@@ -5463,6 +5563,30 @@ class ArchiveStepsTest extends ProvisioningTestCase
         $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'DELETE'));
     }
 
+    // Ett DELETE som Coolify avvisade (felstatus) begärdes inte: markören tas
+    // bort, så att omkörningen begär raderingen igen i stället för att polla
+    // en app som aldrig ska försvinna.
+    public function test_rejected_delete_request_is_requested_again(): void
+    {
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
+            'coolify.test/api/v1/applications/app-1' => Http::sequence()
+                ->push(['message' => 'Server Error'], 500)
+                ->push(ProvisioningFakes::coolifyDeleteQueued()),
+        ]);
+
+        try {
+            $this->runStep(CoolifyDeleteStep::class, $this->archive, 'coolify_delete');
+            $this->fail('500 på DELETE gav inget fel.');
+        } catch (\App\Provisioning\Http\ExternalApiException) {
+            // väntat
+        }
+        $this->assertArrayNotHasKey('delete_requested', $this->stepRow($this->archive, 'coolify_delete')->fresh()->detail ?? []);
+
+        $this->assertSame(StepResult::WAIT, $this->runStep(CoolifyDeleteStep::class, $this->archive, 'coolify_delete')->outcome);
+        $this->assertCount(2, Http::recorded(fn ($r) => $r->method() === 'DELETE'));
+    }
+
     public function test_guard_failure_stops_archive_without_delete(): void
     {
         Queue::fake();
@@ -5575,8 +5699,11 @@ namespace App\Provisioning\Steps;
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Provisioning\Clients\CoolifyClient;
+use App\Provisioning\Clients\CoolifyGuardException;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 
 // Raderar bara det sparade uuid:t (spärren i klienten kontrollerar run och
@@ -5600,7 +5727,20 @@ final class CoolifyDeleteStep implements Step
             // (spärren skulle då vägra ett uuid som redan är borta).
             $marker = ['delete_requested' => true, 'delete_requested_at' => now()->toIso8601String()];
             $step->update(['detail' => [...$detail, ...$marker]]);
-            $this->coolify->deleteApplication($uuid);
+
+            try {
+                $this->coolify->deleteApplication($uuid);
+            } catch (CoolifyGuardException|ExternalApiException $e) {
+                // Spärren vägrade (inget skickat) eller Coolify svarade med en
+                // felstatus: raderingen begärdes bevisligen inte, så markören tas
+                // bort och retry_provisioning begär den igen. Vid status 0
+                // (anslutning/timeout) är utfallet okänt och markören står kvar.
+                if ($e instanceof CoolifyGuardException || $e->status !== 0) {
+                    $step->update(['detail' => $detail]);
+                }
+
+                throw $e;
+            }
 
             return StepResult::wait(30, $marker);
         }
@@ -5608,6 +5748,10 @@ final class CoolifyDeleteStep implements Step
         foreach ($this->coolify->demoApplications() as $app) {
             if ($app['uuid'] === $uuid) {
                 if (Carbon::parse($detail['delete_requested_at'])->addMinutes((int) config('provisioning.coolify_delete_timeout_minutes'))->isPast()) {
+                    // Markören tas bort så att retry_provisioning begär raderingen
+                    // igen i stället för att genast falla på samma passerade deadline.
+                    $step->update(['detail' => Arr::except($detail, ['delete_requested', 'delete_requested_at'])]);
+
                     throw new StepFailed("Coolify still lists application {$uuid} ".config('provisioning.coolify_delete_timeout_minutes').' minutes after the delete request.');
                 }
 
@@ -5713,7 +5857,7 @@ final class GameDeactivateStep implements Step
 cd $WT && php artisan test --filter='ArchiveStepsTest|AdvanceProvisioningRunTest'
 ```
 
-Förväntat: alla gröna (8 + 13).
+Förväntat: alla gröna (9 + 13).
 
 - [ ] **Steg 5: Commit.**
 
@@ -6334,6 +6478,7 @@ use App\Models\User;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\Saga;
 use App\Rules\GameSlug;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
@@ -6376,12 +6521,24 @@ class CreateGameTool extends PlatformTool
 
         // Kontroll och reservation under ett lås, så att två samtidiga anrop
         // inte båda ryms under taket. slug_lock är dessutom unik i databasen.
-        $run = Cache::lock('provisioning:create-game', 10)->block(5, fn () => $this->reserve($data, $user));
+        try {
+            $run = Cache::lock('provisioning:create-game', 10)->block(5, fn () => $this->reserve($data, $user));
+        } catch (LockTimeoutException) {
+            return Response::error('Another create_game call is being processed. Nothing was created; try again in a few seconds.');
+        }
         if ($run instanceof Response) {
             return $run;
         }
 
-        Saga::start($run);
+        try {
+            Saga::start($run);
+        } catch (\Throwable $e) {
+            // Annars står runnen kvar som running utan jobb, håller slugen och
+            // räknas mot taket. failed går att fortsätta med retry_provisioning.
+            $run->update(['status' => ProvisioningRun::FAILED, 'last_error' => 'saga: could not be started. Use retry_provisioning.']);
+
+            throw $e;
+        }
 
         return $this->json([
             'run' => $run->uuid,
@@ -7095,7 +7252,9 @@ use App\Models\Game;
 use App\Models\ProvisioningRun;
 use App\Models\User;
 use App\Provisioning\Saga;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\Cache;
 use Laravel\Mcp\Response;
 
 // Startar arkiveringssagan: Coolify-appen tas bort på sitt sparade uuid,
@@ -7132,13 +7291,38 @@ class ArchiveGameTool extends GameTool
             return Response::error('The game is listed (Live). Archiving is only allowed in Demo; ask Erik.');
         }
 
+        // Kontroll och skapande under ett lås per spel, så att två samtidiga
+        // anrop inte startar två arkiveringssagor mot samma uuid.
+        try {
+            $archive = Cache::lock("provisioning:archive-game:{$game->id}", 10)->block(5, fn () => $this->createArchiveRun($game, $provision, $user));
+        } catch (LockTimeoutException) {
+            return Response::error('Another archive_game call for this game is being processed. Nothing was started.');
+        }
+        if ($archive instanceof Response) {
+            return $archive;
+        }
+
+        try {
+            Saga::start($archive);
+        } catch (\Throwable $e) {
+            // Annars spärrar en running-run utan jobb all vidare arkivering.
+            $archive->update(['status' => ProvisioningRun::FAILED, 'last_error' => 'saga: could not be started. Use retry_provisioning.']);
+
+            throw $e;
+        }
+
+        return $this->json(['archive_run' => $archive->uuid, 'status' => ProvisioningRun::RUNNING]);
+    }
+
+    private function createArchiveRun(Game $game, ProvisioningRun $provision, User $user): ProvisioningRun|Response
+    {
         $existing = ProvisioningRun::where('kind', ProvisioningRun::KIND_ARCHIVE)->where('game_id', $game->id)
             ->whereIn('status', [ProvisioningRun::RUNNING, ProvisioningRun::FAILED])->first();
         if ($existing !== null) {
             return Response::error("An archive run already exists (status {$existing->status}). Use get_provisioning_status, or retry_provisioning if it failed.");
         }
 
-        $archive = ProvisioningRun::create([
+        return ProvisioningRun::create([
             'slug' => $game->slug,
             'slug_lock' => null,
             'name' => $game->name,
@@ -7153,9 +7337,6 @@ class ArchiveGameTool extends GameTool
             'siteops_site_id' => $provision->siteops_site_id,
             'demo_url' => $provision->demo_url,
         ]);
-        Saga::start($archive);
-
-        return $this->json(['archive_run' => $archive->uuid, 'status' => ProvisioningRun::RUNNING]);
     }
 }
 ```
@@ -7383,6 +7564,10 @@ class CheckProvisioning extends Command
 
     public function handle(GitHubAppClient $github, CoolifyClient $coolify, SiteOpsClient $siteops, SlackAlert $slack): int
     {
+        // Kommandoinstansen återanvänds inom en process (Artisan::call, tester):
+        // avvikelser från en tidigare körning får inte följa med.
+        $this->deviations = [];
+
         $missing = ProvisioningConfig::missing();
         if ($missing !== []) {
             $this->error('Provisioneringen är inte konfigurerad, saknas: '.implode(', ', $missing));
