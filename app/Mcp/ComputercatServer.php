@@ -13,6 +13,14 @@ class ComputercatServer extends Server
     protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Only games you are a member of are visible.';
 
     protected array $tools = [
-        Tools\PingTool::class,
+        Tools\ListGamesTool::class,
     ];
+
+    // Verktygslistan utan att starta servern. Invarianttesterna går igenom
+    // den, så att varje nytt verktyg automatiskt omfattas.
+    /** @return list<class-string<\Laravel\Mcp\Server\Tool>> */
+    public static function toolClasses(): array
+    {
+        return (new \ReflectionClass(static::class))->getDefaultProperties()['tools'];
+    }
 }

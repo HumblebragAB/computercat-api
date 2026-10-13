@@ -54,7 +54,7 @@ class PassportRoutesTest extends TestCase
         $response = $this->withCredentials()->withCookie(Passport::cookie(), $cookie->getValue())
             ->withHeader('X-CSRF-TOKEN', 'csrf-test')
             ->postJson('/mcp', ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call',
-                'params' => ['name' => 'ping', 'arguments' => (object) []]]);
+                'params' => ['name' => 'list_games', 'arguments' => (object) []]]);
 
         $this->assertContains($response->status(), [401, 403]);
         $this->assertNull($response->json('result'));

@@ -88,6 +88,12 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(10)->by('mcp-oauth:'.$request->ip());
         });
 
+        // /mcp per inloggad användare. Ligger efter auth:mcp men före EnsureStaff,
+        // så att även nekade anrop räknas innan de skriver revisionsloggen.
+        RateLimiter::for('mcp', function (Request $request) {
+            return Limit::perMinute(120)->by('mcp:'.($request->user()?->getAuthIdentifier() ?? $request->ip()));
+        });
+
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });

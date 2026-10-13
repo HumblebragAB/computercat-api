@@ -15,6 +15,8 @@ use Laravel\Passport\Http\Middleware\CheckToken;
 Route::middleware('throttle:mcp-oauth')->group(fn () => Mcp::oauthRoutes());
 
 // EnsureStaff kontrollerar flaggan vid varje anrop: en token slutar fungera
-// direkt när staff tas bort eller kontot bannas.
+// direkt när staff tas bort eller kontot bannas. throttle:mcp (120/min per
+// användare) ligger före EnsureStaff, så att nekade anrop begränsas innan de
+// skriver revisionsloggen.
 Mcp::web('/mcp', ComputercatServer::class)
-    ->middleware(['auth:mcp', CheckToken::using('mcp:use'), EnsureStaff::class]);
+    ->middleware(['auth:mcp', 'throttle:mcp', CheckToken::using('mcp:use'), EnsureStaff::class]);

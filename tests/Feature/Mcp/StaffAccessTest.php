@@ -20,13 +20,13 @@ class StaffAccessTest extends TestCase
         return User::factory()->staff()->create($attrs);
     }
 
-    private function mcpPing(User $user)
+    private function mcpCall(User $user)
     {
         Passport::actingAs(StaffUser::find($user->id), ['mcp:use'], 'mcp');
 
         return $this->postJson('/mcp', [
             'jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call',
-            'params' => ['name' => 'ping', 'arguments' => (object) []],
+            'params' => ['name' => 'list_games', 'arguments' => (object) []],
         ]);
     }
 
@@ -71,9 +71,9 @@ class StaffAccessTest extends TestCase
 
     public function test_non_staff_and_banned_are_denied_on_mcp(): void
     {
-        $this->mcpPing(User::factory()->create())->assertForbidden();
-        $this->mcpPing($this->staff(['is_banned' => true]))->assertForbidden();
-        $this->mcpPing($this->staff())->assertOk();
+        $this->mcpCall(User::factory()->create())->assertForbidden();
+        $this->mcpCall($this->staff(['is_banned' => true]))->assertForbidden();
+        $this->mcpCall($this->staff())->assertOk();
 
         $this->assertSame(2, \App\Models\McpAuditLog::where('outcome', 'denied')->count());
     }
@@ -82,17 +82,17 @@ class StaffAccessTest extends TestCase
     {
         \Illuminate\Support\Facades\Schema::drop('mcp_audit_logs');
 
-        $this->mcpPing(User::factory()->create())->assertForbidden();
+        $this->mcpCall(User::factory()->create())->assertForbidden();
     }
 
     public function test_revoking_staff_denies_next_call(): void
     {
         $user = $this->staff();
-        $this->mcpPing($user)->assertOk();
+        $this->mcpCall($user)->assertOk();
 
         $user->forceFill(['is_staff' => false])->save();
 
-        $this->mcpPing($user)->assertForbidden();
+        $this->mcpCall($user)->assertForbidden();
     }
 
     private function authorizeUrl(string $clientName = 'Claude'): string
