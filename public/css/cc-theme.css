@@ -1,0 +1,38 @@
+/* Computer Cat, Fosfor-tema: typsnitt och tokens. Enda källan för färgerna.
+   Laddas av admin och login (Filament ->font()), MCP-godkännandet och intresse-sidorna. */
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/plex-mono/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/plex-mono/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+    font-family: 'IBM Plex Mono';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/plex-mono/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+}
+
+:root {
+    --cc-font: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --cc-bg: #0d0b08;
+    --cc-surface: #15110a;
+    --cc-line: #2e2412;
+    --cc-text: #efe6d2;
+    --cc-amber: #f2b544;
+    --cc-amber-hover: #f6c76e;
+    --cc-muted: #a0824a;
+    --cc-ok: #9fd36b;
+    --cc-warn: #f08a24;
+    --cc-danger: #e8664a;
+}
