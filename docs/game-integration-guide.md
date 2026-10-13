@@ -268,7 +268,28 @@ Common status codes:
 | GET | `/v1/games/{slug}/saves/{key}` | Yes | Get save data |
 | PUT | `/v1/games/{slug}/saves/{key}` | Yes | Save/update with version lock |
 | DELETE | `/v1/games/{slug}/saves/{key}` | Yes | Delete save |
+| GET | `/v1/games/{slug}/daily/{pool}` | Yes | Today's item from a content pool |
+| GET | `/v1/games/{slug}/daily/{pool}/{date}` | Yes | Item for a past date |
+| GET | `/v1/games/{slug}/pools/{pool}/items` | Yes | Random items from a pool (random access) |
 | GET | `/v1/purchases` | Yes | List purchases |
+
+## Content pools, slumpade poster
+
+Frågebanker och liknande innehåll läggs som en content pool i admin (Edit Game → Daily Content Pools) och kräver ingen deploy. `content` är en JSON-lista där varje post är fritt JSON. Slå på **Random access** för poolen, annars svarar endpointen 404. Det skyddar dagliga pooler, eftersom slumpade uttag låter spelaren läsa ut hela poolen.
+
+```
+GET /api/v1/games/tells/pools/questions-sv/items?count=20
+Authorization: Bearer <token>
+```
+
+```json
+{"data": [{"id": "sv-1", "question": "…", "answer": "…", "category": "geography", "lang": "sv"}], "pool_key": "questions-sv"}
+```
+
+- `count` är 1–100 (default 20). Svaret innehåller högst så många poster som poolen har, utan dubbletter och i slumpad ordning.
+- Konvention: en pool per språk (`questions-sv`, `questions-en`).
+- En pool rymmer högst 5 000 poster och läses i sin helhet vid varje anrop.
+- Alla spelartokens kan läsa alla aktiva spels pooler (tokens är inte knutna till ett spel). Lägg aldrig något hemligt i en pool.
 
 ## Intresseanmälan (interest signup)
 

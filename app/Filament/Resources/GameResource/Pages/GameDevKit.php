@@ -463,7 +463,7 @@ class GameDevKit extends Page implements HasForms
             $lines[] = "```";
             $lines[] = "Response:";
             $lines[] = "```json";
-            $lines[] = '{"data": {"pool_key": "puzzles", "date": "2026-04-02", "content": {...}, "index": 42}}';
+            $lines[] = '{"data": <item>, "date": "2026-04-02", "pool_key": "puzzles"}';
             $lines[] = "```";
             $lines[] = "";
             $lines[] = "### Get content for a past date";
@@ -480,7 +480,8 @@ class GameDevKit extends Page implements HasForms
                 $lines[] = "### Configured pools";
                 foreach ($game->dailyContentPools as $pool) {
                     $count = is_array($pool->content) ? count($pool->content) : 0;
-                    $lines[] = "- `{$pool->pool_key}` — {$count} items";
+                    $random = $pool->random_access ? ' (random access)' : '';
+                    $lines[] = "- `{$pool->pool_key}` — {$count} items{$random}";
                 }
                 $lines[] = "";
             }
@@ -489,6 +490,19 @@ class GameDevKit extends Page implements HasForms
             $lines[] = "1. On app launch, fetch today's content: `GET /daily/{poolKey}`";
             $lines[] = "2. Cache locally by date — content won't change for a given date";
             $lines[] = "3. If offline, fall back to cached content or a local pool";
+            $lines[] = "";
+            $lines[] = "### Random items from a pool";
+            $lines[] = "For question banks and similar, where the player may see the whole pool. The pool must have **Random access** switched on, otherwise 404.";
+            $lines[] = "```";
+            $lines[] = "GET {$baseUrl}/games/{$game->slug}/pools/{poolKey}/items?count=20";
+            $lines[] = "Authorization: Bearer <token>";
+            $lines[] = "```";
+            $lines[] = "Response:";
+            $lines[] = "```json";
+            $lines[] = '{"data": [<item>, <item>, ...], "pool_key": "questions-sv"}';
+            $lines[] = "```";
+            $lines[] = "- `count`: 1–100, default 20. Returns at most the pool size, distinct items, random order.";
+            $lines[] = "- One pool per language is the convention (`questions-sv`, `questions-en`).";
             $lines[] = "";
         }
 

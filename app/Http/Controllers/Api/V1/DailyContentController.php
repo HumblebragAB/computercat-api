@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DailyContentPool;
 use App\Models\Game;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 class DailyContentController extends Controller
 {
@@ -27,16 +28,29 @@ class DailyContentController extends Controller
         return $this->contentForDate($game, $poolKey, $date);
     }
 
+    public function items(Request $request, Game $game, string $poolKey): JsonResponse
+    {
+        $validated = $request->validate([
+            'count' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $pool = DailyContentPool::available($game, $poolKey, now()->toDateString())
+            ->where('random_access', true)
+            ->first();
+
+        if (! $pool) {
+            return response()->json(['message' => 'Content pool not found.'], 404);
+        }
+
+        return response()->json([
+            'data' => $pool->randomItems((int) ($validated['count'] ?? 20)),
+            'pool_key' => $poolKey,
+        ]);
+    }
+
     private function contentForDate(Game $game, string $poolKey, string $date): JsonResponse
     {
-        $pool = DailyContentPool::where('game_id', $game->id)
-            ->where('pool_key', $poolKey)
-            ->where('is_active', true)
-            ->where(function ($query) use ($date) {
-                $query->whereNull('starts_at')
-                    ->orWhere('starts_at', '<=', $date);
-            })
-            ->first();
+        $pool = DailyContentPool::available($game, $poolKey, $date)->first();
 
         if (! $pool) {
             return response()->json(['message' => 'Content pool not found.'], 404);

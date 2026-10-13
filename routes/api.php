@@ -133,6 +133,7 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
             // Daily Content
             Route::get('/daily/{poolKey}', [DailyContentController::class, 'show']);
             Route::get('/daily/{poolKey}/{date}', [DailyContentController::class, 'showDate']);
+            Route::get('/pools/{poolKey}/items', [DailyContentController::class, 'items']);
 
             // Streaks
             Route::get('/streaks/{key}', [StreakController::class, 'show']);
