@@ -4,6 +4,8 @@ namespace Tests\Feature\Console;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class StaffCommandTest extends TestCase
@@ -41,6 +43,48 @@ class StaffCommandTest extends TestCase
             ->expectsConfirmation('Ta bort staff-behörighet från detta konto?', 'yes')->assertSuccessful();
         $this->assertFalse($user->fresh()->is_staff);
         $this->assertFalse($user->fresh()->is_platform_admin);
+    }
+
+    /** Tokens får inte vakna igen om kontot senare får staff tillbaka. */
+    public function test_revoke_also_revokes_oauth_tokens(): void
+    {
+        $user = User::factory()->staff()->create(['email' => 'erik@humblebrag.se']);
+        $other = User::factory()->staff()->create();
+        $mine = $this->oauthToken($user);
+        $theirs = $this->oauthToken($other);
+
+        $this->artisan('computercat:staff', ['email' => 'erik@humblebrag.se', '--revoke' => true])
+            ->expectsConfirmation('Ta bort staff-behörighet från detta konto?', 'yes')->assertSuccessful();
+
+        $this->assertTrue((bool) DB::table('oauth_access_tokens')->where('id', $mine)->value('revoked'));
+        $this->assertTrue((bool) DB::table('oauth_refresh_tokens')->where('access_token_id', $mine)->value('revoked'));
+        $this->assertTrue((bool) DB::table('oauth_auth_codes')->where('user_id', $user->id)->value('revoked'));
+        $this->assertFalse((bool) DB::table('oauth_access_tokens')->where('id', $theirs)->value('revoked'));
+        $this->assertFalse((bool) DB::table('oauth_refresh_tokens')->where('access_token_id', $theirs)->value('revoked'));
+        $this->assertFalse((bool) DB::table('oauth_auth_codes')->where('user_id', $other->id)->value('revoked'));
+    }
+
+    /** Ett nekat --revoke rör inga tokens. */
+    public function test_declined_revoke_keeps_oauth_tokens(): void
+    {
+        $user = User::factory()->staff()->create(['email' => 'erik@humblebrag.se']);
+        $token = $this->oauthToken($user);
+
+        $this->artisan('computercat:staff', ['email' => 'erik@humblebrag.se', '--revoke' => true])
+            ->expectsConfirmation('Ta bort staff-behörighet från detta konto?', 'no')->assertFailed();
+
+        $this->assertFalse((bool) DB::table('oauth_access_tokens')->where('id', $token)->value('revoked'));
+    }
+
+    private function oauthToken(User $user): string
+    {
+        $client = (string) Str::uuid();
+        $id = Str::random(80);
+        DB::table('oauth_access_tokens')->insert(['id' => $id, 'user_id' => $user->id, 'client_id' => $client, 'scopes' => '["mcp:use"]', 'revoked' => false, 'created_at' => now(), 'updated_at' => now(), 'expires_at' => now()->addHour()]);
+        DB::table('oauth_refresh_tokens')->insert(['id' => Str::random(80), 'access_token_id' => $id, 'revoked' => false, 'expires_at' => now()->addDays(30)]);
+        DB::table('oauth_auth_codes')->insert(['id' => Str::random(80), 'user_id' => $user->id, 'client_id' => $client, 'scopes' => '["mcp:use"]', 'revoked' => false, 'expires_at' => now()->addMinutes(10)]);
+
+        return $id;
     }
 
     public function test_unknown_or_anonymous_account_is_refused(): void

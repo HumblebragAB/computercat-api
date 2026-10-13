@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\User;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 // Enda vägen att sätta staff-flaggorna. Visar kontot först, eftersom
 // e-postadresser är overifierade och en spelare kan ha registrerat en
@@ -42,7 +43,20 @@ class StaffCommand extends Command
             if (! $this->confirm('Ta bort staff-behörighet från detta konto?')) {
                 return self::FAILURE;
             }
-            $user->forceFill(['is_staff' => false, 'is_platform_admin' => false])->save();
+            // EnsureStaff stoppar redan tokens för konton utan staff, men de
+            // återkallas också, så att de inte börjar gälla igen om kontot
+            // senare får staff tillbaka. Refresh-tokens saknar user_id och
+            // hittas via sin access-token.
+            $revoked = DB::transaction(function () use ($user) {
+                $user->forceFill(['is_staff' => false, 'is_platform_admin' => false])->save();
+
+                $tokenIds = DB::table('oauth_access_tokens')->where('user_id', $user->id)->pluck('id');
+                DB::table('oauth_refresh_tokens')->whereIn('access_token_id', $tokenIds)->update(['revoked' => true]);
+                DB::table('oauth_auth_codes')->where('user_id', $user->id)->update(['revoked' => true]);
+
+                return DB::table('oauth_access_tokens')->whereIn('id', $tokenIds)->update(['revoked' => true]);
+            });
+            $this->line("Återkallade OAuth-tokens: {$revoked}.");
         }
 
         $this->info('Klart.');
