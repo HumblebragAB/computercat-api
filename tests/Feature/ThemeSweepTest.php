@@ -82,8 +82,10 @@ class ThemeSweepTest extends TestCase
         foreach (['result', 'unsubscribe'] as $vy) {
             $html = file_get_contents("$root/resources/views/interest/$vy.blade.php");
             $this->assertStringContainsString("ThemeAsset::url('css/cc-theme.css')", $html);
-            $this->assertStringContainsString('#fbf7ee', $html);
-            $this->assertStringContainsString('#8a5a00', $html);
+            $this->assertStringContainsString('#fbfaf6', $html);
+            $this->assertStringContainsString('#111111', $html);
+            $this->assertStringContainsString("'Silkscreen'", $html);
+            $this->assertStringNotContainsString('#8a5a00', $html);
         }
     }
 }
