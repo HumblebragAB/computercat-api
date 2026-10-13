@@ -24,7 +24,7 @@ class McpPingTest extends TestCase
 
     public function test_ping_answers_with_the_authenticated_user_id(): void
     {
-        $staff = StaffUser::findOrFail(User::factory()->create()->id);
+        $staff = StaffUser::findOrFail(User::factory()->staff()->create()->id);
         Passport::actingAs($staff, ['mcp:use'], 'mcp');
 
         $response = $this->callPing();
@@ -35,7 +35,7 @@ class McpPingTest extends TestCase
 
     public function test_token_without_mcp_scope_is_refused(): void
     {
-        $staff = StaffUser::findOrFail(User::factory()->create()->id);
+        $staff = StaffUser::findOrFail(User::factory()->staff()->create()->id);
         Passport::actingAs($staff, [], 'mcp');
 
         $response = $this->callPing();

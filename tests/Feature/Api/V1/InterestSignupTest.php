@@ -190,7 +190,7 @@ class InterestSignupTest extends TestCase
     public function test_adminvyn_listar_anmalningar_for_admin(): void
     {
         $this->anmal();
-        $admin = \App\Models\User::factory()->create(['email' => 'erik@humblebrag.se']);
+        $admin = \App\Models\User::factory()->staff()->create(['email' => 'erik@humblebrag.se']);
 
         $this->actingAs($admin)->get('/admin/interest-signups')->assertOk()->assertSee('anna@example.com');
     }

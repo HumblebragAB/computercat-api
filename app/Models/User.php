@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasStaffFlags;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -12,14 +13,13 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements FilamentUser
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, HasStaffFlags, Notifiable;
 
+    // Panelen följer staff-flaggan (computercat:staff), inte e-postadressen:
+    // adresser är overifierade och kan registreras av vem som helst.
     public function canAccessPanel(Panel $panel): bool
     {
-        return in_array($this->email, [
-            'erik@humblebrag.se',
-            'mattias@humblebrag.se',
-        ]);
+        return $this->isStaff();
     }
 
     protected $fillable = [
@@ -46,6 +46,8 @@ class User extends Authenticatable implements FilamentUser
             'password' => 'hashed',
             'is_anonymous' => 'boolean',
             'is_banned' => 'boolean',
+            'is_staff' => 'boolean',
+            'is_platform_admin' => 'boolean',
             'last_seen_at' => 'datetime',
         ];
     }

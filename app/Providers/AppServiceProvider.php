@@ -15,6 +15,12 @@ class AppServiceProvider extends ServiceProvider
         // Utan egen transporter bygger skannern en Guzzle med timeout. Bind
         // uttryckligen så att containern aldrig skickar in en annan PSR-18-klient.
         $this->app->bind(\App\Services\Glosis\HomeworkScanner::class, fn () => new \App\Services\Glosis\HomeworkScanner);
+
+        // Passports routes registreras i routes/passport.php (staff-krav på authorize,
+        // utan device code och /oauth/token/refresh). Device code-granten stängs av
+        // också i auktoriseringsservern; Passport har ingen metod för det.
+        Passport::ignoreRoutes();
+        Passport::$deviceCodeGrantEnabled = false;
     }
 
     public function boot(): void

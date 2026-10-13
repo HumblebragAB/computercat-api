@@ -91,7 +91,7 @@ class AiUsageReportTest extends TestCase
 
     public function test_page_renders_for_admin(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $this->usage('scan', '2026-10-15 08:00', '1.250000');
 
         Livewire::test(AiUsageOverview::class)

@@ -1,0 +1,134 @@
+<?php
+
+namespace Tests\Feature\Mcp;
+
+use App\Models\StaffUser;
+use App\Models\User;
+use Filament\Facades\Filament;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Laravel\Passport\ClientRepository;
+use Laravel\Passport\Passport;
+use Tests\TestCase;
+
+class StaffAccessTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private function staff(array $attrs = []): User
+    {
+        return User::factory()->staff()->create($attrs);
+    }
+
+    private function mcpPing(User $user)
+    {
+        Passport::actingAs(StaffUser::find($user->id), ['mcp:use'], 'mcp');
+
+        return $this->postJson('/mcp', [
+            'jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call',
+            'params' => ['name' => 'ping', 'arguments' => (object) []],
+        ]);
+    }
+
+    public function test_staff_flags_are_not_mass_assignable(): void
+    {
+        $user = User::factory()->create();
+        $user->update(['is_staff' => true, 'is_platform_admin' => true]);
+
+        $this->assertFalse($user->fresh()->is_staff);
+        $this->assertFalse($user->fresh()->is_platform_admin);
+    }
+
+    public function test_staff_flags_and_helpers_match_on_user_and_staff_user(): void
+    {
+        $admin = $this->staff(['is_platform_admin' => true]);
+        $staff = $this->staff();
+        $banned = User::factory()->staff(admin: true)->create(['is_banned' => true]);
+
+        foreach ([$admin, StaffUser::find($admin->id)] as $model) {
+            $this->assertTrue($model->isStaff());
+            $this->assertTrue($model->isPlatformAdmin());
+        }
+        foreach ([$staff, StaffUser::find($staff->id)] as $model) {
+            $this->assertTrue($model->isStaff());
+            $this->assertFalse($model->isPlatformAdmin());
+        }
+        foreach ([$banned, StaffUser::find($banned->id)] as $model) {
+            $this->assertFalse($model->isStaff());
+            $this->assertFalse($model->isPlatformAdmin());
+        }
+    }
+
+    public function test_panel_access_follows_flag_not_email(): void
+    {
+        $panel = Filament::getDefaultPanel();
+        $player = User::factory()->create(['email' => 'mattias@humblebrag.se', 'is_anonymous' => false]);
+
+        $this->assertFalse($player->canAccessPanel($panel));
+        $this->assertTrue($this->staff()->canAccessPanel($panel));
+        $this->assertFalse($this->staff(['is_banned' => true])->canAccessPanel($panel));
+    }
+
+    public function test_non_staff_and_banned_are_denied_on_mcp(): void
+    {
+        $this->mcpPing(User::factory()->create())->assertForbidden();
+        $this->mcpPing($this->staff(['is_banned' => true]))->assertForbidden();
+        $this->mcpPing($this->staff())->assertOk();
+    }
+
+    public function test_revoking_staff_denies_next_call(): void
+    {
+        $user = $this->staff();
+        $this->mcpPing($user)->assertOk();
+
+        $user->forceFill(['is_staff' => false])->save();
+
+        $this->mcpPing($user)->assertForbidden();
+    }
+
+    private function authorizeUrl(): string
+    {
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
+            name: 'Claude', redirectUris: ['https://claude.ai/api/mcp/auth_callback'], confidential: false,
+        );
+
+        return route('passport.authorizations.authorize', [
+            'client_id' => $client->getKey(), 'redirect_uri' => 'https://claude.ai/api/mcp/auth_callback',
+            'response_type' => 'code', 'scope' => 'mcp:use', 'state' => 's',
+            'code_challenge' => rtrim(strtr(base64_encode(hash('sha256', str_repeat('a', 64), true)), '+/', '-_'), '='),
+            'code_challenge_method' => 'S256',
+        ]);
+    }
+
+    public function test_non_staff_cannot_reach_or_approve_authorize(): void
+    {
+        $this->actingAs(User::factory()->create());
+
+        $this->get($this->authorizeUrl())->assertForbidden();
+        $this->post(route('passport.authorizations.approve'))->assertForbidden();
+        $this->delete(route('passport.authorizations.deny'))->assertForbidden();
+    }
+
+    public function test_banned_staff_cannot_reach_authorize(): void
+    {
+        $this->actingAs($this->staff(['is_banned' => true]));
+
+        $this->get($this->authorizeUrl())->assertForbidden();
+    }
+
+    public function test_guest_is_sent_to_login_and_back_to_authorize(): void
+    {
+        $url = $this->authorizeUrl();
+
+        $this->get($url)->assertRedirect('/login');
+        $this->get('/login')->assertRedirect('/admin/login');
+        // Laravel sorterar query-parametrarna i fullUrl(); jämför samma adress normaliserad.
+        $this->assertSame(Request::create($url)->fullUrl(), session('url.intended'));
+
+        // Efter inloggning via Filament ska intended leda tillbaka till authorize.
+        // Vyn mcp::authorize laddar resources/css/app.css via @vite; testerna bygger inga assets.
+        $this->withoutVite();
+        $this->actingAs($this->staff());
+        $this->get(redirect()->intended('/admin')->getTargetUrl())->assertOk()->assertSee('Claude');
+    }
+}

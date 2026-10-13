@@ -39,7 +39,7 @@ class GameVoicesTest extends TestCase
     {
         parent::setUp();
 
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $this->game = Game::where('slug', 'glosis')->firstOrFail();
         $this->game->update(['settings' => [
             'site_url' => 'https://glosis.se',

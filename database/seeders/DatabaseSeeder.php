@@ -9,7 +9,7 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // Create admin users for Filament
+        // Konton för Erik och Mattias. Panelåtkomst ges separat med computercat:staff.
         $admins = [
             ['name' => 'Erik', 'email' => 'erik@humblebrag.se', 'password' => env('ADMIN_ERIK_PASS', 'password')],
             ['name' => 'Mattias', 'email' => 'mattias@humblebrag.se', 'password' => env('ADMIN_MATTIAS_PASS', 'password')],

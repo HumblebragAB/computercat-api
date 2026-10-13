@@ -45,7 +45,7 @@ class GlosisSetupTest extends TestCase
 
     public function test_filament_stores_anthropic_key_encrypted_and_never_shows_it(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $game = Game::where('slug', 'glosis')->firstOrFail();
 
         Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
@@ -73,7 +73,7 @@ class GlosisSetupTest extends TestCase
 
     public function test_filament_stores_google_play_service_account_encrypted_and_never_shows_it(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $game = Game::where('slug', 'glosis')->firstOrFail();
         $json = \Tests\Support\FakeGooglePlay::serviceAccountJson();
         $keyLine = explode("\n", json_decode($json, true)['private_key'])[1];
@@ -110,7 +110,7 @@ class GlosisSetupTest extends TestCase
 
     public function test_filament_stores_ai_limits_and_elevenlabs_settings(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $game = Game::where('slug', 'glosis')->firstOrFail();
         $game->update(['settings' => ['site_url' => 'https://glosis.se']]);
 
@@ -151,7 +151,7 @@ class GlosisSetupTest extends TestCase
 
     public function test_filament_rejects_bad_voice_id_and_negative_limits(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $game = Game::where('slug', 'glosis')->firstOrFail();
 
         Livewire::test(EditGame::class, ['record' => $game->getRouteKey()])
@@ -162,7 +162,7 @@ class GlosisSetupTest extends TestCase
 
     public function test_glosis_ai_section_is_hidden_for_other_games(): void
     {
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $tocco = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true, 'settings' => ['scan' => ['weekly_limit' => 7]]]);
 
         Livewire::test(EditGame::class, ['record' => $tocco->getRouteKey()])
@@ -177,7 +177,7 @@ class GlosisSetupTest extends TestCase
     {
         // Game::$hidden = ['settings'] gjorde att formuläret laddades tomt och
         // en sparning skrev null över sparade värden.
-        $this->actingAs(User::factory()->create(['email' => 'erik@humblebrag.se']));
+        $this->actingAs(User::factory()->staff()->create(['email' => 'erik@humblebrag.se']));
         $game = Game::where('slug', 'glosis')->firstOrFail();
         $secret = Crypt::encryptString('whsec-hemlig');
         $game->update(['settings' => [

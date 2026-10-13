@@ -22,7 +22,7 @@ class DailyContentPoolsRelationManagerTest extends TestCase
         parent::setUp();
 
         $this->game = Game::create(['slug' => 'tells', 'name' => 'Tells', 'is_active' => true, 'settings' => []]);
-        $this->actingAs(User::factory()->create());
+        $this->actingAs(User::factory()->staff()->create());
     }
 
     private function create(string $content)

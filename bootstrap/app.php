@@ -15,6 +15,10 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         apiPrefix: 'api',
+        // Passport::ignoreRoutes() i AppServiceProvider; se routes/passport.php.
+        then: function () {
+            require __DIR__.'/../routes/passport.php';
+        },
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->throttleApi('60,1');

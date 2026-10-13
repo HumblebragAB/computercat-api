@@ -41,4 +41,14 @@ class UserFactory extends Factory
             'email_verified_at' => null,
         ]);
     }
+
+    /**
+     * Staff (panel + MCP). Factories skapar oskyddat, så flaggorna sätts trots
+     * att de inte är fillable. Staff är alltid riktiga konton (computercat:staff
+     * vägrar anonyma), så is_anonymous sätts till false.
+     */
+    public function staff(bool $admin = false): static
+    {
+        return $this->state(fn () => ['is_staff' => true, 'is_platform_admin' => $admin, 'is_anonymous' => false]);
+    }
 }
