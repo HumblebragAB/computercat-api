@@ -46,11 +46,12 @@
   - Varje anrop med ett app-uuid kräver att uuid:t finns i `provisioning_runs.coolify_app_uuid`; `DELETE`, `PATCH` och `POST envs` kräver dessutom att appen finns i Demo-projektets `applications`.
 - SiteOps, kontraktet som 2a låser (`2026-10-13-provisionering-2a-siteops.md`, "Låst API-kontrakt"), bas `{SITEOPS_URL}/api/v1`, headers `X-Api-Key: {SITEOPS_API_KEY}` och `Accept: application/json`. Nyckeln har exakt `sites:read` + `demo-sites:write` (smalt scope, Eriks beslut 2026-10-13: bara Demo-webbar kan skapas, `credentials`/`pejl_customer_id`/`cms_type` ger 422, alla andra skrivande routes 403; en avaktiverad klients JWT avvisas direkt).
   - `GET /sites?url=<urlencoded exakt URL>` (`sites:read`) → 200 `{"data":[<webblistpost med bl.a. id, url, is_active>],"meta":{"total":N}}`. Matchar webbens `url` eller någon miljös `url`, exakt, med eller utan avslutande `/`; inaktiva webbar kommer med. Ingen träff: `{"data":[],"meta":{"total":0}}`.
-  - `POST /sites` (`demo-sites:write`; `environment.type` måste vara `demo`, och `credentials`, `pejl_customer_id`, `cms_type` skickas aldrig: de ger 422 med det smala scopet) body `{name, url, type: "app", environment: {type: "demo", name: "Demo", url, basic_auth_user, basic_auth_password, is_monitored: true}}` → 201 `{"data":{<webbdetalj: id, url, is_active, monitoring_enabled, …>,"environment":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}}`. 409 `{"error":"A site with this URL already exists in the team.","site_id":N}` när en webb i teamet redan har adressen.
+  - `POST /sites` (`demo-sites:write`; `environment.type` måste vara `demo`, och `credentials`, `pejl_customer_id`, `cms_type` skickas aldrig: de ger 422 med det smala scopet) body `{name, url, type: "app", environment: {type: "demo", name: "Demo", url, basic_auth_user, basic_auth_password, is_monitored: false}}` → 201 `{"data":{<webbdetalj: id, url, is_active, monitoring_enabled, …>,"environment":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}}`. 409 `{"error":"A site with this URL already exists in the team.","site_id":N}` när en webb i teamet redan har adressen.
   - `PATCH /sites/{id}/environments/{env}` (`demo-sites:write`) body delmängd av `{basic_auth_user, basic_auth_password, is_monitored}` (basic auth alltid parvis) → 200 `{"data":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}`; 403 om webben inte skapades av samma API-klient (inget ändras), 404 om webb/miljö saknas.
   - `POST /sites/{id}/deactivate` (`demo-sites:write`, ingen body) → 200 `{"data":{"id":N,"is_active":false,"monitoring_enabled":false}}`, idempotent; 403 om webben inte skapades av samma API-klient.
   - `GET /sites/{id}` (`sites:read`) → `{"data":{id, name, url, type, is_active, monitoring_enabled, …}}`. `GET /sites/{id}/environments` (`sites:read`) → `{"data":[{id, name, type, url, is_monitored, has_basic_auth, …}],"meta":{"total":N}}`. Basic auth-värden finns aldrig i något svar.
   - **Ägarskap:** PATCH och deactivate fungerar bara på webbar som Computercats egen API-klient skapade (`sites.api_client_id` i 2a). En webb som hittas via uppslaget eller 409 adopteras bara om (a) dess `url` är exakt runnens `demo_url` (avslutande `/` ignoreras), (b) den har en miljö av typ `demo` med samma URL, (c) den är aktiv, och (d) `PATCH` av den miljön till Demo-värdena ger 200. 403 på (d), eller att (a)–(c) inte håller → `StepFailed`, sagan stannar och Erik larmas. Ingen gissning, ingen ny webb bredvid.
+- **Övervakning av Demo-miljön slås på först när Demo lever** (Eriks beslut 2026-10-13, inga falsklarm innan första pushen). `siteops`-steget skapar miljön med `is_monitored: false` (webbens `monitoring_enabled` är sann från start). När Computercat första gången ser att senaste bygget är `finished` och Demo-URL svarar 200 med basic auth (i `get_provisioning_status` och i invarianten utan `--dry-run`) skickas en gång `PATCH /sites/{id}/environments/{env}` med `{is_monitored: true}`, och tiden sparas i `provisioning_runs.monitoring_enabled_at` (`DemoMonitoring::enableIfLive()`, Task 15). Invarianten kräver `is_monitored: true` bara för runs med `monitoring_enabled_at`; runs utan lyckad deploy larmar först efter karenstiden (7 dagar).
 - Slack: inkommande webhook, `POST {SLACK_ALERT_WEBHOOK_URL}` JSON `{text}`, timeout 5 s, `&`, `<`, `>` escapas i användarvärden.
 - README-kontrakt (byggguidens `templates/README.md`, ursprungligen 2b "Gränssnitt mot 2c"): mallen har `{{name}}` i första raden (ersätts med spelets namn, `<` och `>` escapade, radbrytningar till mellanslag) och har startmarkören `<!-- computercat:idea:start -->` och slutmarkören `<!-- computercat:idea:end -->`, var och en exakt en gång, på en egen rad, start före slut. Repo-steget ersätter allt mellan markörerna med `"\n" + idé + "\n"` och behåller markörerna (idempotent). I idén ersätts `<!--` med `&lt;!--` och `-->` med `--&gt;` före skrivning. Saknas en markör, förekommer den mer än en gång, står den inte på egen rad eller kommer slut före start: steget fallerar och skriver ingenting. `auto_init` skapar README i första commiten; `GET …/contents/README.md` som ger 404 försöks igen (var 10:e sekund, högst `repo_ready_timeout_minutes`) innan steget fallerar. Hela README skrivs över med mallen (auto_init-texten behålls inte). `CLAUDE.md` skrivs exakt som byggguidens fil med samma sökväg. Build-variabeln heter `NEXT_PUBLIC_COMPUTERCAT_GAME`. Guiden kräver Node 22 (`engines.node: "22.x"`), se spikpunkt S20.
 - Byggguiden (spec "2c. Byggguiden"): `resources/byggguide/<version>/` med `manifest.json`, `files/` och `templates/README.md`. Version matchar `/^v[1-9][0-9]{0,2}\z/`; `BuildGuide::LATEST = 'v1'`. En publicerad version ändras aldrig (låst med `BuildGuide::FROZEN`, sha256 av `manifest.json`). Filsökvägar slås bara upp i manifestet. Varje läsning kontrollerar `sha256` och kastar vid avvikelse. MCP-svar hålls under 50 000 tecken (Claude Codes gräns innan svaret läggs i fil, code.claude.com/docs/en/mcp): filer över `BuildGuide::INLINE_MAX_BYTES = 30000` levereras med `delivery: "download"` via den publika REST-vägen `GET /api/v1/build-guide/{version}/files/{path}` (`throttle:build-guide`, 30/min per IP).
@@ -77,7 +78,7 @@ Sju fel som specen innebär men som lätt passerar oupptäckta; varje rad har et
 4. **Coolify-token når hela teamet.** En uuid som inte kommer från en run, eller en app utanför Demo-projektet, får aldrig raderas eller ändras. Test: `CoolifyClientTest::test_delete_refuses_unknown_uuid_without_any_request` och `test_delete_refuses_app_outside_demo_project` (Task 10), `ArchiveStepsTest::test_guard_failure_stops_archive_without_delete` (Task 16).
 5. **Ett tidigt fel syns inte för den som skapade spelet.** Fallerar `repo`-steget finns inget spel ännu, så `get_provisioning_status(game)` och `retry_provisioning(game)` skulle svara "Game not found" och Mattias Claude får aldrig veta varför. Test: `ProvisioningStatusToolTest::test_creator_sees_run_before_game_exists_but_others_do_not` och `RetryProvisioningToolTest::test_creator_can_retry_run_without_game` (Task 19).
 6. **Byggguiden glider från sitt manifest.** En fil ändras utan att `sha256` uppdateras, en fil ligger utanför manifestet, `stack` i manifestet säger en version och `package.json` en annan, eller en publicerad version ändras i efterhand; spelets Claude skriver då något annat än det som verifierades. Test: `BuildGuideTest::test_every_file_matches_its_sha256_and_nothing_is_unlisted`, `test_stack_matches_package_json`, `test_published_versions_are_frozen` (Task 8A) och `BuildGuideToolsTest::test_every_mcp_response_fits_below_50000_characters` (Task 17A).
-7. **Ett nytt spel larmar innan någon hunnit pusha, eller ett övergivet spel larmar aldrig.** Utan karenstid larmar invarianten varje natt för ett spel som är redo för kod; utan gräns larmar den aldrig för ett spel som ingen byggt. Test: `CheckProvisioningTest::test_game_without_deployment_is_quiet_for_7_days_then_reported` (Task 21).
+7. **Ett nytt spel larmar innan någon hunnit pusha, eller ett övergivet spel larmar aldrig.** Utan karenstid larmar invarianten varje natt för ett spel som är redo för kod; utan gräns larmar den aldrig för ett spel som ingen byggt. Samma sak för SiteOps: Demo-miljön skapas utan övervakning och slås på först vid första lyckade deploy. Test: `CheckProvisioningTest::test_game_without_deployment_is_quiet_for_7_days_then_reported`, `test_first_live_deploy_enables_monitoring_but_not_in_dry_run` (Task 21) och `DemoMonitoringTest` (Task 15).
 
 ---
 
@@ -348,10 +349,10 @@ Förväntat: push lyckas till `main`. Poll sedan `cf GET "/deployments/applicati
 
 - [ ] **Steg 15: SiteOps-kontraktet (S19).** Mot 2a:s låsta kontrakt (2a måste vara deployad, se "Beroenden och ordning").
   1. `so GET "/sites?url=https%3A%2F%2Fe2e-spike.apps.humblebrag.se"` → 200 `{"data":[],"meta":{"total":0}}`. Finns redan en träff: stanna och fråga (någon annan har adressen).
-  2. `so POST /sites '{"name":"e2e-spike","url":"https://e2e-spike.apps.humblebrag.se","type":"app","environment":{"type":"demo","name":"Demo","url":"https://e2e-spike.apps.humblebrag.se","basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":true}}'` → 201; skriv `SPIKE_SITE_ID=.data.id` och `SPIKE_ENV_ID=.data.environment.id` i `ids.env` direkt. Kontrollera `.data.environment.has_basic_auth == true`, `.data.environment.type == "demo"`, `.data.monitoring_enabled == true` och att svaret inte innehåller `basic_auth_password`.
+  2. `so POST /sites '{"name":"e2e-spike","url":"https://e2e-spike.apps.humblebrag.se","type":"app","environment":{"type":"demo","name":"Demo","url":"https://e2e-spike.apps.humblebrag.se","basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":false}}'` → 201; skriv `SPIKE_SITE_ID=.data.id` och `SPIKE_ENV_ID=.data.environment.id` i `ids.env` direkt. Kontrollera `.data.environment.has_basic_auth == true`, `.data.environment.type == "demo"`, `.data.environment.is_monitored == false`, `.data.monitoring_enabled == true` och att svaret inte innehåller `basic_auth_password`.
   3. Samma POST igen → 409 med `.site_id == SPIKE_SITE_ID`, och uppslaget i punkt 1 ger nu `.meta.total == 1` och `.data[0].id == SPIKE_SITE_ID`.
-  4. `so GET /sites/$SPIKE_SITE_ID` → `.data.is_active == true`, `.data.monitoring_enabled == true`. `so GET /sites/$SPIKE_SITE_ID/environments` → en post med `type == "demo"`, `url` = Demo-URL, `is_monitored == true`, `has_basic_auth == true`; inget lösenord i svaret.
-  5. `so PATCH /sites/$SPIKE_SITE_ID/environments/$SPIKE_ENV_ID '{"basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":true}'` → 200 (ägarskapsbeviset som SiteOpsStep använder vid adoption).
+  4. `so GET /sites/$SPIKE_SITE_ID` → `.data.is_active == true`, `.data.monitoring_enabled == true`. `so GET /sites/$SPIKE_SITE_ID/environments` → en post med `type == "demo"`, `url` = Demo-URL, `is_monitored == false`, `has_basic_auth == true`; inget lösenord i svaret.
+  5. `so PATCH /sites/$SPIKE_SITE_ID/environments/$SPIKE_ENV_ID '{"basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":false}'` → 200 (ägarskapsbeviset som SiteOpsStep använder vid adoption). Sedan `so PATCH … '{"is_monitored":true}'` → 200 med `.data.is_monitored == true` (det `DemoMonitoring` gör när Demo lever) och `GET …/environments` visar `is_monitored == true`.
   6. `so POST /sites/$SPIKE_SITE_ID/deactivate` → 200 `{"data":{"id":…,"is_active":false,"monitoring_enabled":false}}`; `so GET /sites/$SPIKE_SITE_ID` → `.data.is_active == false`.
   7. Det smala scopet: `so POST /sites '{"name":"e2e-spike-utan-miljo","url":"https://e2e-spike-x.apps.humblebrag.se","type":"app"}'` (utan `environment`) → 422, och inget skapas (`so GET "/sites?url=https%3A%2F%2Fe2e-spike-x.apps.humblebrag.se"` → `total: 0`). Ger anropet 201: stanna och fråga Erik (nyckeln har för brett scope); den skapade webben avaktiveras då på sitt sparade id.
   Ett 403 på PATCH mot en webb som Erik pekar ut och som inte skapades av nyckeln testas inte i prod; det täcks av 2a:s tester.
@@ -2230,6 +2231,8 @@ return new class extends Migration
             $table->string('coolify_app_uuid', 64)->nullable()->index();
             $table->unsignedBigInteger('siteops_site_id')->nullable();
             $table->string('demo_url')->nullable();
+            // Sätts när SiteOps-övervakningen av Demo-miljön slogs på (första lyckade deploy).
+            $table->timestamp('monitoring_enabled_at')->nullable();
             $table->text('last_error')->nullable();
             $table->timestamps();
             $table->index(['kind', 'status']);
@@ -2306,12 +2309,12 @@ class ProvisioningRun extends Model
 
     protected $fillable = [
         'uuid', 'slug', 'slug_lock', 'name', 'user_id', 'game_id', 'kind', 'status', 'idea',
-        'github_repo', 'coolify_app_uuid', 'siteops_site_id', 'demo_url', 'last_error',
+        'github_repo', 'coolify_app_uuid', 'siteops_site_id', 'demo_url', 'monitoring_enabled_at', 'last_error',
     ];
 
     protected function casts(): array
     {
-        return ['siteops_site_id' => 'integer'];
+        return ['siteops_site_id' => 'integer', 'monitoring_enabled_at' => 'datetime'];
     }
 
     protected static function booted(): void
@@ -4336,7 +4339,8 @@ cd $WT && git add app/Provisioning/Clients/CoolifyClient.php app/Provisioning/Cl
   - `findIdsByUrl(string $url): list<int>` — alla träffar på exakt URL (flera = anroparen fallerar).
   - `createDemoSite(string $name, string $url): array{created: bool, id: int}` — 201 → `created: true`; 409 → `created: false` och `id` = svarets `site_id` (anroparen måste bevisa ägarskap innan id:t används).
   - `site(int $id): array`, `environments(int $id): array`.
-  - `claimDemoEnvironment(int $siteId, int $environmentId): bool` — `PATCH` med Demo-värdena (basic auth + `is_monitored: true`); `true` vid 200, `false` vid 403 (webben skapades inte av Computercats klient; 2a ändrar då ingenting).
+  - `claimDemoEnvironment(int $siteId, int $environmentId): bool` — `PATCH` med Demo-värdena (basic auth + `is_monitored: false`; övervakningen slås på först när Demo lever); `true` vid 200, `false` vid 403 (webben skapades inte av Computercats klient; 2a ändrar då ingenting).
+  - `setMonitored(int $siteId, int $environmentId, bool $monitored): void` — `PATCH` med bara `{is_monitored}`; kastar `ExternalApiException` vid 403/404 och om svaret inte har samma `is_monitored`.
   - `deactivate(int $id): void` — kastar om svaret inte är `is_active: false` och `monitoring_enabled: false`.
   - `static normalizeUrl(string $url): string` — tar bort avslutande `/` (samma likhet som 2a:s uppslag).
 
@@ -4380,7 +4384,8 @@ class SiteOpsClientTest extends ProvisioningTestCase
                     'url' => self::URL,
                     'basic_auth_user' => 'demo',
                     'basic_auth_password' => 'demo',
-                    'is_monitored' => true,
+                    // Övervakningen slås på först när Demo lever (DemoMonitoring).
+                    'is_monitored' => false,
                 ],
             ]);
     }
@@ -4423,7 +4428,20 @@ class SiteOpsClientTest extends ProvisioningTestCase
         $this->assertFalse($this->client()->claimDemoEnvironment(42, 7));
 
         Http::assertSent(fn ($r) => $r->method() === 'PATCH'
-            && $r->data() === ['basic_auth_user' => 'demo', 'basic_auth_password' => 'demo', 'is_monitored' => true]);
+            && $r->data() === ['basic_auth_user' => 'demo', 'basic_auth_password' => 'demo', 'is_monitored' => false]);
+    }
+
+    public function test_set_monitored_patches_only_the_flag_and_checks_the_answer(): void
+    {
+        Http::fake(['siteops.test/api/v1/sites/42/environments/7' => Http::sequence()
+            ->push(ProvisioningFakes::siteopsEnvironmentUpdated(42, self::URL))
+            ->push(['data' => ProvisioningFakes::siteopsEnvironment(42, self::URL, monitored: false)])]);
+
+        $this->client()->setMonitored(42, 7, true);
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && $r->data() === ['is_monitored' => true]);
+
+        $this->expectException(ExternalApiException::class);
+        $this->client()->setMonitored(42, 7, true);
     }
 
     public function test_site_environments_and_deactivate(): void
@@ -4554,7 +4572,8 @@ class SiteOpsClient
                 'url' => $url,
                 'basic_auth_user' => (string) config('provisioning.demo.basic_auth_user'),
                 'basic_auth_password' => (string) config('provisioning.demo.basic_auth_password'),
-                'is_monitored' => true,
+                // Inga larm innan spelets Claude har pushat: DemoMonitoring slår på övervakningen.
+                'is_monitored' => false,
             ],
         ], [409]);
 
@@ -4594,10 +4613,19 @@ class SiteOpsClient
         $response = $this->siteops('PATCH', "/sites/{$siteId}/environments/{$environmentId}", [
             'basic_auth_user' => (string) config('provisioning.demo.basic_auth_user'),
             'basic_auth_password' => (string) config('provisioning.demo.basic_auth_password'),
-            'is_monitored' => true,
+            'is_monitored' => false,
         ], [403]);
 
         return $response->status() !== 403;
+    }
+
+    public function setMonitored(int $siteId, int $environmentId, bool $monitored): void
+    {
+        $path = "/sites/{$siteId}/environments/{$environmentId}";
+        $response = $this->siteops('PATCH', $path, ['is_monitored' => $monitored]);
+        if ($response->json('data.is_monitored') !== $monitored) {
+            throw new ExternalApiException('SiteOps', 'PATCH', $path, $response->status(), 'is_monitored was not updated');
+        }
     }
 
     public function deactivate(int $id): void
@@ -4632,7 +4660,7 @@ class SiteOpsClient
 cd $WT && php artisan test --filter=SiteOpsClientTest
 ```
 
-Förväntat: `Tests: 9 passed`.
+Förväntat: `Tests: 10 passed`.
 
 - [ ] **Steg 5: Commit.**
 
@@ -6132,12 +6160,12 @@ cd $WT && git add app/Provisioning/Steps/CoolifyAppStep.php app/Provisioning/Ste
 Det finns inget deploy-steg (revision 2026-10-13): efter `siteops` är runnen `succeeded` och repot redo för kod. Första bygget startar när spelets Claude pushar grundkoden. `DemoProbe` behövs ändå, av `get_provisioning_status` (Task 19) och invarianten (Task 21).
 
 **Files:**
-- Create: `app/Provisioning/DemoProbe.php`, `app/Provisioning/Steps/SiteOpsStep.php`
-- Test: `tests/Feature/Provisioning/SiteOpsStepTest.php`
+- Create: `app/Provisioning/DemoProbe.php`, `app/Provisioning/DemoMonitoring.php`, `app/Provisioning/Steps/SiteOpsStep.php`
+- Test: `tests/Feature/Provisioning/SiteOpsStepTest.php`, `tests/Feature/Provisioning/DemoMonitoringTest.php`
 
 **Interfaces:**
-- Consumes: `SiteOpsClient`, `config('provisioning.demo.*')`.
-- Produces: `DemoProbe::status(string $url): int` (0 vid anslutningsfel), `SiteOpsStep` (skapar, eller adopterar enligt ägarskapsregeln i Global Constraints). Sätter `provisioning_runs.siteops_site_id`.
+- Consumes: `SiteOpsClient` (inkl. `setMonitored()`), `config('provisioning.demo.*')`.
+- Produces: `DemoProbe::status(string $url): int` (0 vid anslutningsfel), `SiteOpsStep` (skapar med `is_monitored: false`, eller adopterar enligt ägarskapsregeln i Global Constraints). Sätter `provisioning_runs.siteops_site_id`. `DemoMonitoring::enableIfLive(ProvisioningRun $run, ?array $latestDeployment, ?int $urlStatus): bool` — slår på övervakningen av Demo-miljön en gång (senaste bygget `finished` och Demo 200), sätter `monitoring_enabled_at`, returnerar `true` om den slogs på nu. Används av Task 19 och 21.
 
 - [ ] **Steg 1: Fallerande test.** `tests/Feature/Provisioning/SiteOpsStepTest.php`:
 
@@ -6185,7 +6213,7 @@ class SiteOpsStepTest extends ProvisioningTestCase
 
         $this->assertSame(StepResult::DONE, $this->runStep(SiteOpsStep::class, $run, 'siteops')->outcome);
         $this->assertSame(42, $run->fresh()->siteops_site_id);
-        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r['url'] === self::DEMO && $r['environment']['is_monitored'] === true);
+        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r['url'] === self::DEMO && $r['environment']['is_monitored'] === false);
         Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
     }
 
@@ -6336,6 +6364,113 @@ final class DemoProbe
 }
 ```
 
+- [ ] **Steg 3b: `DemoMonitoring` med test.** `tests/Feature/Provisioning/DemoMonitoringTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature\Provisioning;
+
+use App\Models\ProvisioningRun;
+use App\Provisioning\DemoMonitoring;
+use App\Provisioning\StepFailed;
+use Illuminate\Support\Facades\Http;
+use Tests\Support\ProvisioningFakes;
+
+class DemoMonitoringTest extends ProvisioningTestCase
+{
+    private const DEMO = 'https://kattsvep.apps.humblebrag.se';
+
+    private function liveRun(array $attrs = []): ProvisioningRun
+    {
+        return $this->provisioningRun($attrs + ['slug' => 'kattsvep', 'status' => ProvisioningRun::SUCCEEDED, 'siteops_site_id' => 42, 'demo_url' => self::DEMO]);
+    }
+
+    public function test_first_live_deploy_enables_monitoring_once_and_records_it(): void
+    {
+        $run = $this->liveRun();
+        Http::fake([
+            'siteops.test/api/v1/sites/42/environments/7' => Http::response(ProvisioningFakes::siteopsEnvironmentUpdated(42, self::DEMO)),
+            'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments(self::DEMO, monitored: false)),
+        ]);
+
+        $this->assertTrue(app(DemoMonitoring::class)->enableIfLive($run, ['status' => 'finished'], 200));
+        $this->assertNotNull($run->fresh()->monitoring_enabled_at);
+        $this->assertFalse(app(DemoMonitoring::class)->enableIfLive($run->fresh(), ['status' => 'finished'], 200));
+
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'PATCH'));
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && $r->data() === ['is_monitored' => true]);
+    }
+
+    public function test_nothing_happens_before_demo_is_live(): void
+    {
+        $run = $this->liveRun();
+        Http::fake();
+
+        $monitoring = app(DemoMonitoring::class);
+        $this->assertFalse($monitoring->enableIfLive($run, null, null));
+        $this->assertFalse($monitoring->enableIfLive($run, ['status' => 'in_progress'], null));
+        $this->assertFalse($monitoring->enableIfLive($run, ['status' => 'finished'], 502));
+        $this->assertFalse($monitoring->enableIfLive($run, ['status' => 'failed'], 200));
+
+        Http::assertNothingSent();
+        $this->assertNull($run->fresh()->monitoring_enabled_at);
+    }
+
+    public function test_missing_demo_environment_fails_loudly(): void
+    {
+        $run = $this->liveRun();
+        Http::fake(['siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments('https://annan.apps.humblebrag.se'))]);
+
+        $this->expectException(StepFailed::class);
+        app(DemoMonitoring::class)->enableIfLive($run, ['status' => 'finished'], 200);
+    }
+}
+```
+
+`app/Provisioning/DemoMonitoring.php`:
+
+```php
+<?php
+
+namespace App\Provisioning;
+
+use App\Models\ProvisioningRun;
+use App\Provisioning\Clients\SiteOpsClient;
+
+// SiteOps ska inte larma för en Demo som ingen har pushat kod till än. Miljön
+// skapas med is_monitored: false; första gången senaste bygget är klart och
+// Demo svarar 200 slås övervakningen på, en gång, och tiden sparas på runnen.
+final class DemoMonitoring
+{
+    public function __construct(private SiteOpsClient $siteops) {}
+
+    /** @param array{status?: string}|null $latestDeployment */
+    public function enableIfLive(ProvisioningRun $run, ?array $latestDeployment, ?int $urlStatus): bool
+    {
+        if ($run->monitoring_enabled_at !== null
+            || $run->siteops_site_id === null
+            || ($latestDeployment['status'] ?? null) !== 'finished'
+            || $urlStatus !== 200) {
+            return false;
+        }
+
+        $want = SiteOpsClient::normalizeUrl((string) $run->demo_url);
+        foreach ($this->siteops->environments($run->siteops_site_id) as $environment) {
+            if (($environment['type'] ?? null) === 'demo' && SiteOpsClient::normalizeUrl((string) ($environment['url'] ?? '')) === $want && is_int($environment['id'] ?? null)) {
+                // Idempotent PATCH: två samtidiga anrop skriver samma värde.
+                $this->siteops->setMonitored($run->siteops_site_id, $environment['id'], true);
+                $run->forceFill(['monitoring_enabled_at' => now()])->save();
+
+                return true;
+            }
+        }
+
+        throw new StepFailed("SiteOps site {$run->siteops_site_id} has no demo environment for {$run->demo_url}; monitoring could not be enabled.");
+    }
+}
+```
+
 - [ ] **Steg 4: `app/Provisioning/Steps/SiteOpsStep.php`.**
 
 ```php
@@ -6350,7 +6485,8 @@ use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 
-// SiteOps-sajt av typ app med en övervakad demo-miljö. Ett avbrott mellan
+// SiteOps-sajt av typ app med en demo-miljö som övervakas först när Demo lever
+// (DemoMonitoring). Ett avbrott mellan
 // skapandet och sparningen fångas av uppslaget på exakt URL (eller 409) vid
 // omkörning. En befintlig webb adopteras bara om den bevisligen är vår: rätt
 // adress, aktiv, en demo-miljö med samma adress, och PATCH av miljön ger 200
@@ -6420,15 +6556,15 @@ final class SiteOpsStep implements Step
 - [ ] **Steg 5: Kör testet.**
 
 ```bash
-cd $WT && php artisan test --filter=SiteOpsStepTest
+cd $WT && php artisan test --filter='SiteOpsStepTest|DemoMonitoringTest'
 ```
 
-Förväntat: `Tests: 9 passed` (8 för siteops inkl. 3 dataset, 1 för DemoProbe).
+Förväntat: `Tests: 12 passed` (8 för siteops inkl. 3 dataset, 1 för DemoProbe, 3 för DemoMonitoring).
 
 - [ ] **Steg 6: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/DemoProbe.php app/Provisioning/Steps/SiteOpsStep.php tests/Feature/Provisioning/SiteOpsStepTest.php && git commit -m "Provisioneringssteg siteops och DemoProbe"
+cd $WT && git add app/Provisioning/DemoProbe.php app/Provisioning/DemoMonitoring.php app/Provisioning/Steps/SiteOpsStep.php tests/Feature/Provisioning/SiteOpsStepTest.php tests/Feature/Provisioning/DemoMonitoringTest.php && git commit -m "Provisioneringssteg siteops (utan övervakning), DemoProbe och DemoMonitoring"
 ```
 
 ---
@@ -7921,8 +8057,8 @@ cd $WT && git add app/Mcp/Tools/CreateGameTool.php app/Mcp/ComputercatServer.php
 - Modify: `app/Mcp/ComputercatServer.php`
 
 **Interfaces:**
-- Consumes: `GameTool::whenGameMissing()`, `GameTool::transactional()`, `GameAccess::isOwner()`, `Saga::retry()`, `Redactor`, `CoolifyClient::latestDeployment()`, `DemoProbe::status()`.
-- Produces: `get_provisioning_status(game)` → JSON `{slug, provisioning: {run, status, steps[], last_error, updated_at}, archive: {...}|null, repo_url, demo_url, demo_basic_auth: {username, password}, demo: null | {state, latest_deployment: {status, created_at}|null, url_status: int|null, next?, error?}}`. `demo` finns bara för en lyckad provisioneringsrun; `state` ∈ `awaiting_code` (inget bygge än: redo för kod), `building`, `live` (senaste bygget `finished` och Demo svarar 200), `deployed_not_answering`, `deploy_failed`, `unknown` (Coolify gick inte att läsa; felet visas); `retry_provisioning(game)` → JSON `{run, status: "running", resumes_at}`.
+- Consumes: `GameTool::whenGameMissing()`, `GameTool::transactional()`, `GameAccess::isOwner()`, `Saga::retry()`, `Redactor`, `CoolifyClient::latestDeployment()`, `DemoProbe::status()`, `DemoMonitoring::enableIfLive()`.
+- Produces: `get_provisioning_status(game)` → JSON `{slug, provisioning: {run, status, steps[], last_error, updated_at}, archive: {...}|null, repo_url, demo_url, demo_basic_auth: {username, password}, demo: null | {state, latest_deployment: {status, created_at}|null, url_status: int|null, monitoring: "enabled"|"pending", next?, error?, monitoring_error?}}`. När `state` blir `live` första gången anropas `DemoMonitoring::enableIfLive()`; misslyckas det visas `monitoring_error` (svaret i övrigt är ok). `demo` finns bara för en lyckad provisioneringsrun; `state` ∈ `awaiting_code` (inget bygge än: redo för kod), `building`, `live` (senaste bygget `finished` och Demo svarar 200), `deployed_not_answering`, `deploy_failed`, `unknown` (Coolify gick inte att läsa; felet visas); `retry_provisioning(game)` → JSON `{run, status: "running", resumes_at}`.
 
 - [ ] **Steg 1: Fallerande tester.**
 
@@ -7997,7 +8133,7 @@ class ProvisioningStatusToolTest extends McpTestCase
     private function succeededRun(): ProvisioningRun
     {
         $game = $this->game('kattsvep');
-        $run = $this->provisioningRun(['slug' => 'kattsvep', 'game_id' => $game->id, 'status' => ProvisioningRun::SUCCEEDED, 'github_repo' => 'HumblebragAB/kattsvep', 'coolify_app_uuid' => 'app-1', 'demo_url' => 'https://kattsvep.apps.humblebrag.se']);
+        $run = $this->provisioningRun(['slug' => 'kattsvep', 'game_id' => $game->id, 'status' => ProvisioningRun::SUCCEEDED, 'github_repo' => 'HumblebragAB/kattsvep', 'coolify_app_uuid' => 'app-1', 'siteops_site_id' => 42, 'demo_url' => 'https://kattsvep.apps.humblebrag.se']);
         Saga::start($run);
         $run->steps()->update(['status' => ProvisioningStep::DONE]);
 
@@ -8021,20 +8157,30 @@ class ProvisioningStatusToolTest extends McpTestCase
         $demo = $this->demoFor(['coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([]))]);
 
         $this->assertSame('awaiting_code', $demo['state']);
+        $this->assertSame('pending', $demo['monitoring']);
         $this->assertNull($demo['latest_deployment']);
         $this->assertNull($demo['url_status']);
         $this->assertStringContainsString('get_build_guide', $demo['next']);
         Http::assertNotSent(fn ($r) => str_starts_with($r->url(), 'https://kattsvep.apps.humblebrag.se'));
     }
 
-    public function test_finished_build_and_answering_demo_is_live(): void
+    // Första gången Demo lever slås SiteOps-övervakningen på, en gång.
+    public function test_finished_build_and_answering_demo_is_live_and_enables_monitoring_once(): void
     {
-        $demo = $this->demoFor([
+        $fakes = [
             'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished']])),
             'https://kattsvep.apps.humblebrag.se' => Http::response('<html></html>'),
-        ]);
+            'siteops.test/api/v1/sites/42/environments/7' => Http::response(ProvisioningFakes::siteopsEnvironmentUpdated(42, 'https://kattsvep.apps.humblebrag.se')),
+            'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments('https://kattsvep.apps.humblebrag.se', monitored: false)),
+        ];
+        $demo = $this->demoFor($fakes);
 
-        $this->assertSame(['state' => 'live', 'latest_deployment' => ['status' => 'finished', 'created_at' => '2026-10-14T08:00:00.000000Z'], 'url_status' => 200], $demo);
+        $this->assertSame(['state' => 'live', 'latest_deployment' => ['status' => 'finished', 'created_at' => '2026-10-14T08:00:00.000000Z'], 'url_status' => 200, 'monitoring' => 'enabled'], $demo);
+        $this->assertNotNull(ProvisioningRun::where('slug', 'kattsvep')->value('monitoring_enabled_at'));
+
+        $again = $this->callTool($this->staffMember(Game::where('slug', 'kattsvep')->firstOrFail()), 'get_provisioning_status', ['game' => 'kattsvep']);
+        $this->assertSame('enabled', json_decode($again['text'], true)['demo']['monitoring']);
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'PATCH'));
     }
 
     public function test_failed_build_is_reported_with_the_demo_status(): void
@@ -8046,6 +8192,8 @@ class ProvisioningStatusToolTest extends McpTestCase
 
         $this->assertSame('deploy_failed', $demo['state']);
         $this->assertSame(502, $demo['url_status']);
+        $this->assertSame('pending', $demo['monitoring']);
+        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
     }
 
     public function test_finished_build_but_demo_not_answering(): void
@@ -8187,6 +8335,7 @@ use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Models\User;
 use App\Provisioning\Clients\CoolifyClient;
+use App\Provisioning\DemoMonitoring;
 use App\Provisioning\DemoProbe;
 use App\Provisioning\Http\Redactor;
 use App\Provisioning\SafeMessage;
@@ -8270,6 +8419,7 @@ class GetProvisioningStatusTool extends GameTool
                 'state' => 'unknown',
                 'latest_deployment' => null,
                 'url_status' => null,
+                'monitoring' => $run->monitoring_enabled_at === null ? 'pending' : 'enabled',
                 'error' => $e instanceof SafeMessage ? Redactor::limit(Redactor::scrubSecrets($e->getMessage())) : "Could not read Coolify deployments (ref {$ref}).",
             ];
         }
@@ -8279,6 +8429,7 @@ class GetProvisioningStatusTool extends GameTool
                 'state' => 'awaiting_code',
                 'latest_deployment' => null,
                 'url_status' => null,
+                'monitoring' => $run->monitoring_enabled_at === null ? 'pending' : 'enabled',
                 'next' => 'Ready for code: in the game repo, follow CLAUDE.md step 1 (get_build_guide, write the files, run the checks) and push to main. The push builds the Demo.',
             ];
         }
@@ -8294,11 +8445,23 @@ class GetProvisioningStatusTool extends GameTool
             $state = 'deployed_not_answering';
         }
 
-        return [
+        $result = [
             'state' => $state,
             'latest_deployment' => ['status' => $latest['status'], 'created_at' => $latest['created_at']],
             'url_status' => $code,
         ];
+
+        // Första gången Demo lever: SiteOps-övervakningen slås på (en gång).
+        try {
+            app(DemoMonitoring::class)->enableIfLive($run, $latest, $code);
+        } catch (\Throwable $e) {
+            $ref = (string) Str::uuid();
+            Log::warning('get_provisioning_status kunde inte slå på SiteOps-övervakningen', ['ref' => $ref, 'run' => $run->uuid, 'exception' => $e]);
+            $result['monitoring_error'] = $e instanceof SafeMessage ? Redactor::limit(Redactor::scrubSecrets($e->getMessage())) : "Could not enable SiteOps monitoring (ref {$ref}).";
+        }
+        $result['monitoring'] = $run->fresh()->monitoring_enabled_at === null ? 'pending' : 'enabled';
+
+        return $result;
     }
 
     private function runData(?ProvisioningRun $run): ?array
@@ -8804,7 +8967,7 @@ cd $WT && git add app/Mcp/Tools/RequestLiveTool.php app/Mcp/Tools/ArchiveGameToo
 - Modify: `routes/console.php`
 
 **Interfaces:**
-- Consumes: `GitHubAppClient::getRepository()`, `CoolifyClient::demoApplications()`, `::application()`, `::latestDeployment()`, `SiteOpsClient::site()`, `::environments()`, `DemoProbe::status()`, `SlackAlert`, `config('provisioning.no_push_grace_days')`.
+- Consumes: `GitHubAppClient::getRepository()`, `CoolifyClient::demoApplications()`, `::application()`, `::latestDeployment()`, `SiteOpsClient::site()`, `::environments()`, `DemoProbe::status()`, `DemoMonitoring::enableIfLive()`, `SlackAlert`, `config('provisioning.no_push_grace_days')`.
 - Produces: `php artisan computercat:check-provisioning [--dry-run]`; exitkod 0 vid 0 avvikelser, 1 annars; sista raden `N avvikelse(r).`
 
 Kontroller (spec 2c "Invariant" plus en för fastnade sagor):
@@ -8814,11 +8977,12 @@ Kontroller (spec 2c "Invariant" plus en för fastnade sagor):
 | `run:<uuid>:repo` | Repot saknas eller är arkiverat |
 | `run:<uuid>:coolify` | Appen `spel-<slug>` med sparat uuid saknas i Demo-projektet |
 | `run:<uuid>:basic_auth` | `is_http_basic_auth_enabled` är inte `true` |
-| `run:<uuid>:siteops` | Sajten är inte aktiv eller har `monitoring_enabled: false`, eller demo-miljön (`type: demo`, url = Demo-URL) saknas, är inte övervakad eller saknar basic auth (`has_basic_auth`) |
-| `run:<uuid>:no_code` | Appen har inget bygge och runnen är äldre än `no_push_grace_days` (7) dagar. Yngre: ingen avvikelse, bara en rad `väntar på kod` i utskriften |
-| `run:<uuid>:deploy_failed` | Senaste bygget är `failed` eller `cancelled-by-user` |
-| `run:<uuid>:deploy` | Byggen för appen gick inte att läsa |
-| `run:<uuid>:demo` | Appen har byggts men Demo-URL svarar inte 200 med basic auth (prövas inte innan något bygge finns) |
+| `run:<uuid>:siteops` | Sajten är inte aktiv eller har `monitoring_enabled: false`, eller demo-miljön (`type: demo`, url = Demo-URL) saknas eller saknar basic auth (`has_basic_auth`), eller (bara när runnen har `monitoring_enabled_at`) miljön är inte övervakad |
+| `run:<uuid>:not_live` | Ingen lyckad deploy sedd (`monitoring_enabled_at` saknas: inget bygge, bygget fallerade eller Demo svarar inte) och runnen är äldre än `no_push_grace_days` (7) dagar. Yngre: ingen avvikelse, bara en rad `väntar på första lyckade deploy` |
+| `run:<uuid>:monitoring` | Demo lever men övervakningen gick inte att slå på (utan `--dry-run` slås den annars på här, en gång) |
+| `run:<uuid>:deploy_failed` | Övervakningen är på och senaste bygget är `failed` eller `cancelled-by-user` |
+| `run:<uuid>:deploy` | Byggen för appen gick inte att läsa, eller övervakningen är på men appen har inga byggen |
+| `run:<uuid>:demo` | Övervakningen är på men Demo-URL svarar inte 200 med basic auth |
 | `coolify:orphan:<uuid>` | En app `spel-*` i Demo-projektet saknar run |
 | `run:<uuid>:stuck` | En run har stått på `running` utan stegaktivitet i 30 minuter (kö-workern) |
 | `coolify:list` | Demo-projektet gick inte att läsa |
@@ -8852,6 +9016,8 @@ class CheckProvisioningTest extends ProvisioningTestCase
         $this->run = $this->provisioningRun([
             'slug' => 'kattsvep', 'status' => ProvisioningRun::SUCCEEDED, 'github_repo' => 'HumblebragAB/kattsvep',
             'coolify_app_uuid' => 'app-1', 'siteops_site_id' => 42, 'demo_url' => self::DEMO,
+            // Demo har levt: övervakningen är på (fallet utan står i egna tester).
+            'monitoring_enabled_at' => now()->subDay(),
         ]);
     }
 
@@ -8945,13 +9111,14 @@ class CheckProvisioningTest extends ProvisioningTestCase
     // Redo för kod men ingen push än: tyst i karenstiden, sedan en avvikelse.
     public function test_game_without_deployment_is_quiet_for_7_days_then_reported(): void
     {
+        $this->run->update(['monitoring_enabled_at' => null]);
         $this->fakeHealthy([
             'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([])),
             self::DEMO => Http::response('Not Found', 404),
         ]);
 
         $this->artisan('computercat:check-provisioning --dry-run')
-            ->expectsOutputToContain('väntar på kod')
+            ->expectsOutputToContain('väntar på första lyckade deploy')
             ->expectsOutput('0 avvikelse(r).')
             ->assertExitCode(0);
         Http::assertNotSent(fn ($r) => str_starts_with($r->url(), self::DEMO));
@@ -8959,8 +9126,30 @@ class CheckProvisioningTest extends ProvisioningTestCase
         $this->travel(8)->days();
 
         $this->artisan('computercat:check-provisioning --dry-run')
-            ->expectsOutputToContain("run:{$this->run->uuid}:no_code")
+            ->expectsOutputToContain("run:{$this->run->uuid}:not_live")
             ->assertExitCode(1);
+    }
+
+    // Första lyckade deploy: utan --dry-run slås SiteOps-övervakningen på, en gång.
+    public function test_first_live_deploy_enables_monitoring_but_not_in_dry_run(): void
+    {
+        $this->run->update(['monitoring_enabled_at' => null]);
+        $this->fakeHealthy([
+            'siteops.test/api/v1/sites/42/environments/7' => Http::response(ProvisioningFakes::siteopsEnvironmentUpdated(42, self::DEMO)),
+            'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments(self::DEMO, monitored: false)),
+        ]);
+
+        $this->artisan('computercat:check-provisioning --dry-run')
+            ->expectsOutputToContain('skulle slås på')
+            ->expectsOutput('0 avvikelse(r).')
+            ->assertExitCode(0);
+        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
+
+        $this->artisan('computercat:check-provisioning')
+            ->expectsOutputToContain('övervakningen i SiteOps påslagen')
+            ->assertExitCode(0);
+        $this->assertNotNull($this->run->fresh()->monitoring_enabled_at);
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'PATCH'));
     }
 
     public function test_failed_latest_build_is_a_deviation(): void
@@ -9012,6 +9201,7 @@ use App\Models\ProvisioningRun;
 use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\Clients\GitHubAppClient;
 use App\Provisioning\Clients\SiteOpsClient;
+use App\Provisioning\DemoMonitoring;
 use App\Provisioning\DemoProbe;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\SafeMessage;
@@ -9038,11 +9228,14 @@ class CheckProvisioning extends Command
     /** @var array<string, string> nyckel => beskrivning */
     private array $deviations = [];
 
-    public function handle(GitHubAppClient $github, CoolifyClient $coolify, SiteOpsClient $siteops, SlackAlert $slack): int
+    private DemoMonitoring $monitoring;
+
+    public function handle(GitHubAppClient $github, CoolifyClient $coolify, SiteOpsClient $siteops, SlackAlert $slack, DemoMonitoring $monitoring): int
     {
         // Kommandoinstansen återanvänds inom en process (Artisan::call, tester):
         // avvikelser från en tidigare körning får inte följa med.
         $this->deviations = [];
+        $this->monitoring = $monitoring;
 
         $missing = ProvisioningConfig::missing();
         if ($missing !== []) {
@@ -9126,7 +9319,8 @@ class CheckProvisioning extends Command
             $want = SiteOpsClient::normalizeUrl((string) $run->demo_url);
             foreach ($siteops->environments($run->siteops_site_id) as $environment) {
                 if (($environment['type'] ?? null) === 'demo' && SiteOpsClient::normalizeUrl((string) ($environment['url'] ?? '')) === $want) {
-                    if (($environment['is_monitored'] ?? null) !== true) {
+                    // Övervakningen slås på först när Demo lever (monitoring_enabled_at).
+                    if ($run->monitoring_enabled_at !== null && ($environment['is_monitored'] ?? null) !== true) {
                         return "Demo-miljön i SiteOps-sajten {$run->siteops_site_id} övervakas inte.";
                     }
 
@@ -9141,8 +9335,9 @@ class CheckProvisioning extends Command
     }
 
     // Repot är redo för kod efter sagan; första bygget kommer från spelets push.
-    // Inget bygge: tyst i karenstiden, sedan avvikelse. Med bygge: senaste får
-    // inte ha fallerat, och Demo ska svara 200.
+    // Innan en lyckad deploy setts (monitoring_enabled_at saknas): tyst i
+    // karenstiden, och lever Demo nu slås övervakningen på (inte med --dry-run).
+    // Därefter: senaste bygget får inte ha fallerat, och Demo ska svara 200.
     private function checkDeployment(string $key, ProvisioningRun $run, CoolifyClient $coolify): void
     {
         try {
@@ -9153,13 +9348,37 @@ class CheckProvisioning extends Command
             return;
         }
 
-        if ($latest === null) {
-            $grace = (int) config('provisioning.no_push_grace_days');
-            if ($run->created_at->gt(now()->subDays($grace))) {
-                $this->line("{$run->slug}: väntar på kod (inget bygge än, skapad {$run->created_at->toDateString()}).");
-            } else {
-                $this->deviations["{$key}:no_code"] = "{$run->slug} har inget bygge {$grace} dagar efter att repot skapades. Har spelets Claude pushat grundkoden (CLAUDE.md steg 1)?";
+        if ($run->monitoring_enabled_at === null) {
+            $code = ($latest['status'] ?? null) === 'finished' ? DemoProbe::status((string) $run->demo_url) : null;
+            if ($code === 200) {
+                if ($this->option('dry-run')) {
+                    $this->line("{$run->slug}: Demo lever; övervakningen i SiteOps skulle slås på (--dry-run).");
+
+                    return;
+                }
+                $this->check("{$key}:monitoring", "övervakningen för {$run->slug}", function () use ($run, $latest, $code) {
+                    $this->monitoring->enableIfLive($run, $latest, $code);
+                    $this->line("{$run->slug}: övervakningen i SiteOps påslagen.");
+
+                    return null;
+                });
+
+                return;
             }
+
+            $grace = (int) config('provisioning.no_push_grace_days');
+            $seen = $latest === null ? 'inget bygge' : "senaste bygget {$latest['status']}".($code !== null ? ", Demo svarar {$code}" : '');
+            if ($run->created_at->gt(now()->subDays($grace))) {
+                $this->line("{$run->slug}: väntar på första lyckade deploy ({$seen}, skapad {$run->created_at->toDateString()}).");
+            } else {
+                $this->deviations["{$key}:not_live"] = "{$run->slug} har ingen lyckad deploy {$grace} dagar efter att repot skapades ({$seen}). Har spelets Claude pushat grundkoden (CLAUDE.md steg 1)?";
+            }
+
+            return;
+        }
+
+        if ($latest === null) {
+            $this->deviations["{$key}:deploy"] = "{$run->slug} har övervakning påslagen men Coolify listar inga byggen.";
 
             return;
         }
@@ -9168,13 +9387,11 @@ class CheckProvisioning extends Command
             $this->deviations["{$key}:deploy_failed"] = "Senaste bygget av {$run->slug} ({$latest['deployment_uuid']}) slutade med {$latest['status']}.";
         }
 
-        if ($latest['status'] === 'finished' || isset($this->deviations["{$key}:deploy_failed"])) {
-            $this->check("{$key}:demo", "Demo-adressen för {$run->slug}", function () use ($run) {
-                $status = DemoProbe::status((string) $run->demo_url);
+        $this->check("{$key}:demo", "Demo-adressen för {$run->slug}", function () use ($run) {
+            $status = DemoProbe::status((string) $run->demo_url);
 
-                return $status === 200 ? null : "{$run->demo_url} svarade {$status} med basic auth.";
-            });
-        }
+            return $status === 200 ? null : "{$run->demo_url} svarade {$status} med basic auth.";
+        });
     }
 
     private function checkStuck(): void
@@ -9222,7 +9439,7 @@ Schedule::command('computercat:check-provisioning')->dailyAt('06:15')->withoutOv
 cd $WT && php artisan test --filter=CheckProvisioningTest
 ```
 
-Förväntat: `Tests: 10 passed`.
+Förväntat: `Tests: 11 passed`.
 
 - [ ] **Steg 6: Commit.**
 
@@ -9396,3 +9613,4 @@ Faller någon punkt: stanna, beskriv vad som avviker och fråga Erik (AskUserQue
 16. **REST-vägen heter `/api/v1/build-guide`** (engelska som resten av API:t), är publik och har `throttle:build-guide` 30/min per IP. Den behövs för `package-lock.json` (cirka 300 KB, över MCP-gränsen). Task 17A.
 17. **Inget deploy-steg, och `succeeded` betyder "redo för kod".** `get_provisioning_status` visar i stället `demo.state`, och invarianten har 7 dagars karenstid för spel utan bygge (Task 19, 21).
 18. **Publicerade guideversioner är låsta** med `BuildGuide::FROZEN` (sha256 av `manifest.json`), så att det spelets Claude hämtar alltid är det som verifierades. En ändring blir en ny version.
+19. **SiteOps-övervakningen av Demo-miljön slås på först vid första lyckade deploy** (Eriks beslut 2026-10-13, inga falsklarm innan grundkoden pushats). `siteops`-steget skapar miljön med `is_monitored: false`; `DemoMonitoring::enableIfLive()` gör en `PATCH {is_monitored: true}` när senaste bygget är `finished` och Demo svarar 200, och sparar `provisioning_runs.monitoring_enabled_at`. Anropas av `get_provisioning_status` och invarianten (inte med `--dry-run`). Task 8, 11, 15, 19, 21.

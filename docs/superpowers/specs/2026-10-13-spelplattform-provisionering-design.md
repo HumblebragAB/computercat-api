@@ -50,7 +50,7 @@ Var och en kräver Eriks OK eller görs av Erik:
 
 1. **Kö-worker i prod.** Computercat har idag inga köjobb och troligen ingen worker. En Forge-daemon `php8.4 artisan queue:work --tries=1 --timeout=120` som användaren `computercat` skapas.
 2. **Slack-webhook** för larm (`SLACK_ALERT_WEBHOOK_URL`). Ingen Slack-larmning finns i Computercat idag.
-3. **GitHub App "Humblebrag Spelstudio"** (Administration: write, Contents: write, Metadata: read), installerad i HumblebragAB på "Only select repositories". Den når automatiskt repon den skapar. Kräver GitHubs UI att minst ett repo väljs, väljer Erik ett tomt privat ankarrepo, aldrig ett befintligt repo med innehåll (öppen fråga till Erik). Ger spiken 403 på `POST /orgs/HumblebragAB/repos` läggs "Repository creation" till efter Eriks OK.
+3. **GitHub App "Humblebrag Spelstudio"** (Administration: write, Contents: write, Metadata: read), installerad i HumblebragAB på "Only select repositories". Den når automatiskt repon den skapar. Kräver GitHubs UI att minst ett repo väljs, väljer Erik ett tomt privat ankarrepo, aldrig ett befintligt repo med innehåll (uppstår det stannar den som genomför planen och frågar Erik). Ger spiken 403 på `POST /orgs/HumblebragAB/repos` stannar den som genomför planen och frågar Erik om "Repository creation" ska läggas till.
 4. **Coolify-token** med `read` + `write` (inte `deploy`, inte `root`, inte `*:sensitive`), skapad med Humblebrags team aktivt.
 5. **Coolifys och Claudes GitHub App-installationer** på HumblebragAB måste nå nya repon. Är någon av dem på "Only select repositories" måste den ändras till "All repositories", eftersom vår app inte kan utöka andra appars installationer.
 6. **SiteOps-nyckel** med exakt `sites:read` + `demo-sites:write` (inte `sites:write`), skapad med `php artisan api-clients:create Computercat --team=<id> --scope=sites:read --scope=demo-sites:write` (2a) efter att 2a deployats.
@@ -153,7 +153,7 @@ Arbetet gjordes lokalt i `~/Web/spelmall` (worktree `feat-spelmall`, 83 tester) 
 
 ### Datamodell
 
-**`provisioning_runs`**: `id`, `uuid`, `slug` (unik bland runs som inte är `released`), `user_id`, `game_id` (null tills spelet skapats), `kind` (`provision | archive`), `status` (`running | succeeded | failed | released | archived`), `idea` (text), `github_repo`, `coolify_app_uuid`, `siteops_site_id`, `demo_url`, `last_error` (text, max 4 KB, se redigering nedan), timestamps.
+**`provisioning_runs`**: `id`, `uuid`, `slug` (unik bland runs som inte är `released`), `user_id`, `game_id` (null tills spelet skapats), `kind` (`provision | archive`), `status` (`running | succeeded | failed | released | archived`), `idea` (text), `github_repo`, `coolify_app_uuid`, `siteops_site_id`, `demo_url`, `monitoring_enabled_at` (när SiteOps-övervakningen av Demo-miljön slogs på, null tills första lyckade deploy), `last_error` (text, max 4 KB, se redigering nedan), timestamps.
 **`provisioning_steps`**: `run_id`, `step`, `status` (`pending | done | failed`), `attempts`, `detail` (json), timestamps. Unik på (`run_id`, `step`).
 
 ### Provisioneringssagan
@@ -167,9 +167,11 @@ Slugen reserveras när run-raden skapas. Spelposten skapas först när repot fin
 | `coolify_app` | `POST /applications/private-github-app`: namn `spel-<slug>`, domän `https://<slug>.apps.humblebrag.se`, nixpacks + statisk + `out`, basic auth, `is_auto_deploy_enabled: true`, `instant_deploy: false` | sparat uuid; annars `GET /applications` och matcha exakt namn `spel-<slug>` i Demo-projektet. 409 domänkonflikt → `failed`. |
 | `coolify_env` | `NEXT_PUBLIC_COMPUTERCAT_GAME=<slug>` som build-variabel | finns redan med samma värde |
 | `cors` | Demo-adressen i spelets `allowed_origins` | finns redan |
-| `siteops` | Skapa sajt typ `app` med demo-miljö, basic auth, `is_monitored: true` | sparat id; annars uppslag på exakt URL eller 409 från `POST /sites`. En befintlig webb adopteras bara om adressen är Demo-URL:en, den är aktiv, har en demo-miljö med adressen och `PATCH` av miljön lyckas (alltså att Computercats klient skapade den); annars `failed` |
+| `siteops` | Skapa sajt typ `app` med demo-miljö, basic auth, `is_monitored: false` (övervakningen slås på först när Demo lever, se nedan) | sparat id; annars uppslag på exakt URL eller 409 från `POST /sites`. En befintlig webb adopteras bara om adressen är Demo-URL:en, den är aktiv, har en demo-miljö med adressen och `PATCH` av miljön lyckas (alltså att Computercats klient skapade den); annars `failed` |
 
-Efter `siteops` är runnen `succeeded`: repot är **redo för kod**. Det finns inget deploy-steg; repot har ingen byggbar kod förrän spelets Claude pushar grundkoden, och då bygger Coolify av sig själv. SiteOps övervakar Demo-adressen från start och kan larma tills första bygget är klart; det är väntat och syns i `get_provisioning_status`.
+Efter `siteops` är runnen `succeeded`: repot är **redo för kod**. Det finns inget deploy-steg; repot har ingen byggbar kod förrän spelets Claude pushar grundkoden, och då bygger Coolify av sig själv.
+
+**Övervakning först när Demo lever** (Eriks beslut 2026-10-13, inga falsklarm): Demo-miljön skapas med `is_monitored: false`. Första gången Computercat ser att senaste bygget är `finished` och Demo-URL svarar 200 med basic auth (i `get_provisioning_status` och i den nattliga invarianten, inte med `--dry-run`) skickas en gång `PATCH /sites/{id}/environments/{env}` med `is_monitored: true`, och tiden sparas i `monitoring_enabled_at`.
 
 **`is_listed`** är en ny kolumn på `games` (default `true`, så befintliga spel påverkas inte). `GET /api/v1/games` visar bara listade spel. Demo-spel är aktiva så att spelar-API:t fungerar, men syns inte i den publika listan förrän Erik listar dem vid Live.
 
@@ -197,7 +199,7 @@ En liten `SlackAlert`-klass (POST till webhooken, timeout 5 s, fel loggas men st
 | `create_game(slug, name, idea)` | staff | Kontrollerar inställningar, slugregel och reservationer, tak och att slugen är ledig i Computercat och bland runs. Startar sagan och svarar direkt med run-id. |
 | `get_build_guide(version?)` | staff | Byggguidens manifest och fillista (se Byggguiden) |
 | `get_build_guide_file(path, version?)` | staff | En fil ur byggguiden med `sha256` |
-| `get_provisioning_status(game)` | medlem | Steg och status, repo-URL, Demo-URL, senaste fel (redigerat), och för en lyckad run även `demo`: `awaiting_code` (inget bygge än), `building`, `live` (senaste bygget klart och Demo svarar 200), `deployed_not_answering`, `deploy_failed` eller `unknown` (Coolify gick inte att läsa; felet visas), med senaste byggets status och Demo-adressens HTTP-status |
+| `get_provisioning_status(game)` | medlem | Steg och status, repo-URL, Demo-URL, senaste fel (redigerat), och för en lyckad run även `demo`: `awaiting_code` (inget bygge än), `building`, `live` (senaste bygget klart och Demo svarar 200), `deployed_not_answering`, `deploy_failed` eller `unknown` (Coolify gick inte att läsa; felet visas), med senaste byggets status, Demo-adressens HTTP-status och `monitoring` (`pending`/`enabled`). Slår på SiteOps-övervakningen första gången Demo lever |
 | `retry_provisioning(game)` | ägare | Fortsätter från första ej klara steg |
 | `request_live(game, domain?)` | ägare | Slack-larm till Erik med spel, Demo-URL och önskad domän. Ändrar inget. |
 | `archive_game(game)` | ägare, bara spel med en lyckad provisioneringsrun och bara i Demo | Startar arkiveringssagan |
@@ -206,7 +208,7 @@ En liten `SlackAlert`-klass (POST till webhooken, timeout 5 s, fel loggas men st
 
 ### Invariant (nattlig, `computercat:check-provisioning`)
 
-För varje run med status `succeeded`: repot finns och är inte arkiverat, Coolify-appen `spel-<slug>` finns i Demo-projektet och har basic auth, SiteOps-sajten är aktiv med `monitoring_enabled` och demo-miljön är övervakad och har basic auth. Har appen inget bygge än: ingen avvikelse om runnen är yngre än 7 dagar, annars avvikelsen "ingen kod pushad på 7 dagar". Har appen byggen: senaste bygget är inte `failed`/`cancelled-by-user`, och Demo-URL svarar 200 med basic auth. Omvänt: varje Coolify-app i Demo-projektet med namn `spel-*` har en run. Avvikelse → Slack-larm (dedupe per avvikelse och dygn). `--dry-run` finns.
+För varje run med status `succeeded`: repot finns och är inte arkiverat, Coolify-appen `spel-<slug>` finns i Demo-projektet och har basic auth, SiteOps-sajten är aktiv med `monitoring_enabled` och demo-miljön har basic auth. Utan `monitoring_enabled_at` (ingen lyckad deploy sedd): lever Demo nu slås övervakningen på; annars ingen avvikelse om runnen är yngre än 7 dagar, och avvikelsen "ingen lyckad deploy på 7 dagar" efter det. Med `monitoring_enabled_at`: demo-miljön är övervakad, senaste bygget är inte `failed`/`cancelled-by-user`, och Demo-URL svarar 200 med basic auth. Omvänt: varje Coolify-app i Demo-projektet med namn `spel-*` har en run. Avvikelse → Slack-larm (dedupe per avvikelse och dygn). `--dry-run` finns.
 
 ## Säkerhet
 
@@ -229,7 +231,7 @@ Körning:
    - Demo-URL svarar 200 med basic auth och spelet laddar.
    - Grundkodens filer i `HumblebragAB/kattsvep` har samma `sha256` som byggguiden v1 vid commiten "Grundkod från byggguide v1".
    - En anonym spelare kan skicka en tid via API:t från Demo-origin (CORS-preflight OK) och den syns i topplistan.
-   - SiteOps-sajten är aktiv och miljön övervakas.
+   - SiteOps-sajten är aktiv och miljön övervakas (påslagen av Computercat efter första lyckade deploy, `monitoring_enabled_at` satt).
    - `computercat:check-provisioning` är grön.
    - Revisionsloggen visar routinernas anrop, inklusive `get_build_guide`.
 4. Erik väljer om Kattsvep lever vidare eller arkiveras med `archive_game`.
