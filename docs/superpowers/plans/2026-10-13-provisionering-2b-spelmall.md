@@ -2708,7 +2708,7 @@ Push till `main` bygger och deployar Demo automatiskt (Coolify, nixpacks, statis
 
 ## För den som underhåller mallen
 
-Raderna `<!-- computercat:idea:start -->` och `<!-- computercat:idea:end -->` är ett kontrakt med `create_game` i computercat-api, som skriver spelets idé mellan dem. De ska finnas exakt en gång var, på egna rader, start före slut. `test/docs.test.ts` vaktar det.
+De två `computercat:idea`-markörraderna under "Idé" är ett kontrakt med `create_game` i computercat-api, som skriver spelets idé mellan dem. Markörerna får inte citeras någon annanstans i den här filen (då finns de två gånger och provisioneringen fallerar). `test/docs.test.ts` vaktar det.
 ~~~
 
 - [ ] **Steg 4: Skriv `CLAUDE.md`**

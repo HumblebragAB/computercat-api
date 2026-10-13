@@ -1629,7 +1629,7 @@ Förväntat: alla gröna.
 cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && git add app/Console/Commands/CreateApiClient.php app/Models/OAuthClient.php app/Http/Controllers/OAuthController.php tests/Feature/Api/CreateApiClientCommandTest.php && git commit -m "feat(api): api-clients:create skapar maskinnyckel med uttryckliga scopes"
 ```
 
-**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** på SiteOps-servern `php artisan migrate` och sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Nyckeln går direkt till Computercats `.env` som `SITEOPS_API_KEY` (spec 2c, förutsättning 6–7).
+**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** Kommandot skriver ut nyckeln; därför kör **Erik** det i sin egen terminal och lägger nyckeln direkt i 1Password/Forge, aldrig via Claudes transkript. Team-id slås upp först (`php artisan tinker --execute="echo App\\Models\\Team::where('name','like','Humblebrag%')->get(['id','name'])"`). Nyckeln får inte återskapas med ny klient: `sites.api_client_id` binder ägarskapet till `client_id`, och en ny klient ger 403 på alla befintliga Demo-webbar (se Eriks beslut om rotation). på SiteOps-servern `php artisan migrate` och sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Nyckeln går direkt till Computercats `.env` som `SITEOPS_API_KEY` (spec 2c, förutsättning 6–7).
 
 ---
 
