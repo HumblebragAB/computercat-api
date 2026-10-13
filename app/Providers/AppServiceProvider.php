@@ -2,11 +2,13 @@
 
 namespace App\Providers;
 
+use App\Models\User;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Passport\Passport;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -34,6 +36,13 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('auth', function (Request $request) {
             return Limit::perMinute(10)->by($request->ip());
+        });
+
+        // Sanctum-guarden släpper aldrig in en bannad användare, även om ett
+        // token överlevt (raderingen i User sker bara via modellhändelser).
+        // Gäller bara Sanctum; MCP/Passport (StaffUser) har EnsureStaff.
+        Sanctum::authenticateAccessTokensUsing(function ($accessToken, bool $isValid) {
+            return $isValid && ! ($accessToken->tokenable instanceof User && $accessToken->tokenable->is_banned);
         });
 
         // Intresseanmälan är publik och utan inloggning. Gränsen per adress

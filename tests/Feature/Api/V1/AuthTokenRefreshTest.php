@@ -122,13 +122,15 @@ class AuthTokenRefreshTest extends TestCase
         $this->refresh($token)->assertUnauthorized();
     }
 
+    // Bannade stoppas redan i guarden (se AuthBanTest), så refresh ger 401
+    // och inget nytt token skapas.
     public function test_banned_user_cannot_refresh(): void
     {
         $token = $this->anonymousToken();
-        PersonalAccessToken::findToken($token)->tokenable->forceFill(['is_banned' => true])->save();
+        PersonalAccessToken::findToken($token)->tokenable->forceFill(['is_banned' => true])->saveQuietly();
         $before = PersonalAccessToken::count();
 
-        $this->refresh($token)->assertForbidden()->assertJson(['message' => 'Account is banned.']);
+        $this->refresh($token)->assertUnauthorized();
 
         $this->assertSame($before, PersonalAccessToken::count());
     }

@@ -23,6 +23,19 @@ class User extends Authenticatable implements FilamentUser
         return $this->isStaff();
     }
 
+    // En bannlysning gäller direkt: alla Sanctum-token raderas när flaggan
+    // slås på (även från panelens växel). Att häva bannet återskapar inga
+    // token. Guarden stoppar dessutom bannade användare (AppServiceProvider),
+    // eftersom massuppdateringar går förbi den här händelsen.
+    protected static function booted(): void
+    {
+        static::saved(function (User $user) {
+            if ($user->is_banned && $user->wasChanged('is_banned')) {
+                $user->tokens()->delete();
+            }
+        });
+    }
+
     protected $fillable = [
         'name',
         'display_name',
