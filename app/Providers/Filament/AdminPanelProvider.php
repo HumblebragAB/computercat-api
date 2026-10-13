@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\AvatarProviders\InitialsAvatarProvider;
 use App\Filament\Pages\Auth\Login;
 use App\Support\ThemeAsset;
 use Filament\FontProviders\LocalFontProvider;
@@ -54,6 +55,7 @@ class AdminPanelProvider extends PanelProvider
                 'success' => Color::hex('#9fd36b'),
             ])
             ->font('IBM Plex Mono', ThemeAsset::url('css/cc-theme.css'), LocalFontProvider::class)
+            ->defaultAvatarProvider(InitialsAvatarProvider::class)
             ->darkMode(true, true)
             ->renderHook(
                 'panels::head.end',
