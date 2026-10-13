@@ -25,27 +25,37 @@
     <title>Godkänn åtkomst - {{ config('app.name') }}</title>
     <link rel="stylesheet" href="{{ \App\Support\ThemeAsset::url('css/cc-theme.css') }}">
     <style>
+        /* System 1: Mac-dialog. Rubriken (h1) är fönstrets randiga titellist, så markupen är orörd.
+           Fallbacks i var() gör att sidan blir rätt även utan cc-theme.css. */
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
-               background: var(--cc-bg, #0d0b08); color: var(--cc-text, #efe6d2);
+               background-color: var(--cc-desk, #e9e6df); color: var(--cc-ink, #111111);
+               background-image: radial-gradient(var(--cc-dot, #b9b4a8) 1px, transparent 1px); background-size: 4px 4px;
                font-family: var(--cc-font, ui-monospace, monospace); font-size: 14px; line-height: 1.6; }
-        .card { width: 100%; max-width: 28rem; background: var(--cc-surface, #15110a); border: 1px solid var(--cc-line, #2e2412); padding: 28px 24px; }
-        h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: .04em; margin: 0 0 8px; text-align: center; color: var(--cc-amber, #f2b544); }
+        .card { width: 100%; max-width: 28rem; background: var(--cc-paper, #fbfaf6); border: 2px solid var(--cc-ink, #111111);
+                box-shadow: 4px 4px 0 var(--cc-ink, #111111); padding: 0 0 22px; }
+        /* Bara sidmarginaler; elementens egna vertikala marginaler står kvar. */
+        .card > :not(h1) { margin-left: 22px; margin-right: 22px; }
+        h1 { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 4px 10px; border-bottom: 2px solid var(--cc-ink, #111111);
+             font-family: var(--cc-font-display, var(--cc-font, monospace)); font-weight: 400; font-size: 13px; line-height: 1.4;
+             text-align: center; overflow-wrap: anywhere; }
+        h1::before, h1::after { content: ''; flex: 1 1 24px; min-width: 24px; height: 11px;
+             background-image: repeating-linear-gradient(0deg, var(--cc-ink, #111111) 0 1px, transparent 1px 3px); }
         p { margin: 0; }
-        .muted { color: var(--cc-muted, #a0824a); font-size: .85rem; }
+        .muted { color: var(--cc-muted, #55524b); font-size: .85rem; }
         .center { text-align: center; }
-        .box { border: 1px dashed var(--cc-line, #2e2412); padding: 12px 16px; margin: 20px 0 16px; }
+        .box { border: 1px dashed var(--cc-ink, #111111); padding: 12px 16px; margin: 20px 0 16px; }
         .email { font-weight: 600; overflow-wrap: anywhere; }
         ul { margin: 8px 0 0; padding-left: 20px; }
-        .actions { display: flex; gap: 12px; margin-top: 24px; }
-        .actions form { flex: 1; }
-        button { width: 100%; height: 40px; border-radius: 0; font: inherit; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; cursor: pointer; }
+        .actions { display: flex; justify-content: flex-end; gap: 16px; margin-top: 24px; }
+        .actions form { flex: 0 0 auto; }
+        button { min-width: 7.5rem; height: 36px; padding: 0 16px; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer;
+                 background: var(--cc-paper, #fbfaf6); color: var(--cc-ink, #111111); border: 2px solid var(--cc-ink, #111111); }
+        button:hover { background: var(--cc-desk, #e9e6df); }
         button:disabled { opacity: .6; cursor: default; }
-        button:focus-visible { outline: 2px solid var(--cc-amber, #f2b544); outline-offset: 2px; }
-        .secondary { background: transparent; color: var(--cc-text, #efe6d2); border: 1px solid var(--cc-line, #2e2412); }
-        .secondary:hover { border-color: var(--cc-muted, #a0824a); }
-        .primary { background: var(--cc-amber, #f2b544); color: var(--cc-bg, #0d0b08); border: 1px solid var(--cc-amber, #f2b544); }
-        .primary:hover { background: var(--cc-amber-hover, #f6c76e); }
+        button:focus-visible { outline: 2px dashed var(--cc-ink, #111111); outline-offset: 6px; }
+        /* Standardknappen har dubbelram, som på Macen. */
+        .primary { box-shadow: 0 0 0 2px var(--cc-paper, #fbfaf6), 0 0 0 4px var(--cc-ink, #111111); }
     </style>
 </head>
 <body>
