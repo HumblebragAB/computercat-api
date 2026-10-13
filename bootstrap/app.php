@@ -21,6 +21,9 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Före HandleCors, så preflight ser spelens origins.
+        $middleware->prepend(\App\Http\Middleware\MergeGameCorsOrigins::class);
+
         $middleware->throttleApi('60,1');
         $middleware->statefulApi();
 

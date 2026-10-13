@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\GameCorsOrigins;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -12,6 +13,7 @@ class Game extends Model
         'name',
         'description',
         'settings',
+        'allowed_origins',
         'is_active',
     ];
 
@@ -23,8 +25,24 @@ class Game extends Model
     {
         return [
             'settings' => 'array',
+            'allowed_origins' => 'array',
             'is_active' => 'boolean',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        // Normaliseras vid sparning så att värdet matchar webbläsarens Origin-header.
+        static::saving(function (Game $game) {
+            if (is_array($game->allowed_origins)) {
+                $game->allowed_origins = array_values(array_unique(array_map(
+                    [GameCorsOrigins::class, 'normalize'], $game->allowed_origins
+                )));
+            }
+        });
+
+        static::saved(fn () => GameCorsOrigins::forget());
+        static::deleted(fn () => GameCorsOrigins::forget());
     }
 
     public function leaderboardTypes(): HasMany

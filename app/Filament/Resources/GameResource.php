@@ -105,6 +105,11 @@ class GameResource extends Resource
                         ->columnSpanFull(),
                     Forms\Components\Toggle::make('is_active')
                         ->default(true),
+                    Forms\Components\TagsInput::make('allowed_origins')
+                        ->label('Tillåtna origins (CORS)')
+                        ->placeholder('https://ordjakt.apps.humblebrag.se')
+                        ->nestedRecursiveRules([new \App\Rules\GameOrigin])
+                        ->helperText('Webbadresser som spelets frontend körs på. https, utan path.'),
                 ]),
 
             Forms\Components\Section::make('Anti-Cheat')
