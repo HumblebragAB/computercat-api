@@ -78,6 +78,13 @@ class StaffAccessTest extends TestCase
         $this->assertSame(2, \App\Models\McpAuditLog::where('outcome', 'denied')->count());
     }
 
+    public function test_denied_mcp_call_is_still_403_when_audit_write_fails(): void
+    {
+        \Illuminate\Support\Facades\Schema::drop('mcp_audit_logs');
+
+        $this->mcpPing(User::factory()->create())->assertForbidden();
+    }
+
     public function test_revoking_staff_denies_next_call(): void
     {
         $user = $this->staff();

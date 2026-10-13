@@ -61,4 +61,11 @@ class AuditLoggerTest extends TestCase
         $row = McpAuditLog::firstOrFail();
         $this->assertSame(['obj' => '[object]', 'big' => '[list: 10 items]'], $row->arguments);
     }
+
+    public function test_record_rejects_unknown_outcome(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        AuditLogger::record(null, null, 'ping', [], 'maybe');
+    }
 }

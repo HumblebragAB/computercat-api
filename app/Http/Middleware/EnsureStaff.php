@@ -30,11 +30,16 @@ class EnsureStaff
                 // Namnet kommer från klienten och kan vara vad som helst.
                 $name = $request->input('params.name');
                 $method = $request->input('method');
-                AuditLogger::record(
-                    User::find($user->getAuthIdentifier()), null,
-                    is_string($name) ? $name : (is_string($method) ? $method : 'unknown'),
-                    [], 'denied',
-                );
+                // En trasig loggning får aldrig dölja nekandet: rapportera, men svara 403.
+                try {
+                    AuditLogger::record(
+                        User::find($user->getAuthIdentifier()), null,
+                        is_string($name) ? $name : (is_string($method) ? $method : 'unknown'),
+                        [], 'denied',
+                    );
+                } catch (\Throwable $e) {
+                    report($e);
+                }
             }
 
             abort(403);

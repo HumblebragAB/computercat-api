@@ -8,10 +8,16 @@ use App\Models\User;
 
 class AuditLogger
 {
+    public const OUTCOMES = ['ok', 'validation_error', 'denied', 'error'];
+
     private const MAX_STRING = 200;
 
     public static function record(?User $user, ?Game $game, string $tool, array $arguments, string $outcome): void
     {
+        if (! in_array($outcome, self::OUTCOMES, true)) {
+            throw new \InvalidArgumentException("Ogiltigt outcome: {$outcome}");
+        }
+
         McpAuditLog::create([
             'user_id' => $user?->getKey(),
             'game_id' => $game?->getKey(),
