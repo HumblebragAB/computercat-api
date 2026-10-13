@@ -74,6 +74,8 @@ class StaffAccessTest extends TestCase
         $this->mcpPing(User::factory()->create())->assertForbidden();
         $this->mcpPing($this->staff(['is_banned' => true]))->assertForbidden();
         $this->mcpPing($this->staff())->assertOk();
+
+        $this->assertSame(2, \App\Models\McpAuditLog::where('outcome', 'denied')->count());
     }
 
     public function test_revoking_staff_denies_next_call(): void

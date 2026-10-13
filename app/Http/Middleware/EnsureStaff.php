@@ -2,7 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Mcp\AuditLogger;
 use App\Models\StaffUser;
+use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Laravel\Passport\TransientToken;
@@ -23,6 +25,18 @@ class EnsureStaff
         }
 
         if (! $user || ! $user->isStaff()) {
+            // Nekade MCP-anrop når aldrig ett verktyg, så de loggas här.
+            if ($user && $request->is('mcp')) {
+                // Namnet kommer från klienten och kan vara vad som helst.
+                $name = $request->input('params.name');
+                $method = $request->input('method');
+                AuditLogger::record(
+                    User::find($user->getAuthIdentifier()), null,
+                    is_string($name) ? $name : (is_string($method) ? $method : 'unknown'),
+                    [], 'denied',
+                );
+            }
+
             abort(403);
         }
 
