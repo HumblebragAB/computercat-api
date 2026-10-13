@@ -68,15 +68,15 @@ class IntegrationGuide
         $lines = [];
 
         $lines[] = '## 1. Game Configuration';
-        $lines[] = "- **Name:** {$game->name}";
-        $lines[] = "- **Slug:** `{$game->slug}`";
+        $lines[] = '- **Name:** '.self::inline($game->name);
+        $lines[] = '- **Slug:** `'.self::code($game->slug).'`';
         $lines[] = '- **Status:** '.($game->is_active ? 'Active' : 'Inactive');
         $lines[] = '';
 
         if ($game->leaderboardTypes->count()) {
             $lines[] = "## 2. Leaderboards ({$game->leaderboardTypes->count()})";
             foreach ($game->leaderboardTypes as $lb) {
-                $lines[] = "- **{$lb->name}** (`{$lb->slug}`) — {$lb->period}, sort: {$lb->sort_direction}, label: \"{$lb->score_label}\"";
+                $lines[] = '- **'.self::inline($lb->name).'** (`'.self::code($lb->slug).'`) — '.self::inline($lb->period).', sort: '.self::inline($lb->sort_direction).', label: "'.self::inline($lb->score_label).'"';
             }
             $lines[] = '';
         }
@@ -91,7 +91,7 @@ class IntegrationGuide
             $lines[] = "## Daily Content Pools ({$game->dailyContentPools->count()})";
             foreach ($game->dailyContentPools as $pool) {
                 $count = is_array($pool->content) ? count($pool->content) : 0;
-                $lines[] = "- **{$pool->pool_key}** — {$count} items".($pool->is_active ? '' : ' (inactive)');
+                $lines[] = '- **'.self::inline($pool->pool_key)."** — {$count} items".($pool->is_active ? '' : ' (inactive)');
             }
             $lines[] = '';
         }
@@ -106,7 +106,7 @@ class IntegrationGuide
             $lines[] = "## Events ({$game->gameEvents->count()})";
             foreach ($game->gameEvents as $event) {
                 $status = now()->between($event->starts_at, $event->ends_at) ? 'active' : 'scheduled';
-                $lines[] = "- **{$event->name}** (`{$event->slug}`) — {$event->event_type}, {$status}";
+                $lines[] = '- **'.self::inline($event->name).'** (`'.self::code($event->slug).'`) — '.self::inline($event->event_type).", {$status}";
             }
             $lines[] = '';
         }
@@ -126,14 +126,14 @@ class IntegrationGuide
 
         $lines[] = '# Computer Cat API — Integration Manual';
         $lines[] = '';
-        $lines[] = "You are integrating \"{$game->name}\" with the Computer Cat backend.";
+        $lines[] = 'You are integrating "'.self::inline($game->name).'" with the Computer Cat backend.';
         $lines[] = '';
         $lines[] = '## Credentials';
         $lines[] = '';
         $lines[] = '| Key | Value |';
         $lines[] = '|-----|-------|';
         $lines[] = "| Base URL | `{$baseUrl}` |";
-        $lines[] = "| Game slug | `{$game->slug}` |";
+        $lines[] = '| Game slug | `'.self::code($game->slug).'` |';
         $lines[] = '';
         $lines[] = 'For testing, create an anonymous user exactly as the app does (see Authentication). There is no shared dev token.';
         $lines[] = '';
@@ -203,7 +203,7 @@ class IntegrationGuide
             $lines[] = '### Configured types';
             foreach ($game->leaderboardTypes as $lb) {
                 $dir = $lb->sort_direction === 'asc' ? 'lower is better' : 'higher is better';
-                $lines[] = "- `{$lb->slug}` — {$lb->name}, {$lb->period}, {$dir}, label: \"{$lb->score_label}\"";
+                $lines[] = '- `'.self::code($lb->slug).'` — '.self::inline($lb->name).', '.self::inline($lb->period).", {$dir}, label: \"".self::inline($lb->score_label).'"';
             }
             $lines[] = '';
 
@@ -223,7 +223,9 @@ class IntegrationGuide
             $lines[] = '';
             // Anti-cheat documentation based on configured preset
             $acConfig = $game->settings['anti_cheat'] ?? [];
+            $acConfig = is_array($acConfig) ? $acConfig : [];
             $presetKey = $game->settings['anti_cheat_preset'] ?? 'none';
+            $presetKey = is_string($presetKey) ? $presetKey : 'invalid';
             $preset = GameResource::ANTI_CHEAT_PRESETS[$presetKey] ?? null;
 
             if ($presetKey !== 'none') {
@@ -235,13 +237,13 @@ class IntegrationGuide
                     $lines[] = $preset['description'];
                     $lines[] = '';
                 }
-                $minScore = $acConfig['min_score'] ?? 0;
-                $maxScore = $acConfig['max_score'] ?? 86400;
+                $minScore = self::setting($acConfig['min_score'] ?? 0, code: true);
+                $maxScore = self::setting($acConfig['max_score'] ?? 86400, code: true);
                 $lines[] = "- Score range: `{$minScore}` – `{$maxScore}`";
 
                 $requireProof = $acConfig['require_proof'] ?? false;
                 $proofAlgo = $acConfig['proof_algorithm'] ?? null;
-                $minMoves = $acConfig['min_moves'] ?? 1;
+                $minMoves = self::setting($acConfig['min_moves'] ?? 1);
 
                 if ($requireProof || $proofAlgo) {
                     $lines[] = '- Proof-of-play: '.($requireProof ? '**required**' : 'optional but validated if present');
@@ -299,7 +301,7 @@ class IntegrationGuide
             $lines[] = '|------|------|-------------|------|';
             foreach ($game->achievementDefinitions->sortBy('sort_order') as $a) {
                 $s = $a->is_secret ? ' (secret)' : '';
-                $lines[] = "| `{$a->slug}` | {$a->name}{$s} | {$a->description} | {$a->icon} |";
+                $lines[] = '| `'.self::code($a->slug).'` | '.self::inline($a->name).$s.' | '.self::inline($a->description).' | '.self::inline($a->icon).' |';
             }
             $lines[] = '';
             $lines[] = '### Report unlocks';
@@ -420,7 +422,7 @@ class IntegrationGuide
             $lines[] = '### Server-side (no client action needed)';
             $lines[] = 'When a purchase happens, RevenueCat sends a webhook to:';
             $lines[] = '```';
-            $lines[] = rtrim(config('app.url'), '/')."/api/v1/webhooks/revenuecat/{$game->slug}";
+            $lines[] = rtrim(config('app.url'), '/').'/api/v1/webhooks/revenuecat/'.self::code($game->slug);
             $lines[] = '```';
             $lines[] = 'The server verifies the signature, upserts the `Purchase` record, and the `/ownership` endpoint immediately reflects the new purchase. Refunds, cancellations, and expirations are handled automatically.';
             $lines[] = '';
@@ -464,7 +466,7 @@ class IntegrationGuide
                 foreach ($game->dailyContentPools as $pool) {
                     $count = is_array($pool->content) ? count($pool->content) : 0;
                     $random = $pool->random_access ? ' (random access)' : '';
-                    $lines[] = "- `{$pool->pool_key}` — {$count} items{$random}";
+                    $lines[] = '- `'.self::code($pool->pool_key)."` — {$count} items{$random}";
                 }
                 $lines[] = '';
             }
@@ -550,7 +552,7 @@ class IntegrationGuide
                 $lines[] = '| Key | Type | Description |';
                 $lines[] = '|-----|------|-------------|';
                 foreach ($game->remoteConfigs->where('is_active', true) as $rc) {
-                    $lines[] = "| `{$rc->key}` | {$rc->value_type} | {$rc->description} |";
+                    $lines[] = '| `'.self::code($rc->key).'` | '.self::inline($rc->value_type).' | '.self::inline($rc->description).' |';
                 }
                 $lines[] = '';
             }
@@ -639,5 +641,41 @@ class IntegrationGuide
         $lines[] = '- Score submit: 30/min';
 
         return implode("\n", $lines);
+    }
+
+    // Användarstyrda värden (namn, beskrivningar, etiketter) läses av andra
+    // Claude-sessioner via get_integration_guide. Radbrytningar slås ihop och
+    // markdown-tecken escapas, så att ett värde inte kan bryta sig ut ur sin
+    // tabellcell eller listpunkt och bli en rubrik, länk eller instruktion.
+    private static function inline(mixed $value): string
+    {
+        return preg_replace('/([\\\\`|\[\]<>*_#])/', '\\\\$1', self::oneLine($value));
+    }
+
+    // För värden inom `kod`: markdown tolkas inte där, men en backtick
+    // avslutar spannet och | delar en tabellcell.
+    private static function code(mixed $value): string
+    {
+        return str_replace(['`', '|'], ["'", '\\|'], self::oneLine($value));
+    }
+
+    // Anti-cheat-värden ur settings: allt som inte är skalärt visas som invalid.
+    private static function setting(mixed $value, bool $code = false): string
+    {
+        if (! is_scalar($value)) {
+            return 'invalid';
+        }
+
+        return $code ? self::code($value) : self::inline($value);
+    }
+
+    private static function oneLine(mixed $value): string
+    {
+        $value = is_scalar($value) ? (string) $value : '';
+        // Ogiltig UTF-8 ger null med /u; då tas byte-varianten.
+        $collapsed = preg_replace('/[\s\p{Cc}\p{Zl}\p{Zp}]+/u', ' ', $value)
+            ?? preg_replace('/[\s\x00-\x1F\x7F]+/', ' ', $value);
+
+        return trim($collapsed);
     }
 }
