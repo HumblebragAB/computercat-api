@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Game;
+use App\Rules\GameOrigin;
 use Illuminate\Support\Facades\Cache;
 
 class GameCorsOrigins
@@ -25,7 +26,8 @@ class GameCorsOrigins
             ->whereNotNull('allowed_origins')
             ->pluck('allowed_origins')
             ->flatten()
-            ->filter(fn ($o) => is_string($o) && $o !== '')
+            // Fail-closed: ett värde som passerat förbi valideringen (t.ex. '*') får aldrig bli CORS-jokertecken.
+            ->filter(fn ($o) => GameOrigin::isValid($o))
             ->unique()
             ->values()
             ->all());

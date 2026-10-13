@@ -53,4 +53,13 @@ class GameCorsTest extends TestCase
 
         $this->assertSame(['https://a.apps.humblebrag.se'], $game->fresh()->allowed_origins);
     }
+
+    public function test_invalid_stored_origins_never_become_cors_wildcards(): void
+    {
+        Game::create(['slug' => 'a', 'name' => 'A', 'is_active' => true, 'settings' => [], 'allowed_origins' => ['*', 'https://*.x.se', 'http://y.se', 'https://ok.apps.humblebrag.se']]);
+
+        $this->preflight('https://evil.example')->assertHeaderMissing('Access-Control-Allow-Origin');
+        $this->preflight('https://sub.x.se')->assertHeaderMissing('Access-Control-Allow-Origin');
+        $this->preflight('https://ok.apps.humblebrag.se')->assertHeader('Access-Control-Allow-Origin', 'https://ok.apps.humblebrag.se');
+    }
 }
