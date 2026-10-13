@@ -3,6 +3,8 @@
 namespace App\Support\ConfigRules;
 
 use App\Models\Game;
+use Closure;
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Eloquent\Model;
 
 class GameEventRules
@@ -37,9 +39,18 @@ class GameEventRules
             'event_type' => ['required', 'in:leaderboard,challenge,seasonal'],
             'starts_at' => ['required', 'date'],
             'ends_at' => ['required', 'date', 'after:starts_at'],
-            'settings' => ['sometimes', function (string $a, mixed $v, \Closure $fail) {
-                if ($e = self::settingsError($v)) {
-                    $fail($e);
+            // Utelämnad = oförändrad, null = tömd, annars ett objekt. Regeln är
+            // implicit: validatorn hoppar annars över icke-implicita regler för
+            // "", så en tom sträng skulle sparas utan kontroll.
+            'settings' => ['sometimes', new class implements ValidationRule
+            {
+                public bool $implicit = true;
+
+                public function validate(string $attribute, mixed $value, Closure $fail): void
+                {
+                    if ($e = GameEventRules::settingsError($value)) {
+                        $fail($e);
+                    }
                 }
             }],
             'is_active' => ['sometimes', 'boolean'],

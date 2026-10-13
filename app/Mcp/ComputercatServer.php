@@ -14,6 +14,11 @@ class ComputercatServer extends Server
 
     protected array $tools = [
         Tools\ListGamesTool::class,
+        Tools\UpsertLeaderboardTypeTool::class,
+        Tools\UpsertAchievementTool::class,
+        Tools\UpsertContentPoolTool::class,
+        Tools\UpsertRemoteConfigTool::class,
+        Tools\UpsertGameEventTool::class,
     ];
 
     // Verktygslistan utan att starta servern. Invarianttesterna går igenom

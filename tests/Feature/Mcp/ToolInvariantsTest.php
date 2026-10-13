@@ -16,10 +16,8 @@ class ToolInvariantsTest extends McpTestCase
     {
         $classes = array_values(array_filter(ComputercatServer::toolClasses(), fn ($c) => is_subclass_of($c, GameTool::class)));
 
-        // Synligt i testutskriften i stället för ett tyst grönt test utan kontroller.
-        if ($classes === []) {
-            $this->markTestSkipped('Servern har inga GameTool-verktyg ännu.');
-        }
+        // Ett tomt urval skulle göra invarianterna gröna utan en enda kontroll.
+        $this->assertNotEmpty($classes, 'Servern har inga GameTool-verktyg.');
 
         return $classes;
     }

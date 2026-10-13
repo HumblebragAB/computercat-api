@@ -22,11 +22,14 @@ class LeaderboardTypesRelationManager extends RelationManager
             Forms\Components\TextInput::make('name')->required()->maxLength(100),
             Forms\Components\Select::make('sort_direction')
                 ->options(['asc' => 'Ascending (lower is better)', 'desc' => 'Descending (higher is better)'])
-                ->required(),
+                ->required()
+                // Select validerar inte själv mot sina options; samma regel som MCP.
+                ->rules(fn () => LeaderboardTypeRules::rules($this->getOwnerRecord(), null)['sort_direction']),
             Forms\Components\TextInput::make('score_label')->required()->maxLength(50),
             Forms\Components\Select::make('period')
                 ->options(['daily' => 'Daily', 'weekly' => 'Weekly', 'monthly' => 'Monthly', 'all_time' => 'All Time'])
-                ->required(),
+                ->required()
+                ->rules(fn () => LeaderboardTypeRules::rules($this->getOwnerRecord(), null)['period']),
             Forms\Components\TextInput::make('max_entries_per_period')->numeric()->default(100)
                 ->rules(fn () => LeaderboardTypeRules::rules($this->getOwnerRecord(), null)['max_entries_per_period']),
             Forms\Components\Toggle::make('is_active')->default(true),

@@ -32,7 +32,9 @@ class GameEventsRelationManager extends RelationManager
                     'challenge' => 'Challenge',
                     'seasonal' => 'Seasonal',
                 ])
-                ->required(),
+                ->required()
+                // Select validerar inte själv mot sina options; samma regel som MCP.
+                ->rules(fn () => GameEventRules::rules($this->getOwnerRecord(), null)['event_type']),
             Forms\Components\DateTimePicker::make('starts_at')
                 ->required(),
             Forms\Components\DateTimePicker::make('ends_at')

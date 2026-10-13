@@ -40,6 +40,8 @@ class RemoteConfigsRelationManager extends RelationManager
                     'json' => 'JSON',
                 ])
                 ->required()
+                // Select validerar inte själv mot sina options; samma regel som MCP.
+                ->rules(fn () => RemoteConfigRules::rules($this->getOwnerRecord(), null, null)['value_type'])
                 ->live()
                 ->default('string'),
             Forms\Components\Textarea::make('description')
