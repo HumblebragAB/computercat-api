@@ -3,6 +3,7 @@
 namespace Tests\Feature\Mcp;
 
 use App\Models\LeaderboardType;
+use Tests\Feature\Mcp\Fixtures\CaseInsensitiveLookupTool;
 
 class UpsertToolsTest extends McpTestCase
 {
@@ -80,6 +81,34 @@ class UpsertToolsTest extends McpTestCase
 
         $this->assertTrue($this->callTool($user, 'upsert_leaderboard_type', $this->lb(['slug' => 'Daily_Time', 'name' => 'Ny']))['ok']);
         $this->assertFalse($this->callTool($user, 'upsert_leaderboard_type', $this->lb(['slug' => 'Other_Time']))['ok']);
+    }
+
+    /** En slug som bara skiljer i skiftläge döper aldrig om en äldre post. */
+    public function test_different_case_slug_does_not_rename_legacy_record(): void
+    {
+        $game = $this->game();
+        $user = $this->staffMember($game);
+        $legacy = LeaderboardType::create(['game_id' => $game->id, 'slug' => 'Daily_Time', 'name' => 'D', 'sort_direction' => 'asc', 'score_label' => 'Tid', 'period' => 'daily']);
+
+        // SQLite är skiftlägeskänsligt: en ny post skapas, den äldre är orörd.
+        $this->assertTrue($this->callTool($user, 'upsert_leaderboard_type', $this->lb(['slug' => 'daily_time', 'name' => 'Ny']))['ok']);
+        $this->assertSame(['Daily_Time', 'D'], [$legacy->fresh()->slug, $legacy->fresh()->name]);
+        $this->assertSame(2, $game->leaderboardTypes()->count());
+    }
+
+    /** Samma sak med ett uppslag som beter sig som MySQL:s kollation. */
+    public function test_case_insensitive_lookup_hit_is_discarded(): void
+    {
+        $game = $this->game();
+        $user = $this->staffMember($game);
+        $legacy = LeaderboardType::create(['game_id' => $game->id, 'slug' => 'Daily_Time', 'name' => 'D', 'sort_direction' => 'asc', 'score_label' => 'Tid', 'period' => 'daily']);
+
+        $response = (new CaseInsensitiveLookupTool)->callRun($game, $this->lb(['slug' => 'daily_time', 'name' => 'Ny']), $user);
+
+        $this->assertSame(['Daily_Time', 'D'], [$legacy->fresh()->slug, $legacy->fresh()->name]);
+        // På SQLite skapas en ny post; på MySQL faller skapandet på unikhetsregeln.
+        $this->assertFalse($response->isError());
+        $this->assertTrue(json_decode((string) $response->content(), true)['created']);
     }
 
     public function test_unknown_fields_are_ignored(): void
