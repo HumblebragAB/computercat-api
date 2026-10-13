@@ -54,7 +54,7 @@ dämpad text `#6b6150` (5.7:1) och knappar med `#fbf7ee`-text på `#8a5a00` (5.5
 npm-paketet `@fontsource/ibm-plex-mono` med en låst version och checkas in i `public/fonts/plex-mono/` tillsammans
 med OFL-licensfilen. `font-display: swap`. Family-namnet är exakt `'IBM Plex Mono'`.
 
-**Cache-bust:** en helper `cc_asset(string $path)` returnerar `asset($path)` med `?v=<filemtime>`. Saknas filen
+**Cache-bust:** `App\Support\ThemeAsset::url(string $path)` returnerar `asset($path)` med `?v=<filemtime>`. Saknas filen
 returneras `asset($path)` utan version, utan varning. Det krävs eftersom `StaffAccessTest::withoutBuiltAssets()`
 byter `public_path` till en tom katalog.
 
@@ -70,10 +70,10 @@ byter `public_path` till en tom katalog.
   - `danger`: `Color::hex('#e8664a')`
   - `success`: `Color::hex('#9fd36b')`
   - `warning`: `Color::hex('#f08a24')`
-- `->font('IBM Plex Mono', cc_asset('css/cc-theme.css'), LocalFontProvider::class)`. Det tar också bort Filaments
+- `->font('IBM Plex Mono', ThemeAsset::url('css/cc-theme.css'), LocalFontProvider::class)`. Det tar också bort Filaments
   Inter-anrop till `fonts.bunny.net`.
 - `->darkMode(true, true)` står kvar, så mörkt läge är fortfarande påtvingat.
-- Render-hooken för `cc-admin.css` använder `cc_asset()`.
+- Render-hooken för `cc-admin.css` använder `ThemeAsset::url()`.
 - `cc-admin.css` skrivs om från grunden. Målet är högst cirka 150 rader. Innehåll:
   - Brödtext: `.fi-body` och de vita textklasserna i mörkt läge sätts till `--cc-text`.
   - Knapptext: färgade `.fi-btn` och badges får `color: var(--cc-bg)`. Hover på primary blir `#f6c76e`.
@@ -90,7 +90,7 @@ byter `public_path` till en tom katalog.
 
 - Blade-filen behåller bara markup: kortet, kattbanorna, formuläret och footern `> ready_` (texten är oförändrad).
 - CSS:en flyttas till `public/css/cc-login.css` och JS:en till `public/js/cc-login.js`. Båda länkas **i vyn** (JS
-  med `defer`) via `cc_asset()`, inte i en global hook, så att de bara laddas på login. **Logiken flyttas
+  med `defer`) via `ThemeAsset::url()`, inte i en global hook, så att de bara laddas på login. **Logiken flyttas
   oförändrad.** Den har ingen Blade eller PHP i script/style och inga Livewire-hooks. Det gäller alla beteenden:
   gå, sitta, sova, jaga flugan, putsa, jaga svansen, kasta sig, kika, falla, beteenden på nedre banan, klättra
   tillbaka, pratbubblor, drag med mus och touch, fysik och golvläge.
@@ -106,7 +106,7 @@ byter `public_path` till en tom katalog.
 
 Alla fem behålls med samma triggers: Konami, "meow", "nyan", att klicka på varumärket 7 gånger, och idle-katten
 efter 60 sekunder. Skriptet laddas fortfarande på alla panelsidor, login inräknat. Render-hooken använder
-`cc_asset()`. Ändringar:
+`ThemeAsset::url()`. Ändringar:
 - **Matrix-regnet:** emoji-tecknen byts mot ASCII- och katt-tecken (till exempel `=^.^=`, `/\_/\`, `meow`,
   `01`), som kan färgas amber med `fillStyle`. Fade-rektangeln får `--cc-bg` i stället för `rgba(10,10,26,.05)`.
 - **Nyan-spåret:** en gradient i amber-toner i stället för regnbåge, utan `box-shadow`-glow.
@@ -117,7 +117,7 @@ efter 60 sekunder. Skriptet laddas fortfarande på alla panelsidor, login inräk
 
 ### 4. MCP-godkännandet (`resources/views/vendor/mcp/authorize.blade.php`)
 
-- Inline-CSS:en byts mot de mörka tokens. `cc-theme.css` länkas via `cc_asset()`. Sidan har fortfarande inget
+- Inline-CSS:en byts mot de mörka tokens. `cc-theme.css` länkas via `ThemeAsset::url()`. Sidan har fortfarande inget
   `@vite` och inga externa resurser.
 - Primärknappen "Godkänn" blir amber med mörk text, och "Neka" får en ram i `--cc-line` med `--cc-text`.
 - **Får inte ändras:** formulärens fält, metoder (POST för godkänn, DELETE via `@method` för neka), `@csrf`, att
@@ -155,13 +155,13 @@ Mailet förblir ren text. Copyn granskas med `naturlig-svenska` och ändras bara
   typsnitt går via `->colors()` och `->font()`. Bara textfärg, knapptext och karaktärsdetaljer är overrides, och
   de samlas med kommentarer i `cc-admin.css`.
 - **Livewire-morph på login:** hanteras med `wire:ignore` och testas med en misslyckad inloggning i webbläsaren.
-- **Cache:** hanteras med `cc_asset()` och `filemtime`, som tål att filen saknas.
+- **Cache:** hanteras med `ThemeAsset::url()` och `filemtime`, som tål att filen saknas.
 
 ## Test och verifiering
 
 Testerna är PHPUnit-klasser med `RefreshDatabase`, enligt repots mönster.
 
-- `cc_asset()`: ger version när filen finns och saknar version (ingen varning) när den saknas.
+- `ThemeAsset::url()`: ger version när filen finns och saknar version (ingen varning) när den saknas.
 - `/admin/login` svarar 200, innehåller formuläret, länkar `cc-login.css`, `cc-login.js` och `cc-theme.css`, och
   `wire:ignore` sitter på kattbanan.
 - En annan adminsida, för inloggad staff, länkar **inte** `cc-login.js`.
