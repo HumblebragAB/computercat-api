@@ -71,6 +71,29 @@ class ThemeSweepTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('#::placeholder[^}]*opacity#', $login);
     }
 
+    public function test_flikar_notiser_och_listor_ar_temade(): void
+    {
+        $root = dirname(__DIR__, 2);
+        $admin = file_get_contents("$root/public/css/cc-admin.css");
+        $devkit = file_get_contents("$root/resources/views/filament/resources/game-resource/pages/game-dev-kit.blade.php");
+
+        // Aktiv flik syns annars bara på textfärgen (Filaments bg-gray-50 är osynligt mot vitt).
+        $this->assertMatchesRegularExpression('#\\.fi-tabs-item\\.fi-active[^{]*\\{[^}]*background:\\s*var\\(--cc-ink\\)#', $admin);
+        $this->assertMatchesRegularExpression('#\\.fi-no-notification[^{]*\\{[^}]*border:\\s*2px solid var\\(--cc-ink\\)#', $admin);
+        $this->assertMatchesRegularExpression('#\\.cc-markdown li::marker\\s*\\{[^}]*var\\(--cc-ink\\)#', $devkit);
+    }
+
+    public function test_hacker_glitchen_blinkar_hogst_tre_ganger_per_sekund(): void
+    {
+        $js = file_get_contents(dirname(__DIR__, 2).'/public/js/cc-eggs.js');
+        $hacker = substr($js, strpos($js, 'function hackerMode'));
+
+        // WCAG 2.3.1: högst 3 blinkningar per sekund, och ingen alls vid reducerad rörelse.
+        preg_match('#setInterval\\(.*?\\},\\s*(\\d+)\\)#s', $hacker, $m);
+        $this->assertGreaterThanOrEqual(334, (int) ($m[1] ?? 0));
+        $this->assertStringContainsString('prefers-reduced-motion', $hacker);
+    }
+
     public function test_den_oanvanda_welcome_vyn_ar_borta(): void
     {
         $this->assertFileDoesNotExist(dirname(__DIR__, 2).'/resources/views/welcome.blade.php');

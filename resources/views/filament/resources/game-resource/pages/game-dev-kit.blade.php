@@ -83,6 +83,8 @@
             background: transparent !important;
             padding: 0 !important;
         }
+        /* prose ger ljusgrå listmarkörer i ljust läge. */
+        .cc-markdown li::marker { color: var(--cc-ink); }
         .cc-markdown table {
             font-size: 0.8rem;
         }

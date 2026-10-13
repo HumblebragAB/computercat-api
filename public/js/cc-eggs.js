@@ -248,34 +248,41 @@
         overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;pointer-events:none;';
         document.body.appendChild(overlay);
 
-        // Rapid glitch flashes
+        function showGranted() {
+            const msg = document.createElement('div');
+            msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;font-family:' + CC.font + ';font-weight:600;font-size:1.2rem;letter-spacing:.08em;color:' + CC.ink + ';background:' + CC.paper + ';border:2px solid ' + CC.ink + ';box-shadow:4px 4px 0 ' + CC.ink + ';padding:1.25rem 1.75rem;text-align:center;pointer-events:none;';
+            msg.innerHTML = '&#9888;&#xFE0E; ACCESS_GRANTED<br><span style="font-size:.8rem;letter-spacing:.04em;font-weight:400;color:' + CC.muted + ';">welcome back, operator</span>';
+            document.body.appendChild(msg);
+
+            setTimeout(() => {
+                msg.style.transition = 'opacity 1s';
+                msg.style.opacity = '0';
+                setTimeout(() => { msg.remove(); overlay.remove(); }, 1000);
+            }, 2000);
+        }
+
+        // Reducerad rörelse: inget flimmer, bara dialogen.
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            showGranted();
+            return;
+        }
+
+        // Svag rasterflimmer med högst 3 växlingar per sekund (WCAG 2.3.1), sedan dialogen.
         let flashes = 0;
         const glitchInterval = setInterval(() => {
-            // Svag rasterflimmer i stället för helskärmsinvertering: låg luminansändring (WCAG 2.3.1).
             overlay.style.background = flashes % 2 === 0
                 ? 'repeating-linear-gradient(0deg, rgba(17,17,17,0.08) 0 1px, transparent 1px 3px)'
                 : 'transparent';
             document.body.style.transform = flashes % 2 === 0
                 ? 'translateX(2px)' : 'translateX(-2px)';
             flashes++;
-            if (flashes > 10) {
+            if (flashes > 4) {
                 clearInterval(glitchInterval);
                 document.body.style.transform = '';
                 overlay.style.background = 'transparent';
-
-                // Show ACCESS GRANTED
-                const msg = document.createElement('div');
-                msg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:99999;font-family:' + CC.font + ';font-weight:600;font-size:1.2rem;letter-spacing:.08em;color:' + CC.ink + ';background:' + CC.paper + ';border:2px solid ' + CC.ink + ';box-shadow:4px 4px 0 ' + CC.ink + ';padding:1.25rem 1.75rem;text-align:center;pointer-events:none;';
-                msg.innerHTML = '&#9888;&#xFE0E; ACCESS_GRANTED<br><span style="font-size:.8rem;letter-spacing:.04em;font-weight:400;color:' + CC.muted + ';">welcome back, operator</span>';
-                document.body.appendChild(msg);
-
-                setTimeout(() => {
-                    msg.style.transition = 'opacity 1s';
-                    msg.style.opacity = '0';
-                    setTimeout(() => { msg.remove(); overlay.remove(); }, 1000);
-                }, 2000);
+                showGranted();
             }
-        }, 80);
+        }, 340);
     }
 
     // -- 5. IDLE CAT → After 60s of no interaction, cat peeks from sidebar --

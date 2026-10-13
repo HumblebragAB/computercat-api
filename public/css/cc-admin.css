@@ -23,6 +23,8 @@ body.fi-body {
       så att ikoner, beskrivningar och knappar i rubrikytan står på rent papper. -- */
 .fi-section-header-heading, .fi-ta-header-heading, .fi-modal-heading {
     display: flex;
+    flex: 1 1 auto;
+    width: 100%;
     align-items: center;
     gap: .6rem;
     font-family: var(--cc-font-display);
@@ -38,6 +40,9 @@ body.fi-body {
     height: 11px;
     background-image: repeating-linear-gradient(0deg, var(--cc-ink) 0 1px, transparent 1px 3px);
 }
+/* Rubrikens behållare ska ta raden, annars kollapsar ränderna (formulärmodaler, tabeller med knappar). */
+.fi-modal-header div:has(> .fi-modal-heading), .fi-ta-header div:has(> .fi-ta-header-heading) { flex: 1 1 auto; min-width: 0; }
+.fi-modal-header .fi-modal-heading { padding-right: 2.25rem; }
 /* Rubriker med egna knappar (dev-kit) får ingen rand, annars trycks knapparna ihop. */
 .fi-section-header-heading:has(> div)::before, .fi-section-header-heading:has(> div)::after { content: none; }
 .fi-section-header { border-bottom: 2px solid var(--cc-ink); }
@@ -61,6 +66,17 @@ body.fi-body {
 .fi-dropdown-list-item:hover, .fi-dropdown-list-item:focus-visible { background: var(--cc-ink); }
 .fi-dropdown-list-item:hover .fi-dropdown-list-item-label, .fi-dropdown-list-item:hover .fi-dropdown-list-item-icon,
 .fi-dropdown-list-item:focus-visible .fi-dropdown-list-item-label, .fi-dropdown-list-item:focus-visible .fi-dropdown-list-item-icon { color: var(--cc-paper); }
+
+/* -- Flikar: aktiv och fokuserad flik inverteras som i sidomenyn (Filaments gray-50 syns inte mot vitt) -- */
+.fi-tabs { background: var(--cc-paper); border-radius: 0; box-shadow: none; --tw-ring-shadow: 0 0 #0000; border: 2px solid var(--cc-ink); }
+.fi-tabs-item { border-radius: 0; }
+.fi-tabs-item.fi-active, .fi-tabs-item:focus-visible { background: var(--cc-ink); }
+.fi-tabs-item.fi-active .fi-tabs-item-label, .fi-tabs-item.fi-active .fi-tabs-item-icon,
+.fi-tabs-item:focus-visible .fi-tabs-item-label, .fi-tabs-item:focus-visible .fi-tabs-item-icon { color: var(--cc-paper); }
+.fi-tabs-item:not(.fi-active):hover { background: var(--cc-desk); }
+
+/* -- Notiser (toasts): Mac-fönster -- */
+.fi-no-notification { background: var(--cc-paper); border: 2px solid var(--cc-ink); border-radius: 0; box-shadow: 4px 4px 0 var(--cc-ink); --tw-ring-shadow: 0 0 #0000; }
 
 /* -- Knappar: Mac-knapp med 2px ram och rundade hörn. Primär = standardknapp med dubbelram; danger = inverterad. -- */
 .fi-btn { border-radius: 8px; border: 2px solid var(--cc-ink); box-shadow: none; --tw-ring-shadow: 0 0 #0000; }
