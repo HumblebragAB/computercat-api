@@ -34,8 +34,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // MCP-klienter (claude.ai) skickar ofta Accept: text/event-stream. Utan /mcp här
+        // blir en saknad token en redirect till login i stället för 401, och då hittar
+        // klienten aldrig OAuth-discoveryn i WWW-Authenticate.
         $exceptions->shouldRenderJsonWhen(function (Request $request) {
-            return $request->is('api/*') || $request->expectsJson();
+            return $request->is('api/*', 'mcp', 'mcp/*') || $request->expectsJson();
         });
 
         $exceptions->render(function (NotFoundHttpException $e, Request $request) {

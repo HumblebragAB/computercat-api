@@ -65,4 +65,33 @@ class SanctumPassportCoexistenceTest extends TestCase
         $response->assertStatus(401);
         $this->assertNotEmpty($response->headers->get('WWW-Authenticate'));
     }
+
+    /**
+     * Klienter som inte skickar Accept: application/json (claude.ai skickar
+     * text/event-stream) får inte heller redirectas till login.
+     *
+     * @dataProvider acceptHeaders
+     */
+    public function test_unauthenticated_mcp_call_without_json_accept_gets_401(?string $accept): void
+    {
+        $headers = ['Content-Type' => 'application/json'];
+        if ($accept !== null) {
+            $headers['Accept'] = $accept;
+        }
+
+        $response = $this->call('POST', '/mcp', [], [], [], $this->transformHeadersToServerVars($headers),
+            json_encode(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list']));
+
+        $response->assertStatus(401);
+        $this->assertStringContainsString('resource_metadata=', (string) $response->headers->get('WWW-Authenticate'));
+    }
+
+    public static function acceptHeaders(): array
+    {
+        return [
+            'ingen Accept' => [null],
+            'bara event-stream' => ['text/event-stream'],
+            'html' => ['text/html'],
+        ];
+    }
 }

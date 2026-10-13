@@ -78,24 +78,9 @@ return [
     |
     */
 
-    'clients' => [
-        'github' => [
-            'url' => env('MCP_GITHUB_URL', 'https://api.githubcopilot.com/mcp/'),
-            'token' => env('MCP_GITHUB_TOKEN'),
-            'headers' => [
-                'X-MCP-Readonly' => 'true',
-            ],
-        ],
-
-        'linear' => [
-            'url' => env('MCP_LINEAR_URL', 'https://mcp.linear.app/mcp'),
-            'token' => env('MCP_LINEAR_TOKEN'),
-        ],
-
-        'playwright' => [
-            'command' => 'npx',
-            'args' => ['-y', '@playwright/mcp@latest', '--headless'],
-        ],
-    ],
+    // Vi använder inga utgående MCP-klienter. Nyckeln måste stå kvar som tom
+    // lista: McpServiceProvider gör mergeConfigFrom, så en borttagen nyckel
+    // fylls på med paketets exempel (GitHub, Linear, playwright via npx @latest).
+    'clients' => [],
 
 ];
