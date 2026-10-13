@@ -12,6 +12,10 @@
 
 **Arbetskatalog:** `/Users/erik/Web/computercat-api/.claude/worktrees/design-fosfor-tema` (branch `design/fosfor-tema`). Rör aldrig huvudkatalogen. Testkommando: `php artisan test --compact <filter>`.
 
+## Förberedelse (före task 1)
+
+Worktreen saknar Passport-nycklar, så de 59 testerna i `tests/Feature/Mcp` faller med `Invalid key supplied` redan innan något har ändrats. Med Eriks godkännande körs `php artisan passport:keys` **i worktreen**. Filerna `storage/oauth-*.key` är gitignorerade och lokala. Kör sedan `php artisan test --compact` och notera utgångsläget, som ska vara helt grönt. Nya röda tester efter en task är regressioner.
+
 ## Global Constraints
 
 - Mörka tokens: `--cc-bg #0d0b08`, `--cc-surface #15110a`, `--cc-line #2e2412`, `--cc-text #efe6d2`, `--cc-amber #f2b544`, `--cc-amber-hover #f6c76e`, `--cc-muted #a0824a`, `--cc-ok #9fd36b`, `--cc-warn #f08a24`, `--cc-danger #e8664a`.
@@ -400,13 +404,19 @@ Ersätt `->colors([...])` och de två render-hooks med:
 .dark .dark\:text-white { color: var(--cc-text); }
 .dark .dark\:text-gray-200 { color: var(--cc-text); }
 
-/* -- Färgade knappar och badges: mörk text, Filament sätter vit (1.5–3.3:1) -- */
-.fi-btn.fi-color-custom:not(.fi-btn-outlined),
-.fi-btn.fi-color-custom:not(.fi-btn-outlined) .fi-btn-icon {
+/* -- Färgade knappar: mörk text, Filament sätter vit (1.5–3.3:1). Badges behöver inget:
+      de har custom-400-text på 10 % tint (8.3–12.8:1). Toggle-knappar (label) undantas. -- */
+.fi-btn.fi-color-custom:not(.fi-btn-outlined):not(label),
+.fi-btn.fi-color-custom:not(.fi-btn-outlined):not(label) .fi-btn-icon {
     color: var(--cc-bg);
 }
 .dark .fi-btn.fi-color-primary:not(.fi-btn-outlined):hover { background: var(--cc-amber-hover); }
 .fi-btn { border-radius: 2px; letter-spacing: .04em; }
+
+/* -- Ikryssad checkbox: Filaments vita bock på amber är 1.9:1, mörk bock ger 10.7:1 -- */
+.dark .fi-checkbox-input:checked {
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='%230d0b08' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+}
 
 /* -- Raka hörn på ytor och fält -- */
 .fi-section, .fi-ta-ctn, .fi-wi-stats-overview-stat, .fi-modal-window,
@@ -424,7 +434,7 @@ Ersätt `->colors([...])` och de två render-hooks med:
 .fi-sidebar-item-button { border-radius: 0; }
 .fi-sidebar-item.fi-active .fi-sidebar-item-button { background: var(--cc-line); }
 .fi-sidebar-item.fi-active .fi-sidebar-item-label { color: var(--cc-amber); }
-.fi-sidebar-item.fi-active .fi-sidebar-item-label::before { content: '> '; }
+.fi-sidebar-item.fi-active .fi-sidebar-item-label::before { content: '> ' / ''; }
 .fi-sidebar-group-label { text-transform: uppercase; letter-spacing: .12em; font-size: .7rem; }
 
 /* -- Topbar -- */
@@ -432,15 +442,13 @@ Ersätt `->colors([...])` och de två render-hooks med:
 
 /* -- Tabeller: versala rubriker, streckade radlinjer -- */
 .fi-ta-header-cell-label { text-transform: uppercase; letter-spacing: .1em; font-size: .7rem; }
-.dark .fi-ta-row { border-top: 1px dashed var(--cc-line); }
+/* Filaments divide-white/5 har specificitet 0,4,0, därav !important. */
+.dark .fi-ta-row { border-top: 1px dashed var(--cc-line) !important; }
 .dark .fi-ta-row:hover { background: rgba(242, 181, 68, .04); }
 
 /* -- Sidrubrik -- */
 .fi-header-heading { letter-spacing: .02em; }
-.fi-header-heading::before { content: '// '; color: var(--cc-muted); }
-
-/* -- Länkar -- */
-.dark .fi-link { color: var(--cc-amber); }
+.fi-header-heading::before { content: '// ' / ''; color: var(--cc-muted); }
 ```
 
 Verifiera att varje selektor finns innan du går vidare. Det som inte ger träff tas bort eller rättas:
@@ -502,7 +510,10 @@ class LoginPageTest extends TestCase
         $this->assertStringContainsString('wire:submit="authenticate"', $html);
         $this->assertStringContainsString('ready_', $html);
         $this->assertStringNotContainsString('cc-particle', $html);
-        $this->assertStringNotContainsString('<style>', $html);
+        $this->assertStringContainsString('css/cc-theme.css?v=', $html);
+        // Filament skriver själv ut <style>-block, så vi kontrollerar att login-vyns egen CSS/JS inte längre är inline.
+        $this->assertStringNotContainsString('.cc-cat-body {', $html);
+        $this->assertStringNotContainsString("getElementById('the-cat')", $html);
     }
 
     public function test_vanliga_adminsidor_laddar_inte_login_skriptet(): void
@@ -637,12 +648,7 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
     background-color: var(--cc-amber) !important;
     border-color: var(--cc-amber) !important;
 }
-.cc-form-area .fi-link {
-    color: var(--cc-muted) !important;
-    font-family: var(--cc-font) !important;
-    font-size: .75rem !important;
-}
-.cc-form-area .fi-link:hover { color: var(--cc-amber) !important; }
+.cc-form-area .fi-link { font-family: var(--cc-font) !important; font-size: .75rem !important; }
 
 .cc-login-footer {
     text-align: center; margin-top: 1.5rem;
@@ -671,7 +677,7 @@ body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
 }
 ```
 
-5. Ta bort det sista blocket med `--tw-ring-color: rgba(0,240,255,0.3)`.
+5. Ta bort det sista blocket med `--tw-ring-color: rgba(0,240,255,0.3)` och det gamla `.cc-form-area .fi-input:focus`-blocket (glow och `--cc-primary`). Fokus hanteras av `.fi-input-wrp:focus-within` ovan.
 6. Kontrollera:
 
 ```bash
@@ -725,11 +731,10 @@ Expected: `REN`
         </div>
     </div>
 
-    {{-- Resets för Filaments simple-layout, se cc-login.css. --}}
 </div>
 ```
 
-Flytta Filament-resetsen (`.fi-simple-layout`, `.fi-simple-main-ctn`, `.fi-simple-main`, `.fi-simple-header`) som stod överst i `<style>` till början av `cc-login.css`, efter `:root`-aliasen. Ta sedan bort den sista Blade-kommentaren om den känns överflödig.
+Filament-resetsen (`.fi-simple-layout`, `.fi-simple-main-ctn`, `.fi-simple-main`, `.fi-simple-header`) följde med i kopian i steg 4 och står kvar i `cc-login.css`. `body.fi-body` ersattes i steg 4.
 
 Kontrollera att JS:en inte letar efter element som togs bort:
 
@@ -845,17 +850,22 @@ git commit -m "Fosfor: easter eggs i amber, samma triggers och beteenden"
 
 ```bash
 f=resources/views/filament/resources/game-resource/pages/game-dev-kit.blade.php
-grep -nE "cc-primary|cc-tertiary|cc-secondary|JetBrains|#[0-9a-fA-F]{6}" $f
+grep -nE "var\(--cc-|rgba\(0,240,255|0 0 [0-9]+px|#[0-9a-fA-F]{6}|JetBrains" $f
 ```
+
+Kända träffar: rad 46–95, bland annat `rgba(0,240,255,…)` på rad 61, 70, 71, 76 och 77, glow `box-shadow: 0 0 10px` på rad 61, `var(--cc-bg, #0a0a1a)` på rad 60 och `var(--cc-muted, #7878a0)` på rad 93.
 
 Ersätt:
 - `var(--cc-primary, #00f0ff)` → `var(--cc-amber)`
 - `var(--cc-tertiary, #39ff14)` → `var(--cc-ok)`
 - `var(--cc-secondary, …)` (om den finns) → `var(--cc-danger)`
 - `'JetBrains Mono', monospace` → `var(--cc-font)`
+- `var(--cc-bg, #0a0a1a)` → `var(--cc-bg)`, `var(--cc-muted, #7878a0)` → `var(--cc-muted)`
+- `rgba(0,240,255,…)` som bakgrund → `rgba(242,181,68,.06)`, som ram → `var(--cc-line)`
+- `box-shadow: 0 0 …`-glow tas bort helt
 - Övriga hårdkodade hexfärger (neon eller den gamla bakgrunden) → närmaste token: bakgrund till `var(--cc-bg)`/`var(--cc-surface)`, text till `var(--cc-text)`, dämpat till `var(--cc-muted)` och ramar till `var(--cc-line)`.
 
-Ingen fallback i `var()` behövs, eftersom `cc-theme.css` alltid laddas i panelen.
+Ingen fallback i `var()` behövs, eftersom `cc-theme.css` alltid laddas i panelen. Kör grepen igen efteråt. Endast `var(--cc-…)` utan fallback får finnas kvar.
 
 - [ ] **Step 2: Kör testerna**
 
@@ -1031,7 +1041,7 @@ Expected: FAIL (welcome finns, intresse-sidorna saknar temat)
         main { max-width: 460px; padding: 32px 24px; text-align: center; }
         h1 { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-weight: 600; font-size: 26px; line-height: 1.25;
              letter-spacing: .01em; margin: 0 0 12px; }
-        h1::before { content: '> '; color: #8a5a00; }
+        h1::before { content: '> ' / ''; color: #8a5a00; }
         p { color: #2a1f0c; }
         .muted { color: #6b6150; }
         a { color: #8a5a00; font-weight: 700; text-underline-offset: 3px; }
@@ -1044,7 +1054,7 @@ Expected: FAIL (welcome finns, intresse-sidorna saknar temat)
 
 Klasser som `unsubscribe.blade.php` redan använder och som saknas ovan behålls med de ljusa färgerna. **Rör ingenting i `<body>`.** Inget `@csrf` läggs till.
 
-Kontrast: `#fbf7ee` på `#6f4800` (hover) ≈ 7.6:1. Kontrollera med `Tests\Support\contrast` i tinker om du är osäker.
+Kontrast: `#fbf7ee` på `#6f4800` (hover) ≈ 7.6:1.
 
 - [ ] **Step 4: Mailet.** Kör skillen `naturlig-svenska` på texten i `interest-confirmation.blade.php`. Ändra bara det som skaver. Om skillen inte hittar något lämnas filen orörd. Variablerna `$sprak`, `$spel`, `$bekrafta` och `$avregistrera` ska stå kvar, och texterna som `InterestSignupTest` kontrollerar får inte ändras:
 
@@ -1055,7 +1065,7 @@ grep -n "assertSee\|assertSeeText\|InterestConfirmation" tests/Feature/Api/V1/In
 - [ ] **Step 5: Ta bort welcome**
 
 ```bash
-grep -rn "welcome" routes app tests config bootstrap resources/views | grep -v "welcome back" || echo "inga referenser"
+grep -rn "welcome" routes app tests config bootstrap resources/views | grep -v "welcome back" | grep -v ThemeSweepTest || echo "inga referenser"
 git rm resources/views/welcome.blade.php
 ```
 

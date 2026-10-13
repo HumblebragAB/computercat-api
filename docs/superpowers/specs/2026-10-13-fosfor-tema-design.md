@@ -43,7 +43,7 @@ Mörkt (admin, login, MCP-godkännandet):
 | `--cc-warn` | `#f08a24` | varning, skiljer sig från amber | 7.8 |
 | `--cc-danger` | `#e8664a` | fel | 6.0 |
 
-Färgade knappar och badges har **mörk text** (`--cc-bg`) på färgen: 10.7 på amber, 12.5 på amber-hover
+Färgade knappar har **mörk text** (`--cc-bg`) på färgen: 10.7 på amber, 12.5 på amber-hover
 `#f6c76e`, 6.0 på danger, 11.2 på ok och 7.8 på warn. Filament sätter `text-white` på dessa, vilket ger 1.5–3.3:1,
 så det skrivs över (se Admin).
 
@@ -76,7 +76,7 @@ byter `public_path` till en tom katalog.
 - Render-hooken för `cc-admin.css` använder `ThemeAsset::url()`.
 - `cc-admin.css` skrivs om från grunden. Målet är högst cirka 150 rader. Innehåll:
   - Brödtext: `.fi-body` och de vita textklasserna i mörkt läge sätts till `--cc-text`.
-  - Knapptext: färgade `.fi-btn` och badges får `color: var(--cc-bg)`. Hover på primary blir `#f6c76e`.
+  - Knapptext: färgade `.fi-btn` (utom toggle-knappar) får `color: var(--cc-bg)`. Badges behöver inget, eftersom de har custom-400-text på en 10-procentig tint (8.3–12.8:1). Hover på primary blir `#f6c76e`.
   - Karaktär: `> `-markör och ljusare yta på aktivt menyval, radie 0–2px, versala tabellrubriker med spärrning,
     streckade radlinjer och varumärket i sidomenyn i versaler med spärrning, i amber.
   - Bort: scanlines, glow, Press Start 2P, `@import` och `:root`-tokens.
