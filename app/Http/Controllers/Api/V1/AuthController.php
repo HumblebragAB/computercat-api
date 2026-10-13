@@ -11,6 +11,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use Laravel\Sanctum\PersonalAccessToken;
 use RuntimeException;
 
 class AuthController extends Controller
@@ -102,6 +103,40 @@ class AuthController extends Controller
         return response()->json([
             'user' => new UserResource($user),
             'token' => $token,
+        ]);
+    }
+
+    // Byter det aktuella tokenet mot ett nytt med full livslängd. Det gamla
+    // får leva högst 10 minuter till, så att parallella flikar och anrop som
+    // redan är på väg inte får 401 mitt i bytet.
+    public function refresh(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $current = $user->currentAccessToken();
+
+        // Bara bearer-token kan förnyas. En sessionsinloggning (statefulApi)
+        // ger ett TransientToken som inte går att korta eller kopiera.
+        if (! $current instanceof PersonalAccessToken) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        // Samma regel som login: ett bannat konto får inga nya token.
+        if ($user->is_banned) {
+            return response()->json(['message' => 'Account is banned.'], 403);
+        }
+
+        $expiresAt = $this->tokenExpiresAt();
+        $new = $user->createToken($current->name, $current->abilities ?? ['*'], $expiresAt);
+
+        $grace = now()->addMinutes(10);
+        if (! $current->expires_at || $current->expires_at->gt($grace)) {
+            $current->forceFill(['expires_at' => $grace])->save();
+        }
+
+        return response()->json([
+            'token' => $new->plainTextToken,
+            'user' => new UserResource($user),
+            'expires_at' => $expiresAt->toIso8601String(),
         ]);
     }
 
