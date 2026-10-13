@@ -1,0 +1,322 @@
+/* Login, Fosfor. Tokens kommer från cc-theme.css (laddas via Filaments ->font()). */
+:root {
+    --cc-cat-fur: var(--cc-amber);
+    --cc-cat-eye: var(--cc-bg);
+    --cc-cat-glint: var(--cc-text);
+    --cc-cat-nose: var(--cc-danger);
+    --cc-cat-whisker: var(--cc-muted);
+    --cc-fly: var(--cc-ok);
+}
+
+/* -- Reset Filament defaults -- */
+.fi-simple-layout { background: transparent !important; }
+.fi-simple-main-ctn { max-width: none !important; padding: 0 !important; }
+.fi-simple-main {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+}
+.fi-simple-header { display: none !important; }
+
+body.fi-body { background: var(--cc-bg) !important; min-height: 100vh; }
+
+.cc-login-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: var(--cc-font);
+    overflow: hidden;
+    padding: 0 16px;
+}
+
+.cc-login-card {
+    position: relative; width: 100%; max-width: 420px;
+    background: var(--cc-surface);
+    border: 1px solid var(--cc-line);
+    padding: 2.5rem 2rem 1.5rem; z-index: 10;
+}
+
+/* -- Cat track: clips at card edges -- */
+.cc-cat-track {
+    position: absolute; top: -48px; left: 0; right: 0;
+    height: 48px; overflow: hidden; pointer-events: none;
+}
+.cc-cat-track-bottom {
+    top: auto; bottom: -48px;
+}
+
+/* -- Cat -- */
+.cc-cat {
+    position: absolute; bottom: 0; left: 50px;
+    width: 80px; height: 48px;
+    image-rendering: pixelated;
+    cursor: grab; pointer-events: auto;
+    transition: none;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+}
+.cc-cat.dragging, .cc-cat.free-fall {
+    position: fixed;
+    z-index: 9999;
+    cursor: grabbing;
+    overflow: visible !important;
+    clip: auto !important;
+    clip-path: none !important;
+}
+.cc-cat.facing-left { transform: scaleX(-1); }
+.cc-cat.falling {
+    transition: transform 1.2s cubic-bezier(0.55, 0, 1, 0.45), bottom 1.2s cubic-bezier(0.55, 0, 1, 0.45);
+}
+
+/* Pixel art body */
+.cc-cat-body {
+    width: 4px; height: 4px; position: absolute; top: 0; left: 0;
+    background: transparent;
+    box-shadow:
+        20px 0px 0 var(--cc-cat-fur), 24px -4px 0 var(--cc-cat-fur), 28px 0px 0 var(--cc-cat-fur),
+        52px 0px 0 var(--cc-cat-fur), 56px -4px 0 var(--cc-cat-fur), 60px 0px 0 var(--cc-cat-fur),
+        24px 4px 0 var(--cc-cat-fur), 28px 4px 0 var(--cc-cat-fur), 32px 4px 0 var(--cc-cat-fur),
+        36px 4px 0 var(--cc-cat-fur), 40px 4px 0 var(--cc-cat-fur), 44px 4px 0 var(--cc-cat-fur),
+        48px 4px 0 var(--cc-cat-fur), 52px 4px 0 var(--cc-cat-fur), 56px 4px 0 var(--cc-cat-fur),
+        20px 8px 0 var(--cc-cat-fur), 24px 8px 0 var(--cc-cat-fur), 28px 8px 0 var(--cc-cat-fur),
+        32px 8px 0 var(--cc-cat-fur), 36px 8px 0 var(--cc-cat-fur), 40px 8px 0 var(--cc-cat-fur),
+        44px 8px 0 var(--cc-cat-fur), 48px 8px 0 var(--cc-cat-fur), 52px 8px 0 var(--cc-cat-fur),
+        56px 8px 0 var(--cc-cat-fur), 60px 8px 0 var(--cc-cat-fur),
+        20px 12px 0 var(--cc-cat-fur), 24px 12px 0 var(--cc-cat-fur),
+        28px 12px 0 var(--cc-cat-eye), 32px 12px 0 var(--cc-cat-glint),
+        36px 12px 0 var(--cc-cat-fur), 40px 12px 0 var(--cc-cat-fur), 44px 12px 0 var(--cc-cat-fur),
+        48px 12px 0 var(--cc-cat-eye), 52px 12px 0 var(--cc-cat-glint),
+        56px 12px 0 var(--cc-cat-fur), 60px 12px 0 var(--cc-cat-fur),
+        20px 16px 0 var(--cc-cat-fur), 24px 16px 0 var(--cc-cat-fur), 28px 16px 0 var(--cc-cat-fur),
+        32px 16px 0 var(--cc-cat-fur), 36px 16px 0 var(--cc-cat-fur), 40px 16px 0 var(--cc-cat-nose),
+        44px 16px 0 var(--cc-cat-fur), 48px 16px 0 var(--cc-cat-fur), 52px 16px 0 var(--cc-cat-fur),
+        56px 16px 0 var(--cc-cat-fur), 60px 16px 0 var(--cc-cat-fur),
+        8px 20px 0 var(--cc-cat-whisker), 12px 20px 0 var(--cc-cat-whisker),
+        68px 20px 0 var(--cc-cat-whisker), 72px 20px 0 var(--cc-cat-whisker),
+        20px 20px 0 var(--cc-cat-fur), 24px 20px 0 var(--cc-cat-fur), 28px 20px 0 var(--cc-cat-fur),
+        32px 20px 0 var(--cc-cat-fur), 36px 20px 0 var(--cc-cat-fur), 40px 20px 0 var(--cc-cat-fur),
+        44px 20px 0 var(--cc-cat-fur), 48px 20px 0 var(--cc-cat-fur), 52px 20px 0 var(--cc-cat-fur),
+        56px 20px 0 var(--cc-cat-fur), 60px 20px 0 var(--cc-cat-fur),
+        24px 24px 0 var(--cc-cat-fur), 28px 24px 0 var(--cc-cat-fur), 32px 24px 0 var(--cc-cat-fur),
+        36px 24px 0 var(--cc-cat-fur), 40px 24px 0 var(--cc-cat-fur), 44px 24px 0 var(--cc-cat-fur),
+        48px 24px 0 var(--cc-cat-fur), 52px 24px 0 var(--cc-cat-fur), 56px 24px 0 var(--cc-cat-fur),
+        20px 28px 0 var(--cc-cat-fur), 24px 28px 0 var(--cc-cat-fur), 28px 28px 0 var(--cc-cat-fur),
+        32px 28px 0 var(--cc-cat-fur), 36px 28px 0 var(--cc-cat-fur), 40px 28px 0 var(--cc-cat-fur),
+        44px 28px 0 var(--cc-cat-fur), 48px 28px 0 var(--cc-cat-fur), 52px 28px 0 var(--cc-cat-fur),
+        56px 28px 0 var(--cc-cat-fur), 60px 28px 0 var(--cc-cat-fur),
+        20px 32px 0 var(--cc-cat-fur), 24px 32px 0 var(--cc-cat-fur), 28px 32px 0 var(--cc-cat-fur),
+        32px 32px 0 var(--cc-cat-fur), 36px 32px 0 var(--cc-cat-fur), 40px 32px 0 var(--cc-cat-fur),
+        44px 32px 0 var(--cc-cat-fur), 48px 32px 0 var(--cc-cat-fur), 52px 32px 0 var(--cc-cat-fur),
+        56px 32px 0 var(--cc-cat-fur), 60px 32px 0 var(--cc-cat-fur),
+        64px 28px 0 var(--cc-cat-fur), 68px 28px 0 var(--cc-cat-fur),
+        72px 24px 0 var(--cc-cat-fur), 76px 20px 0 var(--cc-cat-fur), 80px 20px 0 var(--cc-cat-fur);
+}
+
+/* Legs */
+.cc-cat-legs {
+    width: 4px; height: 4px; position: absolute; top: 0; left: 0;
+    background: transparent;
+    box-shadow:
+        16px 36px 0 var(--cc-cat-fur), 20px 40px 0 var(--cc-cat-fur),
+        56px 36px 0 var(--cc-cat-fur), 60px 40px 0 var(--cc-cat-fur);
+}
+.cc-cat.walking .cc-cat-legs { animation: legWalk 0.4s steps(1) infinite; }
+.cc-cat.sitting .cc-cat-legs, .cc-cat.grooming .cc-cat-legs {
+    box-shadow:
+        20px 36px 0 var(--cc-cat-fur), 24px 36px 0 var(--cc-cat-fur),
+        56px 36px 0 var(--cc-cat-fur), 60px 36px 0 var(--cc-cat-fur);
+}
+.cc-cat.pouncing .cc-cat-legs {
+    box-shadow:
+        16px 36px 0 var(--cc-cat-fur), 20px 36px 0 var(--cc-cat-fur),
+        56px 36px 0 var(--cc-cat-fur), 60px 36px 0 var(--cc-cat-fur);
+}
+
+@keyframes legWalk {
+    0%, 100% {
+        box-shadow: 16px 36px 0 var(--cc-cat-fur), 20px 40px 0 var(--cc-cat-fur),
+                    56px 36px 0 var(--cc-cat-fur), 60px 40px 0 var(--cc-cat-fur);
+    }
+    50% {
+        box-shadow: 20px 36px 0 var(--cc-cat-fur), 16px 40px 0 var(--cc-cat-fur),
+                    60px 36px 0 var(--cc-cat-fur), 56px 40px 0 var(--cc-cat-fur);
+    }
+}
+
+/* Grooming paw animation */
+.cc-cat.grooming .cc-cat-legs {
+    animation: groomPaw 0.8s steps(1) infinite;
+}
+@keyframes groomPaw {
+    0%, 100% {
+        box-shadow:
+            20px 36px 0 var(--cc-cat-fur), 24px 36px 0 var(--cc-cat-fur),
+            56px 36px 0 var(--cc-cat-fur), 60px 36px 0 var(--cc-cat-fur);
+    }
+    50% {
+        box-shadow:
+            24px 28px 0 var(--cc-cat-fur), 28px 24px 0 var(--cc-cat-fur),
+            56px 36px 0 var(--cc-cat-fur), 60px 36px 0 var(--cc-cat-fur);
+    }
+}
+
+/* Spinning for tail chase */
+.cc-cat.spinning {
+    animation: tailSpin 0.6s linear infinite;
+    transform-origin: 40px 24px;
+}
+@keyframes tailSpin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Pounce animation */
+.cc-cat.pouncing {
+    animation: pounceAnim 0.4s ease-out;
+}
+@keyframes pounceAnim {
+    0% { transform: translateY(0); }
+    40% { transform: translateY(-20px); }
+    100% { transform: translateY(0); }
+}
+.cc-cat.pouncing.facing-left {
+    animation: pounceAnimFlip 0.4s ease-out;
+}
+@keyframes pounceAnimFlip {
+    0% { transform: scaleX(-1) translateY(0); }
+    40% { transform: scaleX(-1) translateY(-20px); }
+    100% { transform: scaleX(-1) translateY(0); }
+}
+
+/* Peek over edge */
+.cc-cat.peeking {
+    transition: bottom 0.4s ease-in-out;
+}
+
+/* Eye blink */
+.cc-cat-blink {
+    width: 4px; height: 4px; position: absolute; top: 0; left: 0;
+    background: transparent;
+    box-shadow: 28px 12px 0 var(--cc-cat-fur), 32px 12px 0 var(--cc-cat-fur),
+                48px 12px 0 var(--cc-cat-fur), 52px 12px 0 var(--cc-cat-fur);
+    opacity: 0; z-index: 1;
+    animation: eyeBlink 4s ease-in-out infinite;
+}
+.cc-cat.sleeping .cc-cat-blink { opacity: 1; animation: none; }
+
+@keyframes eyeBlink {
+    0%, 90%, 100% { opacity: 0; }
+    95%, 97% { opacity: 1; }
+}
+
+
+/* Zzz for sleeping */
+.cc-cat-zzz {
+    position: absolute; top: -18px; right: -6px;
+    font-family: var(--cc-font); font-weight: 600;
+    font-size: 11px; color: var(--cc-amber);
+    opacity: 0; pointer-events: none;
+}
+.cc-cat.sleeping .cc-cat-zzz { animation: zzzFloat 2s ease-in-out infinite; }
+
+@keyframes zzzFloat {
+    0% { opacity: 0; transform: translateY(0); }
+    20% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(-16px) translateX(8px); }
+}
+
+
+/* Fly */
+.cc-fly {
+    position: absolute; width: 4px; height: 4px;
+    background: var(--cc-fly);
+    opacity: 0; pointer-events: none;
+}
+.cc-fly.active { opacity: 1; animation: flyBuzz 0.15s ease-in-out infinite alternate; }
+@keyframes flyBuzz {
+    0% { transform: translate(-1px, -1px); }
+    100% { transform: translate(1px, 1px); }
+}
+
+
+/* -- Header -- */
+.cc-login-header { text-align: center; margin-bottom: 2rem; }
+.cc-logo-text {
+    font-family: var(--cc-font); font-weight: 600;
+    font-size: 1.15rem; color: var(--cc-text); letter-spacing: .25em;
+}
+.cc-logo-accent { color: var(--cc-amber); }
+.cc-subtitle {
+    font-family: var(--cc-font);
+    font-size: .75rem; color: var(--cc-muted);
+    margin-top: .5rem; letter-spacing: .12em;
+}
+
+/* -- Form styling -- */
+.cc-form-area { position: relative; }
+.cc-form-area .fi-fo-field-wrp label {
+    font-family: var(--cc-font) !important;
+    color: var(--cc-muted) !important; font-size: .7rem !important;
+    letter-spacing: .12em !important; text-transform: uppercase !important;
+}
+.cc-form-area .fi-input {
+    background: var(--cc-bg) !important;
+    color: var(--cc-text) !important;
+    font-family: var(--cc-font) !important;
+}
+.cc-form-area .fi-input-wrp {
+    border-radius: 0 !important;
+    --tw-ring-color: var(--cc-line) !important;
+}
+.cc-form-area .fi-input-wrp:focus-within { --tw-ring-color: var(--cc-amber) !important; }
+.cc-form-area .fi-input::placeholder { color: var(--cc-muted) !important; opacity: .7; }
+.cc-form-area .fi-btn-primary,
+.cc-form-area .fi-btn.fi-color-primary {
+    background: var(--cc-amber) !important;
+    color: var(--cc-bg) !important;
+    font-family: var(--cc-font) !important; font-weight: 600 !important;
+    font-size: .8rem !important; letter-spacing: .15em !important;
+    text-transform: uppercase;
+    padding: .75rem 1.5rem !important;
+    border-radius: 0 !important;
+}
+.cc-form-area .fi-btn-primary:hover,
+.cc-form-area .fi-btn.fi-color-primary:hover { background: var(--cc-amber-hover) !important; }
+.cc-form-area .fi-checkbox-input:checked {
+    background-color: var(--cc-amber) !important;
+    border-color: var(--cc-amber) !important;
+}
+.cc-form-area .fi-link { font-family: var(--cc-font) !important; font-size: .75rem !important; }
+
+/* -- Footer -- */
+.cc-login-footer {
+    text-align: center; margin-top: 1.5rem;
+    font-family: var(--cc-font);
+    font-size: .75rem; color: var(--cc-muted);
+}
+.cc-blink-cursor { color: var(--cc-amber); animation: cursorBlink 1s steps(1) infinite; }
+@keyframes cursorBlink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+
+/* -- Speech bubble -- */
+.cc-speech {
+    position: absolute; top: -30px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--cc-surface); border: 1px solid var(--cc-amber);
+    padding: 2px 8px;
+    font-family: var(--cc-font);
+    font-size: 11px; color: var(--cc-amber);
+    white-space: nowrap; opacity: 0;
+    transition: opacity .3s; pointer-events: none; z-index: 50;
+}
+.cc-speech.show { opacity: 1; }
+.cc-speech::after {
+    content: ''; position: absolute; bottom: -5px; left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 4px solid var(--cc-amber);
+}
