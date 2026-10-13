@@ -1,4 +1,4 @@
-/* Computer Cat, Fosfor-tema: typsnitt och tokens. Enda källan för färgerna.
+/* Computer Cat, System 1-tema (Mac 1984, 1-bit): typsnitt och tokens. Enda källan för färgerna.
    Laddas av admin och login (Filament ->font()), MCP-godkännandet och intresse-sidorna. */
 
 @font-face {
@@ -23,16 +23,21 @@
     src: url('../fonts/plex-mono/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
 }
 
+@font-face {
+    font-family: 'Silkscreen';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/silkscreen/silkscreen-latin-400-normal.woff2') format('woff2');
+}
+
 :root {
     --cc-font: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
-    --cc-bg: #0d0b08;
-    --cc-surface: #15110a;
-    --cc-line: #2e2412;
-    --cc-text: #efe6d2;
-    --cc-amber: #f2b544;
-    --cc-amber-hover: #f6c76e;
-    --cc-muted: #a0824a;
-    --cc-ok: #9fd36b;
-    --cc-warn: #f08a24;
-    --cc-danger: #e8664a;
+    --cc-font-display: 'Silkscreen', 'IBM Plex Mono', monospace;
+    --cc-ink: #111111;
+    --cc-paper: #fbfaf6;
+    --cc-desk: #e9e6df;
+    --cc-dot: #b9b4a8;
+    --cc-muted: #55524b;
+    --cc-line: #111111;
 }
