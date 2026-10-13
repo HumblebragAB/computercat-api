@@ -179,7 +179,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = 'Replace the stored token and its issue time with the new ones. The old token keeps working for up to 10 minutes, so requests already in flight (or other tabs) do not fail. A player who opens the game at least once every 90 days keeps the same account.';
             $lines[] = '';
-            $lines[] = 'If the refresh (or any other request) returns 401, the token has expired or the user was removed: create a new anonymous user and re-sync. 403 means the account is banned; do not create a new user. 429 means rate limited: keep the current token and try again on next launch.';
+            $lines[] = 'If the refresh (or any other request) returns 401, the token has expired, the user was removed or the account is banned: create a new anonymous user and re-sync. A banned account gets 401 on every authenticated route, including refresh; only `POST /auth/login` returns 403 for a banned account. 429 on refresh means rate limited: keep the current token and try again on next launch.';
             $lines[] = '';
             $lines[] = "If the token is younger than 24 hours, `GET {$baseUrl}/auth/me` is enough to verify it.";
             $lines[] = '';
@@ -644,7 +644,8 @@ class IntegrationGuide
         $lines[] = '';
         $lines[] = '## Rate Limits';
         $lines[] = '- General: 60/min';
-        $lines[] = '- Auth: 10/min';
+        $lines[] = '- Auth (anonymous, login): 10/min per IP';
+        $lines[] = '- Token refresh: 30/min per user';
         $lines[] = '- Score submit: 30/min';
 
         return implode("\n", $lines);

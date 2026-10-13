@@ -30,6 +30,10 @@ class IntegrationGuideTest extends McpTestCase
         $this->assertStringContainsString('POST '.rtrim(config('app.url'), '/').'/api/v1/auth/refresh', $manual);
         $this->assertStringContainsString('older than 24 hours', $manual);
         $this->assertStringContainsString('90 days', $manual);
+        // Bannade får 401 överallt utom vid login (403).
+        $this->assertStringNotContainsString('403 means the account is banned', $manual);
+        $this->assertStringContainsString('`POST /auth/login` returns 403', $manual);
+        $this->assertStringContainsString('Token refresh: 30/min per user', $manual);
     }
 
     public function test_tool_returns_manual_and_respects_features(): void
