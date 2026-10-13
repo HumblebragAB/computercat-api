@@ -61,6 +61,7 @@ Var och en kräver Eriks OK eller görs av Erik:
 6. Att en molnsession som instrueras att pusha till `main` faktiskt gör det (prefixet `claude/` är ett standardval enligt dokumentationen, inte en spärr).
 7. Att en `next build` med statisk export klarar sig med Coolify-serverns minne medan övriga appar kör (mät RAM under bygget).
 8. Att Coolifys nixpacks bygger mallen med Node 22. Nixpacks standard är Node 18 och Next.js 16 kräver ≥ 20.9; mallen sätter `engines.node: "22.x"`, och versionen kan också sättas med `NIXPACKS_NODE_VERSION` (nixpacks.com/docs/providers/node). Kontrolleras i byggloggen.
+9. Att Coolify-servern faktiskt har `concurrent_builds = 1` (beslut 3 och Säkerhet bygger på det).
 
 Spiken använder en riktig Demo-app med Coolify-namn `spel-e2e-spike`, som tas bort på sitt uuid efteråt. Faller en punkt: stanna och fråga Erik.
 

@@ -172,9 +172,9 @@ Verifierar specens punkter (S1–S7 och S20) plus de fakta planen bygger på som
 - Create (scratchpad, committas inte): `$SCRATCH/spike/.env.op`, `$SCRATCH/spike/jwt.php`, `$SCRATCH/spike/ids.env`, `$SCRATCH/spike/log/` (`$SCRATCH` = sessionens scratchpad-katalog)
 - Modify: `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md`, `docs/superpowers/specs/bilagor/2026-10-13-github-app.md` (i `$WT`)
 
-**Interfaces:** Consumes: Task 0. Produces: verifierade fakta S1–S19 i bilagorna; beslut om `git_repository`-format som Task 10 använder.
+**Interfaces:** Consumes: Task 0. Produces: verifierade fakta S1–S21 i bilagorna; beslut om `git_repository`-format som Task 10 använder.
 
-Punkter (S1–S7 och S20 är specens, S8–S19 är planens beroenden):
+Punkter (S1–S7, S20 och S21 är specens, S8–S19 är planens beroenden):
 
 | # | Verifieras |
 |---|---|
@@ -198,6 +198,7 @@ Punkter (S1–S7 och S20 är specens, S8–S19 är planens beroenden):
 | S18 | Coolifys GitHub App når det nya repot (klonen i bygget lyckas) |
 | S19 | SiteOps 2a-kontraktet: skapa, 409 vid dubblett, uppslag på URL, läsa (`monitoring_enabled`, `type`, `has_basic_auth`), PATCH av miljön, avaktivera |
 | S20 | Coolifys nixpacks bygger mallen med Node 22 (`engines.node: "22.x"`); annars hur Node 22 tvingas fram |
+| S21 | Coolify-servern har `concurrent_builds = 1` (spec beslut 3 och Säkerhet) |
 
 - [ ] **Steg 1: Worktree och OK.** Kör `~/.claude/bin/wt-start /Users/erik/Web/computercat-api feat/provisionering --db` och spara sökvägen som `$WT`. Fråga Erik med AskUserQuestion: "Spiken skapar på riktigt: repot HumblebragAB/e2e-spike (privat, arkiveras efteråt), Coolify-appen spel-e2e-spike i Demo-projektet (raderas på sitt uuid), en SiteOps-sajt (avaktiveras), en engångs-routine som pushar till e2e-spike, samt läser RAM på Coolify-servern via ssh-claude. Hemligheter läses med claude-secret run och skrivs aldrig ut. OK?"
 
@@ -217,7 +218,7 @@ SITEOPS_URL=op://Claude/computercat-siteops/url
 SITEOPS_API_KEY=op://Claude/computercat-siteops/api_key
 ```
 
-och `$SCRATCH/spike/jwt.php` (kör med `php -I`, läser nyckeln ur miljön, inget på disk):
+och `$SCRATCH/spike/jwt.php` (kör med `php` utan flaggor, läser nyckeln ur miljön, inget på disk; skriptet ligger i scratchpad, inte i den nedladdade datan):
 
 ```php
 <?php
@@ -248,7 +249,7 @@ REDACT='walk(if type=="object" then with_entries(if (.key|ascii_downcase|test("a
 Hjälpare som definieras först i varje `bash -c`:
 
 ```bash
-gh_token() { JWT=$(php -I "$SCRATCH/spike/jwt.php" "$WT"); curl -s -X POST -H "Authorization: Bearer $JWT" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/app/installations/$GITHUB_APP_INSTALLATION_ID/access_tokens" | jq -r .token; }
+gh_token() { JWT=$(php "$SCRATCH/spike/jwt.php" "$WT"); curl -s -X POST -H "Authorization: Bearer $JWT" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com/app/installations/$GITHUB_APP_INSTALLATION_ID/access_tokens" | jq -r .token; }
 gh() { curl -s -w '\n%{http_code}\n' -X "$1" -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com$2" ${3:+-d "$3"}; }
 cf() { curl -s -w '\n%{http_code}\n' -X "$1" -H "Authorization: Bearer $COOLIFY_TOKEN" -H 'Accept: application/json' -H 'Content-Type: application/json' "$COOLIFY_URL/api/v1$2" ${3:+-d "$3"}; }
 so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H 'Accept: application/json' -H 'Content-Type: application/json' "$SITEOPS_URL/api/v1$2" ${3:+-d "$3"}; }
@@ -282,6 +283,8 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
   **S20 (Node 22):** läs byggloggen ur `cf GET /deployments/$SPIKE_DEPLOYMENT_UUID` (fältet `logs`, filtrera lokalt med `jq -r .logs | grep -iE 'nodejs|node_?version|setup.*node|v2[0-9]\.'` och spara bara de raderna, inget annat ur loggen) och notera vilken Node-version nixpacks valde. Förväntat: Node 22 (nixpacks-planen visar `nodejs_22` eller `node --version` v22.x). Nixpacks standard är Node 18 och versionen kan sättas med miljövariabeln `NIXPACKS_NODE_VERSION`, med `engines.node` i `package.json` eller med `.nvmrc` (sidan anger inte inbördes prioritet); bara major-version stöds, och 16, 18, 20, 22 och 23 finns (nixpacks.com/docs/providers/node, läst 2026-10-13). Byggs det med Node 18 (eller faller `next build` på "Node.js version >= 20.9 is required"): stanna och fråga Erik om alternativet att sätta build-variabeln `NIXPACKS_NODE_VERSION=22` per app (samma `POST /applications/{uuid}/envs` som S4, `is_buildtime: true`). Väljer Erik det läggs variabeln till i steget `coolify_env` (Task 14) och i fakes, innan Task 2 påbörjas.
 
+- [ ] **Steg 11b: Byggkö (S21).** Fråga Erik (AskUserQuestion) att bekräfta i Coolify-UI:t (Servers → servern → Configuration, "Concurrent builds") att värdet är `1`; inget API-anrop gissas fram. Är det inte 1: stanna och fråga.
+
 - [ ] **Steg 12: DNS och svar (S5, S2, S4).** `dig +short e2e-spike.apps.humblebrag.se` och `dig +short x$(date +%s).apps.humblebrag.se` → båda ger Coolify-serverns IP (S5). `curl -s -o /dev/null -w '%{http_code}' https://e2e-spike.apps.humblebrag.se/` → `401`; med `-u demo:demo` → `200` (S2). Hämta HTML med basic auth, plocka ut `/_next/static/…js`-sökvägarna och grep:a varje fil efter `e2e-spike` → minst en träff (S4).
 
 - [ ] **Steg 13: Labels och övervakning (S3).** Med Eriks OK: `ssh-claude <coolify-host> 'docker inspect $(docker ps -q --filter name=<SPIKE_APP_UUID>) --format "{{json .Config.Labels}}"'` och samma för en befintlig app som Erik konfigurerat med basic auth i UI:t (Erik namnger den). Jämför de `traefik.http.middlewares.*basicauth*`- och `routers.*.middlewares`-labels som finns. Läs därefter `robots-sync` och `coolify-health` på det sätt Erik angav i 0.12 och kontrollera att `spel-e2e-spike` inte flaggas. Avvikelse: stanna och fråga.
@@ -299,7 +302,7 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 - [ ] **Steg 16: Städning på sparade id:n (S17).** Läs `ids.env`. Coolify: `cf GET "/projects/$COOLIFY_PROJECT_UUID/$COOLIFY_ENVIRONMENT_NAME"` → bekräfta att `SPIKE_APP_UUID` finns med namnet `spel-e2e-spike`; först då `cf DELETE /applications/$SPIKE_APP_UUID` → 200 `{message: "Application deletion request queued."}`; poll listningen var 30:e sekund tills uuid:t är borta (högst 10 min). GitHub: `gh GET /repos/HumblebragAB/e2e-spike` → `.id == SPIKE_REPO_ID`; först då `gh PATCH /repos/HumblebragAB/e2e-spike '{"archived":true}'` → 200 och `.archived == true`. SiteOps: redan avaktiverad i steg 15. Routinen från steg 14 tas bort med `schedule`-skillen om den inte är engångs. Inget raderas på något annat id än de sparade.
 
-- [ ] **Steg 17: Skriv resultatet i bilagorna.** I `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` och `…-github-app.md`: ersätt varje "UNCONFIRMED" som spiken besvarade med "VERIFIERAT 2026-10-xx (spike): <faktum>", och lägg till ett avsnitt "## Spikresultat" med S1–S19, en rad var, inklusive tid till README (S11), byggtid och RAM-topp (S7), 422-body (S12) och formen på projekt- och env-listningen (S13, S15). Inga hemligheter, inga tokens.
+- [ ] **Steg 17: Skriv resultatet i bilagorna.** I `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` och `…-github-app.md`: ersätt varje "UNCONFIRMED" som spiken besvarade med "VERIFIERAT 2026-10-xx (spike): <faktum>", och lägg till ett avsnitt "## Spikresultat" med S1–S21, en rad var, inklusive Node-versionen (S20) och `concurrent_builds` (S21), inklusive tid till README (S11), byggtid och RAM-topp (S7), 422-body (S12) och formen på projekt- och env-listningen (S13, S15). Inga hemligheter, inga tokens.
 
 - [ ] **Steg 18: Stäm av mot planen.** Om något resultat avviker från Global Constraints (t.ex. `git_repository` måste vara full URL, envs-listningen saknar `key`, projekt-endpointen har annan form): stanna, fråga Erik med AskUserQuestion och uppdatera berörda tasks (Task 3 fixturer, Task 10, Task 14, Task 21) innan Task 2 påbörjas.
 
@@ -377,6 +380,15 @@ class ProvisioningConfigTest extends TestCase
         config(['provisioning.github.private_key_path' => 'framework/testing/finns-inte.pem']);
 
         $this->assertContains('GITHUB_APP_PRIVATE_KEY_PATH (file missing, unreadable or not mode 600)', ProvisioningConfig::missing());
+    }
+
+    public function test_service_urls_must_be_https(): void
+    {
+        config(['provisioning.coolify.url' => 'http://coolify.test', 'provisioning.siteops.url' => 'http://siteops.test']);
+
+        $missing = ProvisioningConfig::missing();
+        $this->assertContains('COOLIFY_URL (must start with https://)', $missing);
+        $this->assertContains('SITEOPS_URL (must start with https://)', $missing);
     }
 
     public function test_derived_names(): void
@@ -524,6 +536,13 @@ final class ProvisioningConfig
             $missing[] = self::KEY_FILE_PROBLEM;
         }
 
+        // Token och API-nyckel skickas som headers: aldrig över http://.
+        foreach (['COOLIFY_URL' => 'provisioning.coolify.url', 'SITEOPS_URL' => 'provisioning.siteops.url'] as $env => $key) {
+            if (! in_array($env, $missing, true) && parse_url((string) config($key), PHP_URL_SCHEME) !== 'https') {
+                $missing[] = "{$env} (must start with https://)";
+            }
+        }
+
         return $missing;
     }
 
@@ -616,7 +635,7 @@ PROVISIONING_RESERVED_SUBDOMAINS=
 cd $WT && php artisan test --filter=ProvisioningConfigTest
 ```
 
-Förväntat: `Tests: 5 passed`.
+Förväntat: `Tests: 6 passed`.
 
 - [ ] **Steg 10: Commit.**
 
@@ -1640,7 +1659,8 @@ class GameSlugTest extends TestCase
     public function test_invalid(mixed $slug): void
     {
         $this->assertFalse(GameSlug::isValid($slug));
-        $this->assertTrue(Validator::make(['slug' => $slug], ['slug' => [new GameSlug]])->fails());
+        // required: Laravel hoppar över icke-implicita regler för tom sträng.
+        $this->assertTrue(Validator::make(['slug' => $slug], ['slug' => ['required', new GameSlug]])->fails());
     }
 
     public function test_reserved_names_are_rejected(): void
@@ -3877,6 +3897,18 @@ final class Saga
             return false;
         }
 
+        // Ett deploy-steg som dog på kö-timeout (failed()-kroken, inte DeployStep)
+        // har kvar deployment_uuid med passerad deadline. Flytta det till
+        // previous_deployments som DeployStep::forget() gör, så att retry startar
+        // ett nytt bygge i stället för att genast falla på det gamla.
+        $deploy = $run->steps()->where('step', 'deploy')->where('status', ProvisioningStep::FAILED)->first();
+        if ($deploy !== null && isset($deploy->detail['deployment_uuid'])) {
+            $detail = $deploy->detail;
+            $detail['previous_deployments'] = [...($detail['previous_deployments'] ?? []), $detail['deployment_uuid']];
+            unset($detail['deployment_uuid'], $detail['deploy_started_at']);
+            $deploy->update(['detail' => $detail]);
+        }
+
         $run->steps()->where('status', ProvisioningStep::FAILED)->update(['status' => ProvisioningStep::PENDING]);
         AdvanceProvisioningRun::dispatch($run->id);
 
@@ -4640,14 +4672,30 @@ class CoolifyStepsTest extends ProvisioningTestCase
         $this->assertSame('app-1', $run->fresh()->coolify_app_uuid);
     }
 
-    public function test_existing_app_with_exact_name_is_adopted(): void
+    public function test_existing_app_is_adopted_only_after_this_run_requested_creation(): void
     {
         $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        $this->stepRow($run, 'coolify_app')->update(['detail' => ['create_requested_at' => now()->toIso8601String()]]);
         Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-7', 'spel-kattsvep')]))]);
 
         $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
 
         $this->assertSame('app-7', $run->fresh()->coolify_app_uuid);
+        Http::assertNotSent(fn ($r) => $r->method() === 'POST');
+    }
+
+    public function test_foreign_app_with_the_name_is_never_adopted(): void
+    {
+        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-7', 'spel-kattsvep')]))]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+            $this->fail('En främmande app adopterades.');
+        } catch (StepFailed $e) {
+            $this->assertStringContainsString('was not created by this run', $e->getMessage());
+        }
+        $this->assertNull($run->fresh()->coolify_app_uuid);
         Http::assertNotSent(fn ($r) => $r->method() === 'POST');
     }
 
@@ -4734,6 +4782,7 @@ use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\ProvisioningConfig;
+use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 
 // Coolify-appen spel-<slug> i Demo-projektet. uuid:t sparas direkt efter 201
@@ -4748,12 +4797,24 @@ final class CoolifyAppStep implements Step
             return StepResult::done();
         }
 
+        $detail = $step->detail ?? [];
         $existing = $this->coolify->findDemoApplicationByName(ProvisioningConfig::coolifyAppName($run->slug));
         if ($existing !== null) {
+            // Bara en app som den här runnen själv bad om (avbrott mellan 201 och
+            // sparningen) adopteras. En handskapad app med samma namn får aldrig
+            // hamna i provisioning_runs, eftersom det är den listan Coolify-spärren
+            // och archive_game litar på.
+            if (! isset($detail['create_requested_at'])) {
+                throw new StepFailed('A Coolify app named '.ProvisioningConfig::coolifyAppName($run->slug).' already exists and was not created by this run.');
+            }
             $run->update(['coolify_app_uuid' => $existing['uuid']]);
 
             return StepResult::done(['adopted' => true]);
         }
+
+        // Markören sparas före anropet, så att en omkörning efter ett avbrott vet
+        // att appen kan vara vår.
+        $step->update(['detail' => [...$detail, 'create_requested_at' => now()->toIso8601String()]]);
 
         // 409 (domänkonflikt) kastar CoolifyConflictException och stoppar sagan.
         $run->update(['coolify_app_uuid' => $this->coolify->createApplication($run->slug)]);
@@ -4841,7 +4902,7 @@ final class CorsStep implements Step
 cd $WT && php artisan test --filter=CoolifyStepsTest
 ```
 
-Förväntat: `Tests: 7 passed`.
+Förväntat: `Tests: 8 passed`.
 
 - [ ] **Steg 5: Commit.**
 
@@ -5534,9 +5595,14 @@ final class CoolifyDeleteStep implements Step
 
         $detail = $step->detail ?? [];
         if (! ($detail['delete_requested'] ?? false)) {
+            // Markören sparas före DELETE: dör jobbet mellan anropet och svaret
+            // pollar omkörningen listningen i stället för att begära radering igen
+            // (spärren skulle då vägra ett uuid som redan är borta).
+            $marker = ['delete_requested' => true, 'delete_requested_at' => now()->toIso8601String()];
+            $step->update(['detail' => [...$detail, ...$marker]]);
             $this->coolify->deleteApplication($uuid);
 
-            return StepResult::wait(30, ['delete_requested' => true, 'delete_requested_at' => now()->toIso8601String()]);
+            return StepResult::wait(30, $marker);
         }
 
         foreach ($this->coolify->demoApplications() as $app) {
@@ -5746,7 +5812,7 @@ use Tests\Feature\Mcp\Fixtures\FixtureServer;
 
 class PlatformToolTest extends McpTestCase
 {
-    private function call(User $user, array $args = [])
+    private function callPlatform(User $user, array $args = [])
     {
         return FixtureServer::actingAs(StaffUser::findOrFail($user->id), 'mcp')->tool(FixturePlatformTool::class, $args);
     }
@@ -5760,10 +5826,10 @@ class PlatformToolTest extends McpTestCase
     {
         $user = $this->staffMember();
 
-        $this->call($user, ['mode' => 'ok'])->assertHasNoErrors();
-        $this->call($user, ['mode' => 'invalid'])->assertHasErrors(['The slug is wrong.']);
-        $this->call($user, ['mode' => 'throw_validation'])->assertHasErrors(['The slug is wrong.']);
-        $this->call($user, ['mode' => 'boom'])->assertHasErrors(['Unexpected error (ref '])->assertDontSee('internal detail');
+        $this->callPlatform($user, ['mode' => 'ok'])->assertHasNoErrors();
+        $this->callPlatform($user, ['mode' => 'invalid'])->assertHasErrors(['The slug is wrong.']);
+        $this->callPlatform($user, ['mode' => 'throw_validation'])->assertHasErrors(['The slug is wrong.']);
+        $this->callPlatform($user, ['mode' => 'boom'])->assertHasErrors(['Unexpected error (ref '])->assertDontSee('internal detail');
 
         $this->assertSame(['ok', 'validation_error', 'validation_error', 'error'], $this->outcomes());
         $this->assertNull(McpAuditLog::where('tool', 'fixture_platform_tool')->first()->game_id);
@@ -5774,7 +5840,7 @@ class PlatformToolTest extends McpTestCase
     {
         $player = User::factory()->create();
 
-        $this->call($player)->assertHasErrors(['Not allowed.']);
+        $this->callPlatform($player)->assertHasErrors(['Not allowed.']);
 
         $this->assertSame(['denied'], $this->outcomes());
     }
@@ -6985,6 +7051,11 @@ class RequestLiveTool extends GameTool
             return Response::error('Only the game owner can request Live.');
         }
 
+        // Tom sträng hoppar över closure-regeln i Laravel; behandla den som utelämnad.
+        if (array_key_exists('domain', $args) && is_string($args['domain']) && trim($args['domain']) === '') {
+            $args['domain'] = null;
+        }
+
         $validator = Validator::make($args, ['domain' => ['nullable', 'string', 'max:253', function (string $attribute, mixed $value, \Closure $fail) {
             if (! GameOrigin::isValid('https://'.$value)) {
                 $fail('The domain must be a plain host name such as kattsvep.se.');
@@ -7484,10 +7555,10 @@ Förväntat: pint utan anmärkningar; `Tests: N passed` utan fel eller varningar
 - [ ] **Steg 2: Svep efter syskon (klass, inte instans).** Kör och läs varje träff:
 
 ```bash
-cd $WT && grep -rn "Http::" app | grep -v "app/Provisioning\|app/Support/SlackAlert.php" ; grep -rn "DB::transaction\|beginTransaction" app/Provisioning app/Jobs app/Mcp ; grep -rn "->delete(\|'DELETE'\|\"DELETE\"" app/Provisioning ; grep -rn "{\$game->slug}\|{\$ex->slug}" app/Services
+cd $WT && grep -rn "Http::" app | grep -v "app/Provisioning\|app/Support/SlackAlert.php" ; grep -rn "DB::transaction\|beginTransaction" app/Provisioning app/Jobs app/Mcp ; grep -rn -e '->delete(' -e "'DELETE'" -e '"DELETE"' app/Provisioning ; grep -rn "{\$game->slug}\|{\$ex->slug}" app/Services
 ```
 
-Förväntat: inga nya HTTP-anrop utanför klienterna/SlackAlert/DemoProbe; `DB::transaction` bara i `GameStep` och `AdvanceProvisioningRun::complete()` (utan HTTP inuti); `DELETE` bara i `CoolifyClient::deleteApplication()`; ingen oescapad slug i IntegrationGuide. En avvikande träff som inte kan fixas direkt: AskUserQuestion.
+Förväntat: inga nya HTTP-anrop utanför klienterna/SlackAlert/DemoProbe; `DB::transaction` bara i `GameStep` och `AdvanceProvisioningRun::complete()` (utan HTTP inuti), plus befintliga `DB::beginTransaction` i `GameTool` (app/Mcp); `DELETE` bara i `CoolifyClient::deleteApplication()`; ingen oescapad slug i IntegrationGuide. En avvikande träff som inte kan fixas direkt: AskUserQuestion.
 
 - [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate mot `git diff main...HEAD`. Läs särskilt: att inga nycklar når `AuditLogger` (verktygsargumenten är slug, name, idea, domain), att `last_error` och tool-svar bara bär `SafeMessage`-text, att GitHub-klienten saknar DELETE, att Coolify-spärren gäller alla muterande anrop, att SlackAlert aldrig loggar URL:en, att privat nyckel kräver läge 600, och att en kapad staff-session högst når 5 nya spel per dygn och bara arkiverar egna olistade spel.
 
@@ -7511,19 +7582,20 @@ Computercat deployas av Forge med quick deploy vid push till `main` i `Humblebra
 
 **Interfaces:** Consumes: Task 0 (alla punkter klara), Task 22. Produces: koden live, migrationerna körda, nycklarna i prod-`.env`, kö-workern startad om.
 
-- [ ] **Steg 1: Fråga om OK (AskUserQuestion), med risk och rollback.** Text: "Deploy av provisioneringen: (1) wt-finish ff-mergar feat/provisionering till lokal main, (2) jag lägger in .env-värdena från Task 0.10 via Forge-API:t (värdena injiceras med claude-secret run och passerar aldrig min kontext) och nyckelfilen storage/app/private/github-app.pem (ägare computercat, 600), (3) push av main → Forge quick deploy, (4) `php artisan migrate --force` (lägger till games.is_listed default true och två nya tabeller; befintliga spel påverkas inte), (5) `php artisan config:cache` (bara om sajten redan cachar config; kontrollera först att `bootstrap/cache/config.php` finns, annars hoppas steget över) och `php artisan queue:restart`, (6) `computercat:check-provisioning --dry-run`, (7) worktreens lokala databas tas bort (`wt-finish --drop-db`) eller behålls. Risk: en trasig deploy tar ner API:t för alla spel. Rollback: `git revert` av merge-commiten på main + push (Forge deployar om); migrationerna rullas bara tillbaka med `migrate:rollback --step=3` efter separat OK (tabellerna är tomma tills första create_game). OK?" Utan OK: stanna.
+- [ ] **Steg 1: Fråga om OK (AskUserQuestion), med risk och rollback.** Text: "Deploy av provisioneringen: (1) wt-finish ff-mergar feat/provisionering till lokal main, (2) jag lägger in .env-värdena från Task 0.10 via Forge-API:t (värdena injiceras med claude-secret run och passerar aldrig min kontext) och nyckelfilen storage/app/private/github-app.pem (ägare computercat, 600), (3) push av main → Forge quick deploy, (4) `php artisan migrate --force` (lägger till games.is_listed default true och två nya tabeller; befintliga spel påverkas inte), (5) `php artisan config:cache` (bara om sajten redan cachar config; kontrollera först att `bootstrap/cache/config.php` finns, annars hoppas steget över) och `php artisan queue:restart`, (6) `computercat:check-provisioning --dry-run`, (7) worktreens lokala databas tas bort (`wt-finish --drop-db`) eller behålls. Risk: en trasig deploy tar ner API:t för alla spel. Rollback (wt-finish fast-forwardar, det finns ingen merge-commit): före steg 3 sparas `PRE=$(git -C /Users/erik/Web/computercat-api rev-parse main)`; vid fel körs först `migrate:rollback --step=3` på prod (separat OK; tabellerna är tomma tills första create_game, och migrationsfilerna måste finnas kvar när den körs), sedan `git revert --no-edit $PRE..main` + push (Forge deployar om), sedan återställs `.env` från `env.orig` (se steg 2). OK?" Utan OK: stanna. Notera före push antalet listade spel: `curl -s https://api.computercat.co/api/v1/games | jq '.data | length'` (jämförs i steg 6).
 
-- [ ] **Steg 2: Läs sajtkatalogen och lägg in .env och nyckeln.** Invokera skillen `laravel-forge` och använd endpoints exakt som den dokumenterar (gissa inga sökvägar): hitta servern med IP `46.246.48.182` och sajten för `api.computercat.co`, notera katalog (`$SITE`) och användare. Om Erik i Task 0.10 valde att jag lägger in variablerna: läs sajtens nuvarande `.env` via skillens env-endpoint till en fil i scratchpad med läge 600, lägg till raderna med `claude-secret run` (värdena passerar aldrig kontexten), skicka tillbaka via samma skill och skriv aldrig ut filen. Annars bekräftar Erik att han lagt in dem. Nyckelfilen: `claude-secret run --env-file=$SCRATCH/spike/.env.op -- bash -c 'printf %s "$GITHUB_APP_PRIVATE_KEY" | ~/.claude/bin/ssh-claude --via-home forge@46.246.48.182 "sudo -n -u computercat tee $SITE/storage/app/private/github-app.pem >/dev/null && sudo -n -u computercat chmod 600 $SITE/storage/app/private/github-app.pem"'`. Ta bort scratchpad-kopian av `.env` direkt efteråt.
+- [ ] **Steg 2: Läs sajtkatalogen och lägg in .env och nyckeln.** Invokera skillen `laravel-forge` och använd endpoints exakt som den dokumenterar (gissa inga sökvägar): hitta servern med IP `46.246.48.182` och sajten för `api.computercat.co`, notera katalog (`$SITE`) och användare. Om Erik i Task 0.10 valde att jag lägger in variablerna: **först en egen AskUserQuestion för secret-filen** (CLAUDE.md: secret-filer bara med medveten bekräftelse): "Jag läser prod-`.env` för api.computercat.co via Forge-API:t till `$SCRATCH/env.orig` (läge 600, aldrig utskriven), lägger till exakt nycklarna <lista från 0.10, bara namn> och skriver tillbaka hela filen via Forge. Rollback: `env.orig` skrivs tillbaka. Båda kopiorna raderas när deployen är verifierad. OK?" Efter OK: läs `.env` till `env.orig` (600), kopiera till `env.new` (600), lägg till raderna med `claude-secret run` (värdena passerar aldrig kontexten), skicka `env.new` via samma skill, och kontrollera bara nyckelnamnen efteråt (`grep -c '^COOLIFY_TOKEN='` osv. på en ny läsning, aldrig värden). Annars bekräftar Erik att han lagt in dem. Nyckelfilen skapas med umask så att den aldrig är läsbar för andra, inte ens kort: `claude-secret run --env-file=$SCRATCH/spike/.env.op -- bash -c 'printf %s "$GITHUB_APP_PRIVATE_KEY" | ~/.claude/bin/ssh-claude --via-home forge@46.246.48.182 "sudo -n -u computercat sh -c \"umask 077; mkdir -p $SITE/storage/app/private && cat > $SITE/storage/app/private/github-app.pem\" && stat -c %a $SITE/storage/app/private/github-app.pem"'` → förväntat `600`. `env.orig` och `env.new` raderas (bara de två filerna, på sina sökvägar) när steg 6 är grönt.
 
 - [ ] **Steg 3: Merge och push.**
 
 ```bash
+PRE=$(git -C /Users/erik/Web/computercat-api rev-parse main)   # rollback-bas, se steg 1
 ~/.claude/bin/wt-finish $WT --drop-db
 git -C /Users/erik/Web/computercat-api log main --oneline -5
 git -C /Users/erik/Web/computercat-api push origin main
 ```
 
-(`--drop-db` bara om Erik godkänt det i steg 1; annars `--keep-db`.) Förväntat: main innehåller alla commits från Task 1–22; push lyckas.
+(`--drop-db` bara om Erik godkänt det i steg 1; annars `--keep-db`.) Förväntat: main innehåller alla commits från Task 1–22; push lyckas. Huvudkatalogen som serverar trunken lokalt behöver sedan `php artisan migrate` (CLAUDE.md, Laravel-fälla): fråga Erik med AskUserQuestion och kör `cd /Users/erik/Web/computercat-api && php artisan migrate` först efter OK.
 
 - [ ] **Steg 4: Vänta på Forge-deployen.** Läs sajtens senaste deployment via `laravel-forge`-skillens endpoint tills den är klar och lyckad. `curl -s -o /dev/null -w '%{http_code}' https://api.computercat.co/api/v1/games` → `200`.
 
@@ -7537,7 +7609,7 @@ git -C /Users/erik/Web/computercat-api push origin main
 
 Förväntat: tre migrationer körda (`add_is_listed_to_games_table`, `create_provisioning_runs_table`, `create_provisioning_steps_table`); invarianten skriver `0 avvikelse(r).` och listar inga `coolify:orphan` (spike-appen är raderad). En `coolify:orphan` eller ett konfigurationsfel: stanna och fråga.
 
-- [ ] **Steg 6: Rök-test utan dataändring.** `curl -s https://api.computercat.co/api/v1/games | jq '.data | length'` → samma antal som före deployen (notera talet i steg 1). Erik kontrollerar i claude.ai att connectorn listar `create_game`, `get_provisioning_status`, `retry_provisioning`, `request_live` och `archive_game` (AskUserQuestion). Mattias informeras inte än.
+- [ ] **Steg 6: Rök-test utan dataändring.** `curl -s https://api.computercat.co/api/v1/games | jq '.data | length'` → samma antal som noterades före push i steg 1. Erik kontrollerar i claude.ai att connectorn listar `create_game`, `get_provisioning_status`, `retry_provisioning`, `request_live` och `archive_game` (AskUserQuestion). Mattias informeras inte än.
 
 ---
 
@@ -7553,9 +7625,9 @@ Första data-muterande körningen mot riktiga tjänster efter deploy. Ingen kund
 
 - [ ] **Steg 2: Routine A.** Invokera skillen `schedule` och skapa en engångs-routine på Eriks konto, connectorn Computercat påslagen, inget repo, med exakt prompten: "Skapa ett nytt spel i Computercat: Kattsvep (slug `kattsvep`), ett minröj där katter letar bajs, med daglig topplista för snabbaste rensning. Följ upp med get_provisioning_status tills Demo-adressen svarar." Följ körningen. Under tiden, var femte minut: `ssh-claude --via-home forge@46.246.48.182 "cd $SITE && sudo -n -u computercat php8.4 artisan computercat:check-provisioning --dry-run"` (läsning; ingår i Eriks OK i steg 1). Fastnar sagan (`stuck`) eller blir `failed`: läs `last_error` via routinens get_provisioning_status, stanna och fråga Erik innan `retry_provisioning`.
 
-- [ ] **Steg 3: Routine B.** När routine A rapporterat `succeeded`: skapa med `schedule`-skillen en routine B på Eriks konto med repot `HumblebragAB/kattsvep` och connectorn påslagen. Kan skillen inte koppla repot: AskUserQuestion till Erik att koppla det i routinens inställningar (ett klick). Prompt: "Bygg spelet enligt README och CLAUDE.md, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen."
+- [ ] **Steg 3: Routine B.** När routine A rapporterat `succeeded`: fråga Erik (AskUserQuestion): "Routine B bygger Kattsvep, pushar till main i HumblebragAB/kattsvep (Coolify auto-deployar Demo) och skriver topplistekonfiguration i Computercat-prod via connectorn. OK?" Utan OK: stanna. Efter OK: skapa med `schedule`-skillen en routine B på Eriks konto med repot `HumblebragAB/kattsvep` och connectorn påslagen. Kan skillen inte koppla repot: AskUserQuestion till Erik att koppla det i routinens inställningar (ett klick). Prompt: "Bygg spelet enligt README och CLAUDE.md, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen."
 
-- [ ] **Steg 4: Verifiera (efter routine B).** Varje punkt med kommando och förväntat utfall; inga tokens skrivs ut (spara i skalvariabler):
+- [ ] **Steg 4: Verifiera (efter routine B).** Fråga först Erik (AskUserQuestion): "Verifieringen skriver i prod: en anonym spelare `acceptans` och en topplistetid i Computercat (punkt 2), invarianten utan `--dry-run` som kan larma i Slack (punkt 3), och `artisan tinker` på prod som bara läser revisionsloggen (punkt 4). OK?" Utan OK: stanna. Varje punkt med kommando och förväntat utfall; inga tokens skrivs ut (spara i skalvariabler):
 
 1. Demo svarar och spelet laddar:
 
@@ -7605,12 +7677,13 @@ Faller någon punkt: stanna, beskriv vad som avviker och fråga Erik (AskUserQue
 
 1. **Coolify-token behöver `read`** utöver `write` + `deploy` (bilaga A §7: alla GET kräver `read`; sagan pollar och invarianten läser). Specen är rättad 2026-10-13 (Förutsättningar 4, Säkerhet). Task 0.6.
 2. **SiteOps-nyckeln behöver `sites:read`** utöver `sites:write`. Specen är rättad 2026-10-13 (Förutsättningar 6). Task 0.8.
-10. **SiteOps-adoption kräver ägarskap.** En webb som uppslaget eller 409 pekar på adopteras bara om den har rätt adress, är aktiv, har en demo-miljö med adressen och `PATCH` av miljön ger 200 (2a:s spärr på `sites.api_client_id`). Specen säger bara "annars uppslag på exakt URL". Task 11, Task 15.
-11. **Invarianten läser `monitoring_enabled` och miljöns `has_basic_auth`** (2a Task 6) utöver `is_active` och `is_monitored`, eftersom 2a:s avaktivering stänger av `monitoring_enabled` och en Demo-miljö utan basic auth ger 401 i SiteOps övervakning. Task 21.
-3. **Kö-workern:** `--timeout=120` är längre än databasköns `retry_after` (90 s), och `--tries=1` fäller ett jobb som släpps med `release()`. Planen sätter `$tries = 0`, `retryUntil()` och `$timeout = 60` på jobbet och föreslår `--timeout=60` eller `DB_QUEUE_RETRY_AFTER=180`. Task 0.3, Task 12.
-4. **Datamodellen** får `slug_lock` (unik bland runs som inte är released, även i MySQL) och `name` (spelet skapas först i steget `game`); `idea` är nullable för arkiveringsruns.
-5. **`COOLIFY_ENVIRONMENT_NAME`** saknas i specens inställningslista men krävs av `POST /applications/private-github-app` (eller `environment_uuid`). Standard `production`.
-6. **Coolify-listning och projektspärr** bygger på `GET /projects/{uuid}/{environment_name}`, som inte finns i bilaga A; specen nämner `GET /applications` utan att bilagan dokumenterar svaret eller hur projektet framgår. Verifieras i spiken (S13); faller det stannar planen.
-7. **"Bara i Demo"** för `archive_game` tolkas som `is_listed = false`.
-8. **`get_provisioning_status`/`retry_provisioning` tar `game`**, men ett fel i `repo` inträffar innan spelet finns. Planen låter den som skapade runnen nå den på slugen; alla andra får "Game not found".
-9. **Invarianten** larmar också för runs som stått på `running` i 30 minuter utan stegaktivitet (död kö-worker), utöver specens kontroller.
+3. **SiteOps-adoption kräver ägarskap.** En webb som uppslaget eller 409 pekar på adopteras bara om den har rätt adress, är aktiv, har en demo-miljö med adressen och `PATCH` av miljön ger 200 (2a:s spärr på `sites.api_client_id`). Specen säger bara "annars uppslag på exakt URL". Task 11, Task 15.
+4. **Invarianten läser `monitoring_enabled` och miljöns `has_basic_auth`** (2a Task 6) utöver `is_active` och `is_monitored`, eftersom 2a:s avaktivering stänger av `monitoring_enabled` och en Demo-miljö utan basic auth ger 401 i SiteOps övervakning. Task 21.
+5. **Kö-workern:** `--timeout=120` är längre än databasköns `retry_after` (90 s), och `--tries=1` fäller ett jobb som släpps med `release()`. Planen sätter `$tries = 0`, `retryUntil()` och `$timeout = 60` på jobbet och föreslår `--timeout=60` eller `DB_QUEUE_RETRY_AFTER=180`. Task 0.3, Task 12.
+6. **Datamodellen** får `slug_lock` (unik bland runs som inte är released, även i MySQL) och `name` (spelet skapas först i steget `game`); `idea` är nullable för arkiveringsruns.
+7. **`COOLIFY_ENVIRONMENT_NAME`** saknas i specens inställningslista men krävs av `POST /applications/private-github-app` (eller `environment_uuid`). Standard `production`.
+8. **Coolify-listning och projektspärr** bygger på `GET /projects/{uuid}/{environment_name}`, som inte finns i bilaga A; specen nämner `GET /applications` utan att bilagan dokumenterar svaret eller hur projektet framgår. Verifieras i spiken (S13); faller det stannar planen.
+9. **"Bara i Demo"** för `archive_game` tolkas som `is_listed = false`.
+10. **`get_provisioning_status`/`retry_provisioning` tar `game`**, men ett fel i `repo` inträffar innan spelet finns. Planen låter den som skapade runnen nå den på slugen; alla andra får "Game not found".
+11. **Invarianten** larmar också för runs som stått på `running` i 30 minuter utan stegaktivitet (död kö-worker), utöver specens kontroller.
+12. **Coolify-adoption kräver egen markör.** Specen säger "annars matcha exakt namn `spel-<slug>`". Planen adopterar bara om runnen själv har sparat `create_requested_at` före `POST`; en handskapad app med samma namn ger `failed`, så att den aldrig hamnar i listan som Coolify-spärren och `archive_game` litar på. Task 14.
