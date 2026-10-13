@@ -51,7 +51,9 @@ return [
     // i routes/console.php). Räknas från tokenets created_at; varje token får
     // dessutom ett eget expires_at med samma livslängd. Klienter förnyar via
     // POST /api/v1/auth/refresh, så en spelare som spelar behåller sitt konto.
-    'expiration' => (int) env('SANCTUM_EXPIRATION_MINUTES', 129600),
+    // Hårdkodad med flit: en tom eller felaktig miljövariabel blir 0, och 0
+    // betyder i Sanctum att token aldrig går ut.
+    'expiration' => 129600,
 
     /*
     |--------------------------------------------------------------------------

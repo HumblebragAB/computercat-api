@@ -23,3 +23,6 @@ Schedule::command('glosis:prune-cache')->hourly()->withoutOverlapping(10);
 // Schemalägg aldrig passport:purge utan --revoked: rensade utgångna access-tokens vars refresh-tokens
 // fortfarande gäller får aktiva klienter att se oanvända ut, och då raderas de här.
 Schedule::command('computercat:prune-oauth-clients --hours=24')->dailyAt('04:30');
+
+// Sanctum-token som gått ut (90 dagar, eller 10 minuter efter en förnyelse) raderas efter ett dygn.
+Schedule::command('sanctum:prune-expired --hours=24')->dailyAt('04:45');

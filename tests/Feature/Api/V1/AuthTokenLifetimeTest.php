@@ -3,6 +3,7 @@
 namespace Tests\Feature\Api\V1;
 
 use App\Models\User;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\PersonalAccessToken;
@@ -85,5 +86,29 @@ class AuthTokenLifetimeTest extends TestCase
         $this->travel(1)->minutes();
 
         $this->getMe($token)->assertUnauthorized();
+    }
+
+    // Livslängden är hårdkodad: en tom eller felaktig miljövariabel får
+    // aldrig kunna ge token som aldrig går ut (0 betyder det i Sanctum).
+    public function test_lifetime_ignores_environment(): void
+    {
+        foreach (['0', '', 'abc', '-5'] as $value) {
+            putenv("SANCTUM_EXPIRATION_MINUTES={$value}");
+            $_ENV['SANCTUM_EXPIRATION_MINUTES'] = $_SERVER['SANCTUM_EXPIRATION_MINUTES'] = $value;
+
+            $this->assertSame(129600, (require config_path('sanctum.php'))['expiration'], "värde: '{$value}'");
+        }
+
+        putenv('SANCTUM_EXPIRATION_MINUTES');
+        unset($_ENV['SANCTUM_EXPIRATION_MINUTES'], $_SERVER['SANCTUM_EXPIRATION_MINUTES']);
+    }
+
+    public function test_expired_tokens_are_pruned_daily(): void
+    {
+        $events = collect(app(Schedule::class)->events())
+            ->filter(fn ($e) => str_contains((string) $e->command, 'sanctum:prune-expired --hours=24'));
+
+        $this->assertCount(1, $events);
+        $this->assertMatchesRegularExpression('/^\d+ \d+ \* \* \*$/', $events->first()->expression);
     }
 }
