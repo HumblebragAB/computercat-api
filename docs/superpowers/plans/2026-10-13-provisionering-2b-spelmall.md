@@ -1,8 +1,15 @@
-# Spelplattformen delprojekt 2b: spelmallen `HumblebragAB/spelmall` — implementationsplan
+# Spelplattformen delprojekt 2b: byggguidens innehåll (byggt som `~/Web/spelmall`) — implementationsplan
 
 > **För agenter som genomför planen:** OBLIGATORISK SUB-SKILL: använd superpowers:subagent-driven-development (rekommenderas) eller superpowers:executing-plans för att genomföra planen task för task. Stegen har checkbox-syntax (`- [ ]`) för att följa upp.
 
-**Mål:** Ett mallrepo som `create_game` kan generera spelrepon ur. Direkt efter första deploy ska ett genererat repo bygga till statiska filer på Coolify, logga in en anonym spelare mot Computercat, skicka ett resultat till en daglig topplista (köat lokalt om nätet saknas) och visa topplistan. Spelets Claude ska av `CLAUDE.md` veta att Computercat är backend och hur topplistan konfigureras via connectorn.
+> **Status 2026-10-13 (revision: byggguide i stället för mallrepo).** Task 1–10 är genomförda lokalt i `/Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall` (gren `feat/spelmall`, HEAD `4a1fecb`, 17 commits, 83 tester gröna). Erik har beslutat att det **inte** blir något mallrepo på GitHub: Computercat serverar i stället en versionerad byggguide (spec, "2c. Byggguiden") med regler och de färdiga klientfilerna, och spelets Claude skriver in dem i spelrepot. Därför:
+> - Innehållet i den här planen är byggguidens innehåll. Det importeras till `computercat-api` i 2c Task 8A (`resources/byggguide/v1/`), och därefter är computercat-api sanningen. Ändringar görs där, som en ny guideversion.
+> - Task 11 (lokal slutverifiering) körs klart som planerat, inklusive steg 5 (`wt-finish`, lokal merge). Repot `~/Web/spelmall` blir kvar lokalt som historik och pushas aldrig.
+> - Task 12 (GitHub-repo, push, `is_template`) utgår och ersätts av importen i 2c Task 8A. Se Task 12 nedan.
+> - Den faktiska låsningen avviker från "Teknik" nedan efter granskningens audit-fynd: `next` och `eslint-config-next` 16.4.0, `vitest` 4.1.11, `jsdom` 30.1.2 och `overrides: {"vite": "7.3.7"}` (godkänd av Erik). Byggguidens manifest läser versionerna ur `package.json`, inte ur den här texten.
+> - Granskningshistoriken (Granskningsfokus, tasks, tester) står kvar oförändrad nedan; texten om mallrepo, `/generate` och `is_template` gäller som historik.
+
+**Mål (ursprungligt):** Ett mallrepo som `create_game` kan generera spelrepon ur. Direkt efter första deploy ska ett genererat repo bygga till statiska filer på Coolify, logga in en anonym spelare mot Computercat, skicka ett resultat till en daglig topplista (köat lokalt om nätet saknas) och visa topplistan. Spelets Claude ska av `CLAUDE.md` veta att Computercat är backend och hur topplistan konfigureras via connectorn.
 
 **Arkitektur:** Next.js App Router med `output: 'export'`; all kod som pratar med Computercat körs i webbläsaren. `src/lib/computercat/` är en fabrik (`createComputercat`) som får `fetch`, lagring och klocka injicerade, så att hela klienten testas med vitest och en falsk `fetch` utan nätverk. Ovanpå fabriken ligger en lat singleton (`getComputercat`) som läser `NEXT_PUBLIC_COMPUTERCAT_GAME`/`NEXT_PUBLIC_COMPUTERCAT_URL`. Exempelspelet (klickrace, 10 sekunder) använder en Zustand-store för spelstatus och klientens kö för resultat.
 
@@ -10,12 +17,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-13-spelplattform-provisionering-design.md`, avsnitt "2b. Spelmallen `HumblebragAB/spelmall`".
 
-**Beroenden och ordning:** 2b beror inte på 2a eller 2c och kan köras parallellt med 2a. 2c:s spike (2c Task 1) kräver att `HumblebragAB/spelmall` finns på GitHub med `is_template: true` och idé-markörerna, alltså att Task 12 här är gjord (med Eriks OK), och att Erik har lagt till `spelmall` i GitHub App-installationen "Humblebrag Spelstudio". Ordningen över planerna: förutsättningarna → 2a och 2b → deploy av 2a + Task 12 här, båda med Eriks OK → 2c Task 1 (spike) → resten av 2c → 2d. Spiken verifierar också att Coolifys nixpacks bygger mallen med Node 22 (2c S20).
+**Beroenden och ordning (reviderat 2026-10-13):** 2b är gjord lokalt. 2c Task 8A importerar filerna från worktreen ovan (eller från `main` i `~/Web/spelmall` efter `wt-finish`, samma commit). 2c:s spike pushar samma filer till spikrepot för att prova bygget. Inget i 2b kräver längre GitHub. **Ursprunglig text:** 2b beror inte på 2a eller 2c och kan köras parallellt med 2a. 2c:s spike (2c Task 1) kräver att `HumblebragAB/spelmall` finns på GitHub med `is_template: true` och idé-markörerna, alltså att Task 12 här är gjord (med Eriks OK), och att Erik har lagt till `spelmall` i GitHub App-installationen "Humblebrag Spelstudio". Ordningen över planerna: förutsättningarna → 2a och 2b → deploy av 2a + Task 12 här, båda med Eriks OK → 2c Task 1 (spike) → resten av 2c → 2d. Spiken verifierar också att Coolifys nixpacks bygger mallen med Node 22 (2c S20).
 
 ## Globala villkor
 
 - **Var koden bor.** Nytt repo `~/Web/spelmall`. Det ligger under `~/Web`, så worktree-tvånget gäller: Task 1 skapar repot med en tom start-commit på `main` (bara git-kommandon i huvudkatalogen), sedan sker allt arbete i worktreen `/Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall` via `~/.claude/bin/wt-start`. Huvudkatalogen får inga filändringar.
-- **Inget utåt utan Eriks OK.** Inget GitHub-repo skapas, inget pushas och ingenting markeras som mall förrän Task 12, som kräver Eriks uttryckliga OK (AskUserQuestion). Ingen task rör Computercat i produktion: alla tester går mot en falsk `fetch`, och webbläsarkontrollen i Task 11 körs mot en stängd lokal port.
+- **Inget utåt.** Inget GitHub-repo skapas och inget pushas (Task 12 utgår, se status överst). Ingen task rör Computercat i produktion: alla tester går mot en falsk `fetch`, och webbläsarkontrollen i Task 11 körs mot en stängd lokal port.
 - **Spelar-API:t är facit.** Klientens anrop och svarstolkning ska stämma med controllers i `computercat-api` (citerade nedan), inte med Toccos klient. Toccos klient har tre fel som inte får kopieras: den läser `data` ur `GET /auth/me` (servern svarar `user`), den behandlar topplisteposter som platta (`user_id`, `display_name`, servern svarar `user: {id, display_name}`), och den slänger token vid *alla* fel, även nätverksfel.
 - **Fakta ur Computercat (verifierade i koden 2026-10-13):**
   - `POST /api/v1/auth/anonymous` (throttle `auth`, 10/min per IP) svarar **201** `{"user": {"id", "display_name", "is_anonymous", "created_at"}, "token": "<id>|<text>"}` — `AuthController.php:16-37`, `UserResource.php:12-18`. `display_name` i body är valfri (`AuthController.php:18-24`).
@@ -58,7 +65,8 @@ Detta är kontraktet som `computercat-api` (2c, steget `repo`) skriver mot. Det 
 - Idén skrivs som Markdown-text. Före skrivning ersätts `<!--` med `&lt;!--` och `-->` med `--&gt;`, så att idén inte kan stänga eller öppna en markör.
 - Saknas en markör eller förekommer den mer än en gång: steget `repo` misslyckas med "README.md i <repo> saknar idé-markörerna" och skriver ingenting (aldrig en tilläggning någon annanstans i filen).
 - Mallens innehåll mellan markörerna är `_Idén fylls i av create_game när spelet skapas._`.
-- Notering till 2c: `POST /repos/{template}/generate` skapar innehållet asynkront; `GET /repos/HumblebragAB/<slug>/contents/README.md` kan ge 404 de första sekunderna och ska försökas igen innan steget fallerar. Skrivning sker med `PUT /repos/HumblebragAB/<slug>/contents/README.md` med `sha` från GET-svaret och `branch: main`.
+- **Reviderat 2026-10-13:** kontraktet ägs nu av computercat-api: README-mallen ligger i `resources/byggguide/v1/templates/README.md` och vaktas av `ReadmeIdea` och `BuildGuideTest` (2c Task 8A och 13). Repot skapas med `POST /orgs/HumblebragAB/repos` och `auto_init: true`; README skrivs över med mallen via Contents-API. Markörraderna och reglerna ovan är oförändrade.
+- Notering till 2c (historik): `POST /repos/{template}/generate` skapar innehållet asynkront; `GET /repos/HumblebragAB/<slug>/contents/README.md` kan ge 404 de första sekunderna och ska försökas igen innan steget fallerar. Skrivning sker med `PUT /repos/HumblebragAB/<slug>/contents/README.md` med `sha` från GET-svaret och `branch: main`.
 
 ## Miljövariabler (gränssnitt mot Coolify i 2c)
 
@@ -2927,54 +2935,32 @@ Förväntat: `main` i `~/Web/spelmall` innehåller commitsen; worktree och branc
 
 ---
 
-### Task 12: GitHub-repo, push och mallmarkering — KRÄVER ERIKS OK
+### Task 12: Utgår — ersatt av import till computercat-api (2c Task 8A)
 
-Detta är den enda åtgärden i planen som syns utåt. **Fråga Erik med AskUserQuestion innan steg 1** och beskriv exakt: skapar privat repo `HumblebragAB/spelmall`, pushar `main`, sätter `is_template: true`. Gå vidare bara på ett uttryckligt ja.
+Erik beslutade 2026-10-13 att det inte blir något mallrepo på GitHub. Inget repo skapas, inget pushas, ingenting markeras som mall. Den ursprungliga tasken (skapa privat `HumblebragAB/spelmall`, pusha, `PATCH is_template=true`, lägga till repot i GitHub App-installationen) genomförs inte.
 
-**Filer:** inga.
+**Filer:** inga i det här repot.
 
 **Gränssnitt:**
-- Konsumerar: `main` i `~/Web/spelmall` (Task 11).
-- Producerar: `HumblebragAB/spelmall` (privat, `is_template: true`, default branch `main`), som 2c anropar med `POST /repos/HumblebragAB/spelmall/generate`.
+- Konsumerar: `main` i `~/Web/spelmall` efter Task 11 (eller worktreen vid `4a1fecb`; samma innehåll).
+- Producerar: inget. Importen till `computercat-api/resources/byggguide/v1/` görs i 2c Task 8A, med de ändringar som står där (ny `CLAUDE.md`, `README.md` blir mall med `{{name}}`, `test/docs.test.ts` kräver `get_build_guide`, beskrivningen i `src/app/layout.tsx`).
 
-- [ ] **Steg 1: Kontrollera att namnet är ledigt**
-
-```bash
-gh api repos/HumblebragAB/spelmall --jq .full_name 2>&1 | head -1
-```
-
-Förväntat: `gh: Not Found (HTTP 404)`. Finns repot redan: stanna och fråga Erik.
-
-- [ ] **Steg 2: Skapa och pusha**
+- [ ] **Steg 1: Bekräfta att källan är ren och oförändrad**
 
 ```bash
-gh repo create HumblebragAB/spelmall --private \
-  --description "Mall för Computercat-spel: Next.js statisk export, Computercat-klient, CLAUDE.md" \
-  --source /Users/erik/Web/spelmall --remote origin --push
+git -C /Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall log -1 --format=%h   # före Task 11 steg 5
+git -C /Users/erik/Web/spelmall log -1 --format=%h main                              # efter Task 11 steg 5 (wt-finish)
+git -C /Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall status --short
 ```
 
-Förväntat: `✓ Created repository HumblebragAB/spelmall on GitHub` och `✓ Pushed commits to …`.
+Förväntat: `4a1fecb` i worktreen (gren `feat/spelmall`; `main` står på `3adb4c1` tills `wt-finish` körts, därefter `4a1fecb`) och ingen utskrift från `status`. Har grenen fler commits: 2c Task 8A importerar då den nya commiten, och skillnaden mot `4a1fecb` läses och nämns i commit-meddelandet där.
 
-- [ ] **Steg 3: Markera som mall**
-
-```bash
-gh api -X PATCH repos/HumblebragAB/spelmall -F is_template=true --jq '{private, is_template, default_branch}'
-```
-
-Förväntat: `{"default_branch":"main","is_template":true,"private":true}`. (`-F` skickar ett riktigt booleskt värde; `-f` skulle skicka strängen `"true"`.)
-
-- [ ] **Steg 4: Kontrollera att lokalt och GitHub är samma**
-
-```bash
-git -C /Users/erik/Web/spelmall fetch origin && git -C /Users/erik/Web/spelmall status -sb | head -1
-```
-
-Förväntat: `## main...origin/main` utan `ahead`/`behind`.
-
-Kvar för Erik efter denna task (förutsättning 3 i specen, görs i GitHubs UI): lägga till `spelmall` i GitHub App-installationen "Humblebrag Spelstudio".
+- [ ] **Steg 2: Lämna repot lokalt.** Ingen `gh repo create`, ingen `git remote add`. Repot är historik; nästa ändring av guiden görs i computercat-api som en ny guideversion.
 
 ---
 
 ## Till spiken före 2c
 
-Inarbetat 2026-10-13: specens "Ej verifierat" punkt 8 och 2c:s spikpunkt S20 kontrollerar i byggloggen att Coolifys nixpacks bygger mallen med Node 22 enligt `engines.node: "22.x"` (Next.js 16 kräver ≥ 20.9; nixpacks standard är 18). Faller det är reservvägen build-variabeln `NIXPACKS_NODE_VERSION=22` per app (nixpacks.com/docs/providers/node), som 2c i så fall sätter i steget `coolify_env` efter Eriks beslut. Mallen ändras inte för det.
+Reviderat 2026-10-13: spiken (2c Task 1) pushar grundkoden från `~/Web/spelmall` till spikrepot `HumblebragAB/e2e-spike` med installationstoken och låter Coolifys auto-deploy bygga den. Node 22-kontrollen nedan gäller oförändrat.
+
+Inarbetat 2026-10-13: specens "Ej verifierat" punkt 8 och 2c:s spikpunkt S20 kontrollerar i byggloggen att Coolifys nixpacks bygger grundkoden med Node 22 enligt `engines.node: "22.x"` (Next.js 16 kräver ≥ 20.9; nixpacks standard är 18). Faller det är reservvägen build-variabeln `NIXPACKS_NODE_VERSION=22` per app (nixpacks.com/docs/providers/node), som 2c i så fall sätter i steget `coolify_env` efter Eriks beslut. Byggguiden ändras inte för det.

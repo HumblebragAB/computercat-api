@@ -19,7 +19,7 @@
 - Repo: `/Users/erik/Web/siteops`. Allt arbete i worktreen `/Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo` (skapas i Task 0). Huvudkatalogen `/Users/erik/Web/siteops` rörs aldrig: ingen checkout, ingen stash, inga filändringar.
 - Inga produktionsåtgärder. Deploy, `migrate` i prod och skapandet av den riktiga Computercat-klienten ingår inte.
 - Alla routes under `/api/v1`, middleware `oauth` + `throttle:120,1` (befintlig grupp).
-- Scope `sites:write` för `POST /sites`, `PATCH /sites/{id}/environments/{env}`, `POST /sites/{id}/deactivate`.
+- Scope `sites:write` eller det smala `demo-sites:write` (Eriks beslut 2026-10-13) för `POST /sites`, `PATCH /sites/{id}/environments/{env}`, `POST /sites/{id}/deactivate`. Med bara `demo-sites:write` kräver `POST /sites` ett `environment` av typ `demo` och avvisar `credentials`, `pejl_customer_id` och `cms_type` (422); alla andra skrivande routes ger 403. En avaktiverad API-klients client_credentials-JWT avvisas direkt.
 - Scope `sites:read` för `GET /sites?url=` (scopet finns redan i `OAuthController::metadata()`).
 - `environment.type` måste vara en nyckel i `Environment::TYPES` (`production, staging, demo, development, worker, mobile, custom`).
 - `environment.url` måste vara `https://` (`url:https`), max 500.
@@ -32,7 +32,7 @@
 - Avaktivering sätter `active = false` och `monitoring_enabled = false`. Ingen radering via API.
 - Webben får som idag en egen reservlösning (`BelongsToSolution`).
 - Anroparen skickar `Accept: application/json` (annars renderar Laravel valideringsfel som redirect).
-- Ny API-klient för Computercat: scopes exakt `sites:read sites:write`, `expose_cases = false`, ingen wildcard.
+- Ny API-klient för Computercat: scopes exakt `sites:read demo-sites:write`, `expose_cases = false`, ingen wildcard.
 - Commit-meddelanden på svenska i formen `feat(api): …`, utan Co-Authored-By.
 
 ### Låst API-kontrakt (det computercat-api 2c anropar)
@@ -45,7 +45,7 @@ Auth: header `X-Api-Key: <nyckel>` (eller `Authorization: Bearer <jwt>`), plus `
 - 422: `{"message":"…","errors":{"url":["…"]}}` när `url` saknar värde eller inte är en URL.
 - Computercat läser `data[0].id` och `data[0].is_active`.
 
-**2. Skapa webb med Demo-miljö** — `POST /api/v1/sites` (scope `sites:write`)
+**2. Skapa webb med Demo-miljö** — `POST /api/v1/sites` (scope `sites:write` eller `demo-sites:write`; med bara `demo-sites:write` krävs `environment.type = demo`, och `credentials`, `pejl_customer_id`, `cms_type` ger 422)
 - Request:
   ```json
   {"name":"Kattsvep","url":"https://kattsvep.apps.humblebrag.se","type":"app",
@@ -58,14 +58,14 @@ Auth: header `X-Api-Key: <nyckel>` (eller `Authorization: Bearer <jwt>`), plus `
 - 422: valideringsfel. 403: scope saknas.
 - Utan `environment` är beteendet oförändrat.
 
-**3. Ändra miljö** — `PATCH /api/v1/sites/{id}/environments/{env}` (scope `sites:write`)
+**3. Ändra miljö** — `PATCH /api/v1/sites/{id}/environments/{env}` (scope `sites:write` eller `demo-sites:write`)
 - Request: valfri delmängd av `{"basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":true}`, minst ett fält. `basic_auth_user` och `basic_auth_password` skickas alltid tillsammans; båda `null` tar bort basic auth.
 - 200: `{"data":{"id":12,"site_id":34,"name":"Demo","type":"demo","url":"https://kattsvep.apps.humblebrag.se","is_monitored":true,"has_basic_auth":true}}`
 - 404: `{"error":"Site not found"}` / `{"error":"Environment not found"}` (miljön måste höra till webben, webben till nyckelns team).
 - 403: scope saknas, eller webben skapades inte av samma API-klient med `environment` (webbar skapade utan `environment`, i UI:t eller av annan klient har `api_client_id = null` och ger 403 för alla). Ett 403 ändrar ingenting (testat i Task 4). **2c använder detta som ägarskapsbevis:** när `POST /sites` ger 409 eller uppslaget hittar en webb, adopterar 2c den bara om `PATCH` mot dess demo-miljö ger 200; 403 betyder att webben inte är Computercats och sagan stannar med fel.
 - 422: valideringsfel, ensamt basic auth-fält, tom body.
 
-**4. Avaktivera** — `POST /api/v1/sites/{id}/deactivate` (scope `sites:write`, ingen body)
+**4. Avaktivera** — `POST /api/v1/sites/{id}/deactivate` (scope `sites:write` eller `demo-sites:write`, ingen body)
 - 200: `{"data":{"id":34,"is_active":false,"monitoring_enabled":false}}`. Idempotent: ett andra anrop ger samma svar.
 - 404: `{"error":"Site not found"}`. 403: scope saknas eller webben skapades inte av samma API-klient med `environment` (se kontrakt 3).
 
@@ -1649,7 +1649,7 @@ Förväntat: alla gröna.
 cd /Users/erik/Web/siteops/.claude/worktrees/feat-api-demo-miljo && git add app/Console/Commands/CreateApiClient.php app/Models/OAuthClient.php app/Http/Controllers/OAuthController.php tests/Feature/Api/CreateApiClientCommandTest.php && git commit -m "feat(api): api-clients:create skapar maskinnyckel med uttryckliga scopes"
 ```
 
-**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** på SiteOps-servern `php artisan migrate`, sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Team-id slås upp först (`php artisan tinker --execute="echo App\\Models\\Team::where('name','like','Humblebrag%')->get(['id','name'])"`). Kommandot skriver ut nyckeln en gång; därför kör **Erik** det i sin egen terminal och lägger nyckeln direkt i 1Password/Forge (Computercats `.env` som `SITEOPS_API_KEY`, spec 2c förutsättning 6-7), aldrig via Claude eller ett transkript.
+**Efter deploy (ingår inte i planen, kräver Eriks OK enligt produktionsregeln):** på SiteOps-servern `php artisan migrate`, sedan `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=demo-sites:write`. Team-id slås upp först (`php artisan tinker --execute="echo App\\Models\\Team::where('name','like','Humblebrag%')->get(['id','name'])"`). Kommandot skriver ut nyckeln en gång; därför kör **Erik** det i sin egen terminal och lägger nyckeln direkt i 1Password/Forge (Computercats `.env` som `SITEOPS_API_KEY`, spec 2c förutsättning 6-7), aldrig via Claude eller ett transkript.
 
 ## Task 7b: `api-clients:rotate` för nyckelbyte
 

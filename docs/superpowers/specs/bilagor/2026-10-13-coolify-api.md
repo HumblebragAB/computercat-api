@@ -23,6 +23,7 @@ Enum: `nixpacks, railpack, static, dockerfile, dockercompose` (S, private-github
 - `custom_labels`: string that **must be base64-encoded**, otherwise 422 (C:4913-4932). `is_container_label_escape_enabled` (default true) escapes `$`.
 
 ## 4. Deploy and poll
+> 2026-10-13: Computercat startar inga byggen längre (byggguide i stället för mall; första bygget kommer från auto-deploy vid push). Bara listningen `GET /deployments/applications/{uuid}` används, och token behöver inte `deploy`. Coolifys källkod (gren v4.x, `Application::deployments()`) svarar `{count, deployments}` sorterat nyast först; formen vid v4.4.6 verifieras i spiken (S22).
 - `POST /deploy?uuid=<app>[&force=true]` (S:6778, R:153, ability `deploy`). Returns `{deployments:[{message, resource_uuid, deployment_uuid}]}`. **Note:** `GET /deploy` now returns post_required (R:152).
 - Alternative: `POST /applications/{uuid}/start?force=&instant_deploy=` → `{message, deployment_uuid}` (S:2935, R:290).
 - Poll: `GET /deployments/{deployment_uuid}` → `ApplicationDeploymentQueue` with `status` and `logs` (S:6698). `GET /deployments/applications/{uuid}?skip=&take=` (S:6840). `POST /deployments/{uuid}/cancel`.

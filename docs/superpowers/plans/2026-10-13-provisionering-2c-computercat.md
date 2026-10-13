@@ -2,15 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `create_game(slug, name, idea)` i Computercats MCP-server skapar på egen hand ett privat repo från `HumblebragAB/spelmall`, ett aktivt men olistat spel, en Coolify-app med basic auth på `https://<slug>.apps.humblebrag.se`, en övervakad SiteOps-sajt och en första deploy, och Kattsvep byggs från idé till spelbar Demo av två Claude Code-routines utan att någon människa klickar i GitHub, Coolify eller SiteOps.
+**Goal:** `create_game(slug, name, idea)` i Computercats MCP-server skapar på egen hand ett tomt privat repo `HumblebragAB/<slug>` med README (idén) och `CLAUDE.md` ur byggguiden, ett aktivt men olistat spel, en Coolify-app med basic auth och auto-deploy på `https://<slug>.apps.humblebrag.se` och en övervakad SiteOps-sajt; repot är då "redo för kod". Computercat serverar en versionerad byggguide (`get_build_guide`, `get_build_guide_file`, publik REST) med stack, kontroller och de färdiga klientfilerna, och Kattsvep byggs från idé till spelbar Demo av två Claude Code-routines (B skriver grundkoden ur guiden, pushar och bygger spelet) utan att någon människa klickar i GitHub, Coolify eller SiteOps.
 
-**Architecture:** Ett MCP-verktyg reserverar slugen i en `provisioning_runs`-rad och köar jobbet `AdvanceProvisioningRun`. Jobbet kör ett steg i taget ur en fast lista (`Saga::PROVISION_STEPS` eller `Saga::ARCHIVE_STEPS`); varje steg är idempotent, svarar `done`, `wait(n)` (jobbet släpps med `release(n)`) eller `releaseSlug`, och ett fel stoppar sagan med `failed`, redigerat `last_error` och Slack-larm. Tre tunna HTTP-klienter (`GitHubAppClient`, `CoolifyClient`, `SiteOpsClient`) delar en anropsmetod som loggar 4xx/5xx redigerat och kastar `ExternalApiException`. En nattlig invariant (`computercat:check-provisioning`) jämför lyckade runs mot GitHub, Coolify, SiteOps och Demo-adressen.
+> **Revision 2026-10-13:** Erik beslutade att det inte blir något mallrepo. Planen är omskriven från `/generate` ur `HumblebragAB/spelmall` till byggguide i computercat-api (Task 8A, 8B, 17A), tomt repo med `POST /orgs/{org}/repos` (Task 9, 13), inget deploy-steg (Task 12, 15), `demo`-läge i `get_provisioning_status` (Task 19) och karenstid i invarianten (Task 21). Granskningshistoriken i "Spec-avvikelser" står kvar.
+
+**Architecture:** Byggguiden är filer i `resources/byggguide/<version>/` med ett manifest som bär `sha256` för varje fil; `App\Services\BuildGuide` läser och kontrollerar dem, och samma tjänst används av MCP-verktygen, REST-controllern, repo-steget (README-mall och `CLAUDE.md`) och verifieringskommandot. Ett MCP-verktyg reserverar slugen i en `provisioning_runs`-rad och köar jobbet `AdvanceProvisioningRun`. Jobbet kör ett steg i taget ur en fast lista (`Saga::PROVISION_STEPS` eller `Saga::ARCHIVE_STEPS`); varje steg är idempotent, svarar `done`, `wait(n)` (jobbet släpps med `release(n)`) eller `releaseSlug`, och ett fel stoppar sagan med `failed`, redigerat `last_error` och Slack-larm. Tre tunna HTTP-klienter (`GitHubAppClient`, `CoolifyClient`, `SiteOpsClient`) delar en anropsmetod som loggar 4xx/5xx redigerat och kastar `ExternalApiException`. En nattlig invariant (`computercat:check-provisioning`) jämför lyckade runs mot GitHub, Coolify, SiteOps och Demo-adressen.
 
 **Tech Stack:** Laravel 12, PHP 8.4 i prod (8.2+ i composer), laravel/mcp 1.0.2, Filament 3, lcobucci/jwt 5.6 (RS256), databaskö (`QUEUE_CONNECTION=database`), databascache, PHPUnit 11 (PHPUnit-klasser, inte Pest), SQLite i minnet för test.
 
-**Spec:** `docs/superpowers/specs/2026-10-13-spelplattform-provisionering-design.md`, avsnitten "Förutsättningar", "Ej verifierat … spike", "2c. Provisionering i Computercat" och "Acceptans: Kattsvep (2d)", med bilagorna `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` (A) och `docs/superpowers/specs/bilagor/2026-10-13-github-app.md` (B). Syskonplanerna för 2a (SiteOps API) och 2b (spelmall) är beroenden; deras kontrakt återges under Global Constraints.
+**Spec:** `docs/superpowers/specs/2026-10-13-spelplattform-provisionering-design.md`, avsnitten "Förutsättningar", "Ej verifierat … spike", "2c. Provisionering i Computercat" och "Acceptans: Kattsvep (2d)", med bilagorna `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` (A) och `docs/superpowers/specs/bilagor/2026-10-13-github-app.md` (B). Syskonplanen för 2a (SiteOps API) är ett beroende; dess kontrakt återges under Global Constraints. 2b (spelmall) är genomförd lokalt och är källan som Task 8A importerar.
 
-**Beroenden och ordning:** Task 0 (förutsättningar) först. Task 1 (spike) får inte påbörjas förrän (1) 2a (`docs/superpowers/plans/2026-10-13-provisionering-2a-siteops.md`) är mergad och **deployad till SiteOps-produktion med migrationen**, och Computercats SiteOps-nyckel är skapad med `api-clients:create`, och (2) 2b (`…-2b-spelmall.md`) är klar och dess Task 12 gjord: `HumblebragAB/spelmall` finns, privat, `is_template: true`, med idé-markörerna, och är tillagd i GitHub App-installationen. Båda kräver Eriks OK i respektive plan. Task 2 och framåt bygger på spikens resultat. Ordningen över planerna: förutsättningarna → 2a och 2b (parallellt) → deploy av 2a + push av mallen → 2c Task 1 → 2c Task 2–23 → 2d (Task 24).
+**Beroenden och ordning:** Task 0 (förutsättningar) först. Task 1 (spike) får inte påbörjas förrän 2a (`docs/superpowers/plans/2026-10-13-provisionering-2a-siteops.md`) är mergad och **deployad till SiteOps-produktion med migrationen**, och Computercats SiteOps-nyckel är skapad med `api-clients:create` (Eriks OK i 2a). 2b (`…-2b-spelmall.md`) är genomförd lokalt (`/Users/erik/Web/spelmall`, commit `4a1fecb`); den pushas aldrig, och dess Task 12 utgår. Task 2 och framåt bygger på spikens resultat. Inom 2c: Task 8A (import av byggguiden) och 8B (verifiering) före Task 13 (repo-steget läser README-mallen och `CLAUDE.md` ur guiden); Task 17A (verktyg och REST för guiden) efter Task 17 (`PlatformTool`). Ordningen över planerna: förutsättningarna → 2a → deploy av 2a → 2c Task 1 → 2c Task 2–23 → 2d (Task 24).
 
 ---
 
@@ -27,10 +29,10 @@
 **Externa API:er (exakt så här, inget gissat)**
 - GitHub, bas `https://api.github.com`, headers `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, `Authorization: Bearer <token>`.
   - JWT: RS256, `iss` = `GITHUB_APP_CLIENT_ID`, `iat` = nu − 60 s, `exp` = nu + 9 min (krav ≤ 10 min). Heltalstidsstämplar.
-  - `POST /app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens` med JWT, utan body. Svar 201 `{token, expires_at, permissions, repository_selection, repositories}`. Token giltig 1 h; cachas krypterad till `expires_at − 5 min`, glöms efter varje `/generate`.
-  - `POST /repos/HumblebragAB/spelmall/generate` body `{owner: "HumblebragAB", name: <slug>, description: "Computercat-spel <slug> (run <uuid>)", private: true, include_all_branches: false}`. 201 vid lyckat. 422 vars body säger att namnet redan finns (`already exists`, form enligt S12) betyder upptagen slug; alla andra 422 är fel som kastas.
-  - `GET /repos/HumblebragAB/<slug>` (fälten `id`, `description`, `archived`, `template_repository.full_name` verifieras i spiken, S10).
-  - `GET /repos/HumblebragAB/<slug>/contents/README.md` → `{sha, content, encoding: "base64"}`; `PUT` samma sökväg med `{message, content (base64), sha, branch: "main"}` (verifieras i spiken, S11; `branch` enligt 2b:s kontrakt).
+  - `POST /app/installations/{GITHUB_APP_INSTALLATION_ID}/access_tokens` med JWT, utan body. Svar 201 `{token, expires_at, permissions, repository_selection, repositories}`. Token giltig 1 h; cachas krypterad till `expires_at − 5 min`, glöms efter varje skapat repo.
+  - `POST /orgs/{GITHUB_OWNER}/repos` body exakt `{name: <slug>, description: "Computercat-spel <slug> (run <uuid>)", private: true, auto_init: true}` (docs.github.com/en/rest/repos/repos#create-an-organization-repository; `private` är false som standard, `auto_init` ger "an initial commit with empty README"). Rättighet: Administration: write; sidan listar även "Repository creation" (bilaga B §6, spike S8). 201 vid lyckat. 422 vars body säger att namnet redan finns (`already exists`, form enligt S12) betyder upptagen slug; alla andra 422 är fel som kastas.
+  - `GET /repos/HumblebragAB/<slug>` (fälten `id`, `description`, `archived`, `private` verifieras i spiken, S10).
+  - `GET /repos/HumblebragAB/<slug>/contents/{path}` → `{sha, content, encoding: "base64"}` eller 404; `PUT` samma sökväg med `{message, content (base64), branch: "main"}` plus `sha` när filen finns (Contents: write; S11). Bara `README.md` och `CLAUDE.md` skrivs.
   - `PATCH /repos/HumblebragAB/<slug>` body `{archived: true}`.
   - **Aldrig `DELETE` mot `api.github.com`.** `GitHubAppClient::ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH']`.
 - Coolify v4.4.6, bas `{COOLIFY_URL}/api/v1`, `Authorization: Bearer {COOLIFY_TOKEN}`.
@@ -38,26 +40,27 @@
   - `GET /projects/{COOLIFY_PROJECT_UUID}/{COOLIFY_ENVIRONMENT_NAME}` → miljön med `applications[]` (`uuid`, `name`). Används för idempotens, projektspärr och invariant. **Finns inte i bilaga A**; verifieras i spiken (S13).
   - `GET /applications/{uuid}` → `is_http_basic_auth_enabled` (S14).
   - `GET /applications/{uuid}/envs` (S15), `POST /applications/{uuid}/envs` och `PATCH /applications/{uuid}/envs` med `{key, value, is_preview: false, is_buildtime: true, is_runtime: false}` (`is_buildtime`/`is_runtime` finns i controllern, inte i OpenAPI; S4/S15).
-  - `POST /deploy?uuid=<app>` → `{deployments: [{message, resource_uuid, deployment_uuid}]}`. Aldrig `GET /deploy`.
-  - `GET /deployments/{deployment_uuid}` → `status` ∈ `queued | in_progress | finished | failed | cancelled-by-user`, `logs` (redigeras alltid).
+  - **Inget `POST /deploy`.** Computercat startar aldrig ett bygge; första bygget kommer från auto-deploy när spelets Claude pushar grundkoden. Klienten har ingen metod för det, och token saknar `deploy`.
+  - `GET /deployments/applications/{uuid}?skip=0&take=1` → `{count, deployments: [{deployment_uuid, status, created_at, …}]}`, nyast först (`Application::deployments()` i Coolifys källkod, gren v4.x; formen vid v4.4.6 verifieras i spiken, S22). `status` ∈ `queued | in_progress | finished | failed | cancelled-by-user`. Fält som `logs` läses aldrig och redigeras i loggar.
   - `DELETE /applications/{uuid}` med standardvärden → 200 `{message: "Application deletion request queued."}`, asynkront.
-  - Varje anrop med ett app-uuid kräver att uuid:t finns i `provisioning_runs.coolify_app_uuid`; `DELETE`, `PATCH`, `POST envs` och `POST /deploy` kräver dessutom att appen finns i Demo-projektets `applications`.
-- SiteOps, kontraktet som 2a låser (`2026-10-13-provisionering-2a-siteops.md`, "Låst API-kontrakt"), bas `{SITEOPS_URL}/api/v1`, headers `X-Api-Key: {SITEOPS_API_KEY}` och `Accept: application/json`. Nyckeln har exakt `sites:read` + `sites:write`.
+  - Varje anrop med ett app-uuid kräver att uuid:t finns i `provisioning_runs.coolify_app_uuid`; `DELETE`, `PATCH` och `POST envs` kräver dessutom att appen finns i Demo-projektets `applications`.
+- SiteOps, kontraktet som 2a låser (`2026-10-13-provisionering-2a-siteops.md`, "Låst API-kontrakt"), bas `{SITEOPS_URL}/api/v1`, headers `X-Api-Key: {SITEOPS_API_KEY}` och `Accept: application/json`. Nyckeln har exakt `sites:read` + `demo-sites:write` (smalt scope, Eriks beslut 2026-10-13: bara Demo-webbar kan skapas, `credentials`/`pejl_customer_id`/`cms_type` ger 422, alla andra skrivande routes 403; en avaktiverad klients JWT avvisas direkt).
   - `GET /sites?url=<urlencoded exakt URL>` (`sites:read`) → 200 `{"data":[<webblistpost med bl.a. id, url, is_active>],"meta":{"total":N}}`. Matchar webbens `url` eller någon miljös `url`, exakt, med eller utan avslutande `/`; inaktiva webbar kommer med. Ingen träff: `{"data":[],"meta":{"total":0}}`.
-  - `POST /sites` (`sites:write`) body `{name, url, type: "app", environment: {type: "demo", name: "Demo", url, basic_auth_user, basic_auth_password, is_monitored: true}}` → 201 `{"data":{<webbdetalj: id, url, is_active, monitoring_enabled, …>,"environment":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}}`. 409 `{"error":"A site with this URL already exists in the team.","site_id":N}` när en webb i teamet redan har adressen.
-  - `PATCH /sites/{id}/environments/{env}` (`sites:write`) body delmängd av `{basic_auth_user, basic_auth_password, is_monitored}` (basic auth alltid parvis) → 200 `{"data":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}`; 403 om webben inte skapades av samma API-klient (inget ändras), 404 om webb/miljö saknas.
-  - `POST /sites/{id}/deactivate` (`sites:write`, ingen body) → 200 `{"data":{"id":N,"is_active":false,"monitoring_enabled":false}}`, idempotent; 403 om webben inte skapades av samma API-klient.
+  - `POST /sites` (`demo-sites:write`; `environment.type` måste vara `demo`, och `credentials`, `pejl_customer_id`, `cms_type` skickas aldrig: de ger 422 med det smala scopet) body `{name, url, type: "app", environment: {type: "demo", name: "Demo", url, basic_auth_user, basic_auth_password, is_monitored: true}}` → 201 `{"data":{<webbdetalj: id, url, is_active, monitoring_enabled, …>,"environment":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}}`. 409 `{"error":"A site with this URL already exists in the team.","site_id":N}` när en webb i teamet redan har adressen.
+  - `PATCH /sites/{id}/environments/{env}` (`demo-sites:write`) body delmängd av `{basic_auth_user, basic_auth_password, is_monitored}` (basic auth alltid parvis) → 200 `{"data":{"id","site_id","name","type","url","is_monitored","has_basic_auth"}}`; 403 om webben inte skapades av samma API-klient (inget ändras), 404 om webb/miljö saknas.
+  - `POST /sites/{id}/deactivate` (`demo-sites:write`, ingen body) → 200 `{"data":{"id":N,"is_active":false,"monitoring_enabled":false}}`, idempotent; 403 om webben inte skapades av samma API-klient.
   - `GET /sites/{id}` (`sites:read`) → `{"data":{id, name, url, type, is_active, monitoring_enabled, …}}`. `GET /sites/{id}/environments` (`sites:read`) → `{"data":[{id, name, type, url, is_monitored, has_basic_auth, …}],"meta":{"total":N}}`. Basic auth-värden finns aldrig i något svar.
   - **Ägarskap:** PATCH och deactivate fungerar bara på webbar som Computercats egen API-klient skapade (`sites.api_client_id` i 2a). En webb som hittas via uppslaget eller 409 adopteras bara om (a) dess `url` är exakt runnens `demo_url` (avslutande `/` ignoreras), (b) den har en miljö av typ `demo` med samma URL, (c) den är aktiv, och (d) `PATCH` av den miljön till Demo-värdena ger 200. 403 på (d), eller att (a)–(c) inte håller → `StepFailed`, sagan stannar och Erik larmas. Ingen gissning, ingen ny webb bredvid.
 - Slack: inkommande webhook, `POST {SLACK_ALERT_WEBHOOK_URL}` JSON `{text}`, timeout 5 s, `&`, `<`, `>` escapas i användarvärden.
-- Mallkontrakt (2b, "Gränssnitt mot 2c: idé-markören i `README.md`"): `README.md` i repots rot på `main` har startmarkören `<!-- computercat:idea:start -->` och slutmarkören `<!-- computercat:idea:end -->`, var och en exakt en gång, på en egen rad, start före slut. Repo-steget ersätter allt mellan markörerna med `"\n" + idé + "\n"` och behåller markörerna (idempotent). I idén ersätts `<!--` med `&lt;!--` och `-->` med `--&gt;` före skrivning. Saknas en markör, förekommer den mer än en gång, står den inte på egen rad eller kommer slut före start: steget fallerar och skriver ingenting. `/generate` fyller repot asynkront, så `GET …/contents/README.md` som ger 404 försöks igen (var 10:e sekund, högst `repo_ready_timeout_minutes`) innan steget fallerar. Build-variabeln heter `NEXT_PUBLIC_COMPUTERCAT_GAME`. Mallen kräver Node 22 (`engines.node: "22.x"`), se spikpunkt S20.
+- README-kontrakt (byggguidens `templates/README.md`, ursprungligen 2b "Gränssnitt mot 2c"): mallen har `{{name}}` i första raden (ersätts med spelets namn, `<` och `>` escapade, radbrytningar till mellanslag) och har startmarkören `<!-- computercat:idea:start -->` och slutmarkören `<!-- computercat:idea:end -->`, var och en exakt en gång, på en egen rad, start före slut. Repo-steget ersätter allt mellan markörerna med `"\n" + idé + "\n"` och behåller markörerna (idempotent). I idén ersätts `<!--` med `&lt;!--` och `-->` med `--&gt;` före skrivning. Saknas en markör, förekommer den mer än en gång, står den inte på egen rad eller kommer slut före start: steget fallerar och skriver ingenting. `auto_init` skapar README i första commiten; `GET …/contents/README.md` som ger 404 försöks igen (var 10:e sekund, högst `repo_ready_timeout_minutes`) innan steget fallerar. Hela README skrivs över med mallen (auto_init-texten behålls inte). `CLAUDE.md` skrivs exakt som byggguidens fil med samma sökväg. Build-variabeln heter `NEXT_PUBLIC_COMPUTERCAT_GAME`. Guiden kräver Node 22 (`engines.node: "22.x"`), se spikpunkt S20.
+- Byggguiden (spec "2c. Byggguiden"): `resources/byggguide/<version>/` med `manifest.json`, `files/` och `templates/README.md`. Version matchar `/^v[1-9][0-9]{0,2}\z/`; `BuildGuide::LATEST = 'v1'`. En publicerad version ändras aldrig (låst med `BuildGuide::FROZEN`, sha256 av `manifest.json`). Filsökvägar slås bara upp i manifestet. Varje läsning kontrollerar `sha256` och kastar vid avvikelse. MCP-svar hålls under 50 000 tecken (Claude Codes gräns innan svaret läggs i fil, code.claude.com/docs/en/mcp): filer över `BuildGuide::INLINE_MAX_BYTES = 30000` levereras med `delivery: "download"` via den publika REST-vägen `GET /api/v1/build-guide/{version}/files/{path}` (`throttle:build-guide`, 30/min per IP).
 
 **Värden**
 - Slugregel: `/^[a-z](?:[a-z0-9]|-(?=[a-z0-9])){2,39}\z/` (3–40 tecken). Reserverade: `www`, `api`, `admin`, `app`, `apps`, `demo`, `mail`, `spel` plus `PROVISIONING_RESERVED_SUBDOMAINS` (kommaseparerad lista från Erik, Task 0 punkt 11).
 - Demo-URL: `https://<slug>.apps.humblebrag.se`. Coolify-namn: `spel-<slug>`. Repo: `HumblebragAB/<slug>`.
 - Tak: 15 = provisioneringsruns (`kind = provision`) med status `running`, `succeeded` eller `failed`. 5 per dygn = provisioneringsruns skapade av användaren de senaste 24 timmarna, oavsett status (även `released`).
-- Deploy: poll var 30:e sekund, högst 15 minuter från deploystart. README efter `/generate`: poll var 10:e sekund, högst 3 minuter. Coolify-radering: poll var 30:e sekund, högst 10 minuter.
-- Jobb: `AdvanceProvisioningRun::$tries = 0`, `$timeout = 60`, `retryUntil()` = nu + 25 min, `WithoutOverlapping` per run. HTTP-timeout 20 s, connect-timeout 5 s.
+- README efter `POST /orgs/{org}/repos`: poll var 10:e sekund, högst 3 minuter. Coolify-radering: poll var 30:e sekund, högst 10 minuter. Ingen deploy-polling. Invariantens karenstid för ett spel utan bygge: 7 dagar från runnens `created_at` (`no_push_grace_days`).
+- Jobb: `AdvanceProvisioningRun::$tries = 0`, `$timeout = 60`, `retryUntil()` = nu + 20 min (längsta väntan, Coolify-radering 10 min, plus 10), `WithoutOverlapping` per run. HTTP-timeout 20 s, connect-timeout 5 s.
 - Redigering: nycklar som innehåller `authorization`, `private_key`, `password`, `token`, `api_key`, eller som heter exakt `value` eller `logs`, ersätts med `[REDACTED]`; kända hemligheter (Coolify-token, SiteOps-nyckel, Slack-URL, utfärdade GitHub-tokens) och mönstren `gh[pousr]_…`/`github_pat_…`, JWT (`eyJ….eyJ….…`) och PEM-block med `PRIVATE KEY` byts mot `[REDACTED]` i fri text; max 4096 byte, avkortat med `…` på teckengräns.
 - `last_error` visas för spelets medlemmar och innehåller bara meddelanden från `SafeMessage`-undantag; övriga fel blir `Internal error (ref <uuid>)` och loggas i sin helhet.
 - Inget HTTP-anrop sker inne i en databastransaktion. Vaktat av ett test i varje provisioneringstest (Task 3).
@@ -66,13 +69,15 @@
 
 ## Review Focus
 
-Fem fel som specen innebär men som lätt passerar oupptäckta; varje rad har ett test i den task som äger koden.
+Sju fel som specen innebär men som lätt passerar oupptäckta; varje rad har ett test i den task som äger koden.
 
 1. **Köns försöksräkning dödar pollingen eller loopar för evigt.** Forge-workern körs med `--tries=1`. Ett jobb som anropar `release(30)` räknas som ett nytt försök och skulle då misslyckas med `MaxAttemptsExceededException` vid andra pollningen; ett jobb med obegränsade försök som kastar ett undantag skulle i stället köras om för evigt. Dessutom är databasköns `retry_after` 90 s medan specen anger `--timeout=120`. Test: `AdvanceProvisioningRunTest::test_job_queue_settings_survive_release_and_never_retry_on_exceptions` (Task 12) kontrollerar `$tries = 0`, `retryUntil()`, `$timeout < retry_after` och att ett undantag i ett steg aldrig når kön.
 2. **Slugen låses eller släpps fel.** "Unik bland runs som inte är `released`" går inte att uttrycka som partiellt index i MySQL; utan kolumnen `slug_lock` kan två samtidiga `create_game` reservera samma slug, och ett repo som någon annan äger kan av misstag adopteras. Test: `ProvisioningRunTest::test_slug_lock_is_unique_until_released` (Task 8) och `RepoStepTest::test_foreign_repository_releases_the_slug` / `test_own_repository_is_adopted_on_retry` (Task 13).
 3. **Hemligheter läcker via loggar eller `last_error`.** `http_basic_auth_password` (Coolify), `basic_auth_password` (SiteOps), Coolifys `logs`, GitHub-tokens och okända undantag med SQL eller URL:er visas annars för spelets medlemmar. Test: `AdvanceProvisioningRunTest::test_failure_redacts_last_error_and_hides_internal_exceptions` (Task 12) och `CoolifyClientTest::test_failed_create_logs_redacted_request_and_response` (Task 10).
 4. **Coolify-token når hela teamet.** En uuid som inte kommer från en run, eller en app utanför Demo-projektet, får aldrig raderas eller ändras. Test: `CoolifyClientTest::test_delete_refuses_unknown_uuid_without_any_request` och `test_delete_refuses_app_outside_demo_project` (Task 10), `ArchiveStepsTest::test_guard_failure_stops_archive_without_delete` (Task 16).
 5. **Ett tidigt fel syns inte för den som skapade spelet.** Fallerar `repo`-steget finns inget spel ännu, så `get_provisioning_status(game)` och `retry_provisioning(game)` skulle svara "Game not found" och Mattias Claude får aldrig veta varför. Test: `ProvisioningStatusToolTest::test_creator_sees_run_before_game_exists_but_others_do_not` och `RetryProvisioningToolTest::test_creator_can_retry_run_without_game` (Task 19).
+6. **Byggguiden glider från sitt manifest.** En fil ändras utan att `sha256` uppdateras, en fil ligger utanför manifestet, `stack` i manifestet säger en version och `package.json` en annan, eller en publicerad version ändras i efterhand; spelets Claude skriver då något annat än det som verifierades. Test: `BuildGuideTest::test_every_file_matches_its_sha256_and_nothing_is_unlisted`, `test_stack_matches_package_json`, `test_published_versions_are_frozen` (Task 8A) och `BuildGuideToolsTest::test_every_mcp_response_fits_below_50000_characters` (Task 17A).
+7. **Ett nytt spel larmar innan någon hunnit pusha, eller ett övergivet spel larmar aldrig.** Utan karenstid larmar invarianten varje natt för ett spel som är redo för kod; utan gräns larmar den aldrig för ett spel som ingen byggt. Test: `CheckProvisioningTest::test_game_without_deployment_is_quiet_for_7_days_then_reported` (Task 21).
 
 ---
 
@@ -89,8 +94,8 @@ Fem fel som specen innebär men som lätt passerar oupptäckta; varje rad har et
 | `app/Provisioning/Http/ExternalApiException.php` | Fel från GitHub/Coolify/SiteOps, redigerat meddelande |
 | `app/Provisioning/Http/ApiCallLogger.php` | Loggar 4xx/5xx med metod, URL, status, request och response |
 | `app/Provisioning/Http/SendsApiRequests.php` | Gemensam anropsmetod för klienterna |
-| `app/Provisioning/Clients/GitHubAppClient.php` | JWT, installationstoken, generate, repo, contents, arkivering |
-| `app/Provisioning/Clients/CoolifyClient.php` | Demo-projektets appar, skapa, envs, deploy, status, radera, spärrar |
+| `app/Provisioning/Clients/GitHubAppClient.php` | JWT, installationstoken, skapa repo i organisationen, repo, contents, arkivering |
+| `app/Provisioning/Clients/CoolifyClient.php` | Demo-projektets appar, skapa, envs, senaste bygget (läsning), radera, spärrar |
 | `app/Provisioning/Clients/CoolifyConflictException.php` | 409 domänkonflikt |
 | `app/Provisioning/Clients/CoolifyGuardException.php` | Spärren slog till |
 | `app/Provisioning/Clients/SiteOpsClient.php` | Skapa demo-sajt, uppslag, läsa, avaktivera |
@@ -99,15 +104,22 @@ Fem fel som specen innebär men som lätt passerar oupptäckta; varje rad har et
 | `app/Models/ProvisioningRun.php`, `app/Models/ProvisioningStep.php` | Datamodell |
 | `app/Provisioning/Saga.php` | Steglistor, start och retry |
 | `app/Provisioning/StepResult.php`, `app/Provisioning/StepFailed.php` | Stegens utfall |
-| `app/Provisioning/ReadmeIdea.php` | Ersätter idé-blocket mellan `computercat:idea`-markörerna i README (kontrakt med 2b) |
+| `app/Provisioning/ReadmeIdea.php` | Ersätter idé-blocket mellan `computercat:idea`-markörerna i README (kontrakt med byggguidens README-mall) |
 | `app/Provisioning/DemoProbe.php` | `GET` Demo-URL med basic auth |
 | `app/Provisioning/Steps/Step.php` | Steggränssnitt |
-| `app/Provisioning/Steps/{Repo,Game,CoolifyApp,CoolifyEnv,Cors,SiteOps,Deploy}Step.php` | Provisioneringsstegen |
+| `app/Provisioning/Steps/{Repo,Game,CoolifyApp,CoolifyEnv,Cors,SiteOps}Step.php` | Provisioneringsstegen (inget deploy-steg) |
 | `app/Provisioning/Steps/{CoolifyDelete,SiteOpsDeactivate,RepoArchive,GameDeactivate}Step.php` | Arkiveringsstegen |
 | `app/Jobs/AdvanceProvisioningRun.php` | Kör nästa steg, release, fel, avslut |
 | `app/Mcp/Tools/Concerns/ToolHelpers.php` | `json()`, `validationFailed()`, `audit()` delat av verktygsbaserna |
 | `app/Mcp/Tools/PlatformTool.php` | Bas för verktyg utan spel |
 | `app/Mcp/Tools/{CreateGame,GetProvisioningStatus,RetryProvisioning,RequestLive,ArchiveGame}Tool.php` | Nya verktyg |
+| `resources/byggguide/v1/manifest.json`, `resources/byggguide/v1/files/**`, `resources/byggguide/v1/templates/README.md` | Byggguiden v1 (importerad från `~/Web/spelmall` vid `4a1fecb`) |
+| `app/Services/BuildGuide.php`, `app/Services/BuildGuideNotFound.php` | Läser manifest och filer, kontrollerar `sha256`, publik representation, README-mall |
+| `app/Console/Commands/BuildGuideHash.php` | `computercat:byggguide:hash`: skriver `sha256`/`bytes` i manifestet för en opublicerad version |
+| `app/Console/Commands/VerifyBuildGuide.php` | `computercat:byggguide:verify`: skriver ut guiden i en temp-katalog och kör `npm ci`, `npm run check`, `npm audit` (bara lokalt) |
+| `app/Mcp/Tools/{GetBuildGuide,GetBuildGuideFile}Tool.php` | MCP: manifest och en fil |
+| `app/Http/Controllers/Api/V1/BuildGuideController.php` | Publik REST: manifest och fil som text |
+| `tests/Feature/BuildGuideTest.php`, `tests/Feature/Console/BuildGuideCommandsTest.php`, `tests/Feature/Mcp/BuildGuideToolsTest.php`, `tests/Feature/Api/V1/BuildGuideApiTest.php` | Byggguidens tester |
 | `app/Console/Commands/CheckProvisioning.php` | Nattlig invariant |
 | `database/migrations/2026_10_15_100001_add_is_listed_to_games_table.php` | `games.is_listed` |
 | `database/migrations/2026_10_15_100002_create_provisioning_runs_table.php` | Runs |
@@ -137,6 +149,9 @@ Fem fel som specen innebär men som lätt passerar oupptäckta; varje rad har et
 | `app/Mcp/ComputercatServer.php` | Nya verktyg, instruktioner |
 | `tests/Feature/Mcp/ToolInvariantsTest.php` | Varje verktyg ärver en loggande bas |
 | `routes/console.php` | Schemaläggning av invarianten |
+| `routes/api.php` | `GET /api/v1/build-guide…` |
+| `app/Providers/AppServiceProvider.php` | Gränsen `build-guide` |
+| `resources/css/app.css` | `@source not '../byggguide'`, så att Tailwind i computercat-api inte läser guidens `.tsx` |
 | `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md`, `docs/superpowers/specs/bilagor/2026-10-13-github-app.md` | Spikens resultat ersätter UNCONFIRMED |
 
 ---
@@ -149,16 +164,16 @@ Ingen kod. Varje punkt är en egen AskUserQuestion till Erik, med alternativen "
 
 **Interfaces:** Produces: ifyllda `.env`-värden på Forge (namnen nedan), Forge-daemon, GitHub App, Coolify-token, SiteOps-nyckel, 1Password-poster i valvet `Claude` för spiken.
 
-- [ ] **0.1 Spec och plan på main.** Fråga: "docs/provisionering (spec, bilagor, denna plan) är inte på main. Ska jag köra `~/.claude/bin/wt-finish /Users/erik/Web/computercat-api/.claude/worktrees/docs-provisionering` (lokal ff-merge, ingen push)?" Efter OK: kör det och kontrollera `git -C /Users/erik/Web/computercat-api log main --oneline -3` visar `Spec delprojekt 2: granskningens fynd inarbetade`.
-- [ ] **0.2 2a och 2b klara.** Fråga om SiteOps-API:t från 2a är deployat (`POST /sites` med `environment`, `GET /sites?url=`, `POST /sites/{id}/deactivate`) och om `HumblebragAB/spelmall` finns med `is_template: true` och idé-markörerna `<!-- computercat:idea:start -->`/`<!-- computercat:idea:end -->` i README (2b Task 12 gjord). Se "Beroenden och ordning" överst: spiken får inte starta innan båda är på plats. Spiken (Task 1) verifierar båda; här räcker Eriks besked.
+- [ ] **0.1 Spec och plan på main.** Fråga: "docs/provisionering (spec, bilagor, denna plan) är inte på main. Ska jag köra `~/.claude/bin/wt-finish /Users/erik/Web/computercat-api/.claude/worktrees/docs-provisionering` (lokal ff-merge, ingen push)?" Efter OK: kör det och kontrollera att `git -C /Users/erik/Web/computercat-api log main --oneline -3` visar `Spec och planer: byggguide i Computercat i stället för mallrepo`.
+- [ ] **0.2 2a deployad, 2b lokal.** Fråga om SiteOps-API:t från 2a är deployat (`POST /sites` med `environment`, `GET /sites?url=`, `POST /sites/{id}/deactivate`). Spiken får inte starta innan det är på plats; den verifierar kontraktet (S19). Kontrollera själv (bara läsning) att 2b finns lokalt: `git -C /Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall log -1 --format=%h` ger `4a1fecb`, eller, efter 2b Task 11 steg 5, `git -C /Users/erik/Web/spelmall log -1 --format=%h main` ger samma. Inget `HumblebragAB/spelmall` ska finnas eller skapas.
 - [ ] **0.3 Kö-worker i prod.** Fråga: "Får jag läsa Forge-daemons för computercat-servern via skillen `laravel-forge` (bara läsning, endpoints enligt skillen)?" Efter OK och om ingen `queue:work` finns: fråga separat "Skapa Forge-daemon `php8.4 artisan queue:work --tries=1 --timeout=60` som användaren `computercat` i sajtkatalogen?" Specen anger `--timeout=120`; databasköns `retry_after` är 90 s (`config/queue.php`), och Laravel kör då om ett jobb som fortfarande pågår. Föreslå `--timeout=60` (jobbet sätter själv 60 s) eller `DB_QUEUE_RETRY_AFTER=180` i punkt 0.10. Bekräfta även att prod-`.env` har `QUEUE_CONNECTION=database`.
 - [ ] **0.4 Slack-webhook.** Erik skapar en inkommande webhook till sin larmkanal och lägger URL:en i 1Password-valvet `Claude` som `op://Claude/computercat-slack-alert/url`.
-- [ ] **0.5 GitHub App "Humblebrag Spelstudio".** Erik skapar appen i organisationen HumblebragAB: Repository permissions Administration: write, Contents: write, Metadata: read; inga organisationsrättigheter; ingen webhook. Installation på "Only select repositories" med bara `spelmall`. Erik sparar client id, installation id och privat nyckel (.pem) i `op://Claude/computercat-github-app/{client_id,installation_id,private_key}`.
-- [ ] **0.6 Coolify-token.** Erik byter till Humblebrags team i Coolify-UI:t och skapar en token med `read`, `write` och `deploy` (inte `root`, inte `read:sensitive`/`write:sensitive`). Specens Förutsättningar 4 är rättad till samma tre: bilaga A §7 säger att alla GET kräver `read` (status, listning, invariant). UI-egenhet enligt bilaga A: när `deploy` slås på nollställs urvalet, så `read` och `write` väljs efter `deploy`. Erik sparar i 1Password-objektet `op://Claude/computercat-coolify/` fälten `token`, `url` (utan `/api/v1`), `project_uuid` (Demo-projektet), `environment_name` (miljön i Demo-projektet, Coolifys standard är `production`), `server_uuid` och `github_app_uuid` (Coolifys GitHub App-källa).
+- [ ] **0.5 GitHub App "Humblebrag Spelstudio".** Erik skapar appen i organisationen HumblebragAB: Repository permissions Administration: write, Contents: write, Metadata: read; inga organisationsrättigheter; ingen webhook. Installation på "Only select repositories": appen når då automatiskt repon den själv skapar ("If the app creates any repositories, the app will automatically be granted access to those repositories as well.", docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). Inget mallrepo väljs. Kräver GitHubs UI att minst ett repo väljs (dokumentationen säger inget om det), väljer Erik ett tomt privat ankarrepo som bara finns för installationen, aldrig ett befintligt repo med innehåll; fråga Erik med AskUserQuestion innan ett sådant skapas. "Repository creation" läggs bara till om spiken (S8) får 403 med Administration: write, och då efter Eriks OK. Erik sparar client id, installation id och privat nyckel (.pem) i `op://Claude/computercat-github-app/{client_id,installation_id,private_key}`.
+- [ ] **0.6 Coolify-token.** Erik byter till Humblebrags team i Coolify-UI:t och skapar en token med `read` och `write` (inte `deploy`, inte `root`, inte `read:sensitive`/`write:sensitive`). `deploy` behövs inte: Computercat startar aldrig ett bygge, det gör auto-deploy vid push. Bilaga A §7: alla GET kräver `read` (listning, byggen, invariant); skapa och radera kräver `write`. Erik sparar i 1Password-objektet `op://Claude/computercat-coolify/` fälten `token`, `url` (utan `/api/v1`), `project_uuid` (Demo-projektet), `environment_name` (miljön i Demo-projektet, Coolifys standard är `production`), `server_uuid` och `github_app_uuid` (Coolifys GitHub App-källa).
 - [ ] **0.7 Coolifys och Claudes GitHub App-installationer.** Fråga om Erik vill att jag läser `gh api /orgs/HumblebragAB/installations --jq '.installations[] | {app_slug, repository_selection}'` (läsning). Båda (Coolifys källa och Claude) ska ha `repository_selection: "all"`. Står någon på `selected` byter Erik den till "All repositories" i org-inställningarna.
-- [ ] **0.8 SiteOps-nyckel.** Skapas med 2a:s kommando efter att 2a deployats (2a Task 7, "Efter deploy", kräver Eriks OK): `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=sites:write`. Exakt dessa två scopes (specens Förutsättningar 6): uppslaget `GET /sites?url=` och invarianten (`GET /sites/{id}`, `/environments`) kräver `sites:read`; skapa, PATCH och avaktivera kräver `sites:write`. Nyckeln visas en gång och går direkt in i 1Password, aldrig via chatten. Sparas som `op://Claude/computercat-siteops/api_key`, URL:en som `op://Claude/computercat-siteops/url`.
-- [ ] **0.9 Molnmiljön.** Erik bekräftar att Claude Code-molnmiljön som routines använder tillåter `api.computercat.co` och `*.apps.humblebrag.se`, och att Computercat-connectorn är tillagd i claude.ai på hans konto.
-- [ ] **0.10 `.env` på Forge.** Görs efter spiken (Task 1) och före deploy (Task 23), men frågas här så att Erik vet vad som kommer: `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH=app/private/github-app.pem` (fil i `storage/app/private/`, ägare `computercat`, läge 600), `GITHUB_TEMPLATE_REPO=HumblebragAB/spelmall`, `COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_PROJECT_UUID`, `COOLIFY_ENVIRONMENT_NAME`, `COOLIFY_SERVER_UUID`, `COOLIFY_GITHUB_APP_UUID`, `SITEOPS_URL`, `SITEOPS_API_KEY`, `DEMO_BASIC_AUTH_USER=demo`, `DEMO_BASIC_AUTH_PASSWORD=demo`, `SLACK_ALERT_WEBHOOK_URL`, `PROVISIONING_RESERVED_SUBDOMAINS`, och vid behov `DB_QUEUE_RETRY_AFTER=180`. Fråga: "Lägger du in dem i Forge själv, eller ska jag göra det via Forge-API:t med värden ur 1Password (claude-secret run, värdena passerar aldrig min kontext)?" Utförs i Task 23 steg 2.
+- [ ] **0.8 SiteOps-nyckel.** Skapas med 2a:s kommando efter att 2a deployats (2a Task 7, "Efter deploy", kräver Eriks OK): `php artisan api-clients:create Computercat --team=<Humblebrags team-id> --scope=sites:read --scope=demo-sites:write`. Exakt dessa två scopes (specens Förutsättningar 6): uppslaget `GET /sites?url=` och invarianten (`GET /sites/{id}`, `/environments`) kräver `sites:read`; skapa (bara Demo-webb), PATCH och avaktivera räcker med `demo-sites:write`. Inte `sites:write`. Nyckeln visas en gång och går direkt in i 1Password, aldrig via chatten. Sparas som `op://Claude/computercat-siteops/api_key`, URL:en som `op://Claude/computercat-siteops/url`.
+- [ ] **0.9 Molnmiljön.** Erik bekräftar att Claude Code-molnmiljön som routines använder tillåter `api.computercat.co` (MCP och byggguidens REST för `package-lock.json`), `*.apps.humblebrag.se` och `registry.npmjs.org` (`npm ci`, `npm audit`), och att Computercat-connectorn är tillagd i claude.ai på hans konto.
+- [ ] **0.10 `.env` på Forge.** Görs efter spiken (Task 1) och före deploy (Task 23), men frågas här så att Erik vet vad som kommer: `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH=app/private/github-app.pem` (fil i `storage/app/private/`, ägare `computercat`, läge 600), `GITHUB_OWNER=HumblebragAB`, `COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_PROJECT_UUID`, `COOLIFY_ENVIRONMENT_NAME`, `COOLIFY_SERVER_UUID`, `COOLIFY_GITHUB_APP_UUID`, `SITEOPS_URL`, `SITEOPS_API_KEY`, `DEMO_BASIC_AUTH_USER=demo`, `DEMO_BASIC_AUTH_PASSWORD=demo`, `SLACK_ALERT_WEBHOOK_URL`, `PROVISIONING_RESERVED_SUBDOMAINS`, och vid behov `DB_QUEUE_RETRY_AFTER=180`. Fråga: "Lägger du in dem i Forge själv, eller ska jag göra det via Forge-API:t med värden ur 1Password (claude-secret run, värdena passerar aldrig min kontext)?" Utförs i Task 23 steg 2.
 - [ ] **0.11 Reserverade underdomäner.** Fråga Erik efter listan över befintliga underdomäner under `apps.humblebrag.se` (finns i Coolify-UI:t). Svaret blir `PROVISIONING_RESERVED_SUBDOMAINS` (kommaseparerat) i 0.10.
 - [ ] **0.12 Coolify-serverns host för spiken.** Fråga efter hostnamn/IP för Coolify-servern (för RAM-mätning i S7 och etikettjämförelse i S3) och om `ssh-claude <host>` når den. Fråga även var `robots-sync` och `coolify-health` körs och hur deras utfall läses.
 
@@ -166,15 +181,15 @@ Ingen kod. Varje punkt är en egen AskUserQuestion till Erik, med alternativen "
 
 ## Task 1: Spike (riktiga anrop)
 
-Verifierar specens punkter (S1–S7 och S20) plus de fakta planen bygger på som bilagorna markerar UNCONFIRMED eller inte nämner. Körs med en engångsapp: slug `e2e-spike`, repo `HumblebragAB/e2e-spike`, Coolify-namn `spel-e2e-spike`, Demo-URL `https://e2e-spike.apps.humblebrag.se`. Allt städas på de id:n som spiken själv sparat; repot arkiveras, raderas aldrig. **Faller en punkt: stanna och fråga Erik (AskUserQuestion) innan något annat görs.**
+Verifierar specens punkter (S1–S7, S20, S21 och de nya S8, S11, S22–S24) plus de fakta planen bygger på som bilagorna markerar UNCONFIRMED eller inte nämner. Det finns inget mallrepo: spikrepot skapas tomt med `auto_init`, och grundkoden pushas från `~/Web/spelmall` (2b, commit `4a1fecb`) med installationstoken, så att Coolifys auto-deploy bygger den på samma sätt som när spelets Claude pushar. Körs med en engångsapp: slug `e2e-spike`, repo `HumblebragAB/e2e-spike`, Coolify-namn `spel-e2e-spike`, Demo-URL `https://e2e-spike.apps.humblebrag.se`. Allt städas på de id:n som spiken själv sparat; repot arkiveras, raderas aldrig. **Faller en punkt: stanna och fråga Erik (AskUserQuestion) innan något annat görs.**
 
 **Files:**
 - Create (scratchpad, committas inte): `$SCRATCH/spike/.env.op`, `$SCRATCH/spike/jwt.php`, `$SCRATCH/spike/ids.env`, `$SCRATCH/spike/log/` (`$SCRATCH` = sessionens scratchpad-katalog)
 - Modify: `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md`, `docs/superpowers/specs/bilagor/2026-10-13-github-app.md` (i `$WT`)
 
-**Interfaces:** Consumes: Task 0. Produces: verifierade fakta S1–S21 i bilagorna; beslut om `git_repository`-format som Task 10 använder.
+**Interfaces:** Consumes: Task 0, 2b-källan i `/Users/erik/Web/spelmall` (bara läsning). Produces: verifierade fakta S1–S24 i bilagorna; beslut om `git_repository`-format som Task 10 använder och svarsformen för bygglistan som Task 10 och 21 använder.
 
-Punkter (S1–S7, S20 och S21 är specens, S8–S19 är planens beroenden):
+Punkter (S1–S7, S20, S21 och S8, S11, S22–S24 är specens, övriga är planens beroenden):
 
 | # | Verifieras |
 |---|---|
@@ -185,22 +200,25 @@ Punkter (S1–S7, S20 och S21 är specens, S8–S19 är planens beroenden):
 | S5 | Wildcard-DNS `*.apps.humblebrag.se` pekar på Coolify-servern |
 | S6 | En molnsession som instrueras att pusha till `main` gör det |
 | S7 | RAM på Coolify-servern under `next build` |
-| S8 | Installationstoken får anropa `/generate` i organisationen; mallen har `is_template: true` |
-| S9 | Token utfärdad före `/generate` når det nya repot (planen tar ny token ändå) |
-| S10 | `GET /repos/{o}/{r}` har `id`, `description`, `archived`, `template_repository.full_name` |
-| S11 | Tid tills README finns efter `/generate`; Contents `GET` ger `sha`, `content`, `encoding: base64`; `PUT` tar `message`, `content`, `sha` |
-| S12 | Andra `/generate` med samma namn ger 422 och vilken body |
+| S8 | Installationstoken får skapa repo med `POST /orgs/HumblebragAB/repos` (`private`, `auto_init`) med Administration: write, utan "Repository creation" |
+| S9 | Token utfärdad före skapandet når det nya repot (planen tar ny token ändå) |
+| S10 | `GET /repos/{o}/{r}` har `id`, `description`, `archived`, `private` |
+| S11 | Tid tills README finns efter `auto_init`; Contents `GET` ger `sha`, `content`, `encoding: base64`; `PUT` med `sha` skriver över, `PUT` utan `sha` skapar `CLAUDE.md` |
+| S12 | Andra `POST /orgs/HumblebragAB/repos` med samma namn ger 422 och vilken body |
 | S13 | `GET /projects/{uuid}/{environment_name}` ger `applications[]` med `uuid` och `name` |
 | S14 | `GET /applications/{uuid}` ger `is_http_basic_auth_enabled` med token utan `read:sensitive` |
 | S15 | `GET /applications/{uuid}/envs` ger lista med `key` (och om `value` döljs); `PATCH /envs` uppdaterar |
-| S16 | Token med `read`+`write`+`deploy` räcker för alla anrop ovan |
+| S16 | Token med `read`+`write` (utan `deploy`) räcker för alla anrop ovan |
 | S17 | `PATCH archived: true` fungerar med installationstoken; Coolify-`DELETE` tar bort appen ur projektlistan |
 | S18 | Coolifys GitHub App når det nya repot (klonen i bygget lyckas) |
-| S19 | SiteOps 2a-kontraktet: skapa, 409 vid dubblett, uppslag på URL, läsa (`monitoring_enabled`, `type`, `has_basic_auth`), PATCH av miljön, avaktivera |
-| S20 | Coolifys nixpacks bygger mallen med Node 22 (`engines.node: "22.x"`); annars hur Node 22 tvingas fram |
-| S21 | Coolify-servern har `concurrent_builds = 1` (spec beslut 3 och Säkerhet) |
+| S19 | SiteOps 2a-kontraktet med nyckeln `sites:read` + `demo-sites:write`: skapa, 409 vid dubblett, uppslag på URL, läsa (`monitoring_enabled`, `type`, `has_basic_auth`), PATCH av miljön, avaktivera, och 422 på `POST /sites` utan `environment` |
+| S20 | Coolifys nixpacks bygger grundkoden med Node 22 (`engines.node: "22.x"`); annars hur Node 22 tvingas fram |
+| S21 | Coolify-servern har `concurrent_builds = 1` (spec beslut 4 och Säkerhet) |
+| S22 | `GET /deployments/applications/{uuid}?skip=0&take=5` svarar `{count, deployments[]}` nyast först, med `deployment_uuid`, `status`, `created_at` |
+| S23 | En app som skapas mot ett repo med bara README (`instant_deploy: false`) startar inget bygge |
+| S24 | Första pushen av grundkoden till `main` startar ett bygge via auto-deploy, utan `POST /deploy` |
 
-- [ ] **Steg 1: Worktree och OK.** Kör `~/.claude/bin/wt-start /Users/erik/Web/computercat-api feat/provisionering --db` och spara sökvägen som `$WT`. Fråga Erik med AskUserQuestion: "Spiken skapar på riktigt: repot HumblebragAB/e2e-spike (privat, arkiveras efteråt), Coolify-appen spel-e2e-spike i Demo-projektet (raderas på sitt uuid), en SiteOps-sajt (avaktiveras), en engångs-routine som pushar till e2e-spike, samt läser RAM på Coolify-servern via ssh-claude. Hemligheter läses med claude-secret run och skrivs aldrig ut. OK?"
+- [ ] **Steg 1: Worktree och OK.** Kör `~/.claude/bin/wt-start /Users/erik/Web/computercat-api feat/provisionering --db` och spara sökvägen som `$WT`. Fråga Erik med AskUserQuestion: "Spiken skapar på riktigt: repot HumblebragAB/e2e-spike (privat, tomt med auto_init, arkiveras efteråt), Coolify-appen spel-e2e-spike i Demo-projektet (raderas på sitt uuid), en SiteOps-sajt (avaktiveras), pushar grundkoden från ~/Web/spelmall (commit 4a1fecb) till e2e-spike med appens installationstoken, kör en engångs-routine som pushar till e2e-spike, samt läser RAM på Coolify-servern via ssh-claude. Hemligheter läses med claude-secret run och skrivs aldrig ut. OK?"
 
 - [ ] **Steg 2: Referensfil utan hemligheter.** Skriv `$SCRATCH/spike/.env.op` (bara op-referenser och icke-hemliga värden):
 
@@ -257,13 +275,23 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 (Svarets sista rad är HTTP-statusen; resten pipas genom `jq "$REDACT"`.)
 
-- [ ] **Steg 3: GitHub, bara läsning (S8, S11 läsdel).** `TOKEN=$(gh_token)`; `gh GET /repos/HumblebragAB/spelmall` → kontrollera `.is_template == true` och `.private`. `gh GET /repos/HumblebragAB/spelmall/contents/README.md` → kontrollera att `.sha`, `.content`, `.encoding == "base64"` finns och att avkodad text har exakt en rad `<!-- computercat:idea:start -->` och exakt en rad `<!-- computercat:idea:end -->`, start före slut. Kontrollera också att mallens `package.json` har `"engines": {"node": "22.x"}` (`gh GET /repos/HumblebragAB/spelmall/contents/package.json`, avkoda). Förväntat: 200, alla fält finns. Annars: stanna och fråga.
+- [ ] **Steg 3: GitHub, bara läsning.** `TOKEN=$(gh_token)`; `gh GET /installation/repositories` → notera `.total_count` och `.repository_selection` (förväntat `selected`, och bara ankarrepot om Erik valde ett i 0.5). Kontrollera att `gh GET /repos/HumblebragAB/e2e-spike` ger 404 (namnet ledigt). Finns repot: stanna och fråga.
 
-- [ ] **Steg 4: Skapa repot (S8, S9, S11, S10).** Spara `OLDTOKEN=$TOKEN`. `gh POST /repos/HumblebragAB/spelmall/generate '{"owner":"HumblebragAB","name":"e2e-spike","description":"Computercat-spel e2e-spike (run spike-2026-10-13)","private":true,"include_all_branches":false}'`. Förväntat: 201 och `.private == true`. **Är `.private` false: stanna omedelbart och fråga Erik** (repot är publikt). Skriv `SPIKE_REPO_ID=<.id>` till `$SCRATCH/spike/ids.env`. Poll `gh GET /repos/HumblebragAB/e2e-spike/contents/README.md` med `OLDTOKEN` var 5:e sekund i högst 3 minuter och notera sekunder till 200 (S11) och om den gamla token fick 200 eller 404 (S9). Ta ny token och gör samma GET. Kör sedan `gh GET /repos/HumblebragAB/e2e-spike` och notera `.id`, `.description`, `.archived`, `.template_repository.full_name` (S10; förväntat `HumblebragAB/spelmall`).
+- [ ] **Steg 4: Skapa repot (S8, S9, S10, S11).** Spara `OLDTOKEN=$TOKEN`. `gh POST /orgs/HumblebragAB/repos '{"name":"e2e-spike","description":"Computercat-spel e2e-spike (run spike-2026-10-13)","private":true,"auto_init":true}'`. Förväntat: 201 och `.private == true`. **Är `.private` false: stanna omedelbart och fråga Erik** (repot är publikt). **403:** spara bodyn i `log/S8.json`, stanna och fråga Erik om "Repository creation" ska läggas till appen (bilaga B §6); inget annat försök på eget initiativ. Skriv `SPIKE_REPO_ID=<.id>` till `$SCRATCH/spike/ids.env`. Poll `gh GET /repos/HumblebragAB/e2e-spike/contents/README.md` med `OLDTOKEN` var 5:e sekund i högst 3 minuter och notera sekunder till 200 (S11) och om den gamla token fick 200 eller 404 (S9). Ta ny token och gör samma GET. Kör sedan `gh GET /repos/HumblebragAB/e2e-spike` och notera `.id`, `.description`, `.archived`, `.private` (S10). Kontrollera med `gh GET /installation/repositories` att `e2e-spike` nu finns i installationen.
 
-- [ ] **Steg 5: README-PUT (S11).** Avkoda README, ersätt blocket mellan markörerna med `Spike: idétext`, och `gh PUT /repos/HumblebragAB/e2e-spike/contents/README.md '{"message":"Spike: idé","content":"<base64>","sha":"<sha>","branch":"main"}'`. Förväntat 200. Kontrollera med ny GET att texten finns.
+- [ ] **Steg 5: Contents-API på auto_init-repot (S11).** Avkoda README och notera vad `auto_init` skrev. Bygg bodyn med jq så att base64 och JSON blir rätt:
 
-- [ ] **Steg 6: Namnkrock (S12).** Upprepa POST `/generate` från steg 4 oförändrad. Förväntat 422; spara body i `log/S12.json`. Kontrollera med `gh GET /repos/HumblebragAB/e2e-spike` att inget nytt repo skapades (samma `id`).
+```bash
+README_B64=$(printf '# e2e-spike\n\n<!-- computercat:idea:start -->\nSpike: idétext\n<!-- computercat:idea:end -->\n' | base64)
+gh PUT /repos/HumblebragAB/e2e-spike/contents/README.md "$(jq -nc --arg c "$README_B64" --arg sha "$README_SHA" '{message:"Spike: README",content:$c,sha:$sha,branch:"main"}')"
+CLAUDE_B64=$(printf '# Spike\n' | base64)
+gh PUT /repos/HumblebragAB/e2e-spike/contents/CLAUDE.md "$(jq -nc --arg c "$CLAUDE_B64" '{message:"Spike: CLAUDE.md",content:$c,branch:"main"}')"
+gh PUT /repos/HumblebragAB/e2e-spike/contents/CLAUDE.md "$(jq -nc --arg c "$CLAUDE_B64" '{message:"Spike: CLAUDE.md igen",content:$c,branch:"main"}')"
+```
+
+(`README_SHA` är `.sha` ur GET i steg 4.) Förväntat: README 200; första CLAUDE.md-PUT (utan `sha`) 201; andra PUT utan `sha` mot den nu befintliga filen: notera status (förväntat 422) och spara bodyn i `log/S11-put-utan-sha.json`. Kontrollera med GET att båda filerna har det skrivna innehållet.
+
+- [ ] **Steg 6: Namnkrock (S12).** Upprepa POST `/orgs/HumblebragAB/repos` från steg 4 oförändrad. Förväntat 422; spara body i `log/S12.json`. Kontrollera med `gh GET /repos/HumblebragAB/e2e-spike` att inget nytt repo skapades (samma `id`).
 
 - [ ] **Steg 7: Coolify-listning före (S13, S16).** `cf GET "/projects/$COOLIFY_PROJECT_UUID/$COOLIFY_ENVIRONMENT_NAME"` → spara; kontrollera att `.applications` är en lista med `uuid` och `name`. Faller formen: prova inte andra endpoints på eget initiativ, stanna och fråga (Task 10 och 21 bygger på detta).
 
@@ -279,9 +307,36 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 - [ ] **Steg 10: Build-variabel (S4, S15).** `cf GET /applications/$SPIKE_APP_UUID/envs` (notera form). `cf POST /applications/$SPIKE_APP_UUID/envs '{"key":"NEXT_PUBLIC_COMPUTERCAT_GAME","value":"e2e-spike","is_preview":false,"is_buildtime":true,"is_runtime":false}'` → förväntat 201. `cf GET .../envs` → posten finns med `key` och `is_buildtime: true`; notera om `value` visas. `cf PATCH /applications/$SPIKE_APP_UUID/envs` med samma body → förväntat 201/200.
 
-- [ ] **Steg 11: Deploy, status och RAM (S7, S18).** `cf POST "/deploy?uuid=$SPIKE_APP_UUID"` → spara `.deployments[0].deployment_uuid` som `SPIKE_DEPLOYMENT_UUID` i `ids.env`. Poll `cf GET /deployments/$SPIKE_DEPLOYMENT_UUID` var 30:e sekund (spara bara `.status`) tills `finished` eller `failed`, högst 20 minuter. Parallellt, efter Eriks OK i steg 1: `~/.claude/bin/ssh-claude <coolify-host> 'free -m; docker stats --no-stream --format "{{.Name}} {{.MemUsage}}"'` var 30:e sekund, spara toppvärdet för använt minne och swap. Förväntat: `finished` (klonen lyckades = S18) och minst 512 MB ledigt minne under bygget. `failed` eller mindre marginal: stanna och fråga.
+- [ ] **Steg 11: Inget bygge vid skapande (S22, S23).** Vänta 2 minuter efter steg 10. `cf GET "/deployments/applications/$SPIKE_APP_UUID?skip=0&take=5"` → spara i `log/S22-tom.json` (redigerat). Förväntat: 200 med `{"count":0,"deployments":[]}` (S22-formen, S23). Startade Coolify ändå ett bygge: notera status och stanna och fråga (planen förutsätter att appen väntar på kod).
 
-  **S20 (Node 22):** läs byggloggen ur `cf GET /deployments/$SPIKE_DEPLOYMENT_UUID` (fältet `logs`, filtrera lokalt med `jq -r .logs | grep -iE 'nodejs|node_?version|setup.*node|v2[0-9]\.'` och spara bara de raderna, inget annat ur loggen) och notera vilken Node-version nixpacks valde. Förväntat: Node 22 (nixpacks-planen visar `nodejs_22` eller `node --version` v22.x). Nixpacks standard är Node 18 och versionen kan sättas med miljövariabeln `NIXPACKS_NODE_VERSION`, med `engines.node` i `package.json` eller med `.nvmrc` (sidan anger inte inbördes prioritet); bara major-version stöds, och 16, 18, 20, 22 och 23 finns (nixpacks.com/docs/providers/node, läst 2026-10-13). Byggs det med Node 18 (eller faller `next build` på "Node.js version >= 20.9 is required"): stanna och fråga Erik om alternativet att sätta build-variabeln `NIXPACKS_NODE_VERSION=22` per app (samma `POST /applications/{uuid}/envs` som S4, `is_buildtime: true`). Väljer Erik det läggs variabeln till i steget `coolify_env` (Task 14) och i fakes, innan Task 2 påbörjas.
+- [ ] **Steg 11a: Pusha grundkoden, bygge via auto-deploy och RAM (S24, S18, S7, S22).** Grundkoden tas ur 2b-källan, bara läsning där:
+
+```bash
+SRC=/Users/erik/Web/spelmall
+git -C "$SRC" cat-file -e 4a1fecb^{commit}    # finns commiten (main efter wt-finish eller worktreens gren)
+CLONE="$SCRATCH/spike/clone"                    # skapas här och tas bort i steg 16, bara den sökvägen
+mkdir -p "$CLONE"
+```
+
+Inuti `claude-secret run … bash -c '…'` (token passerar aldrig transkriptet; den skickas som header via git-miljövariabler, aldrig i URL:en eller i processens argument). `CLONE` sätts på nytt inuti underskalet, eftersom bara `WT` och `SCRATCH` är exporterade:
+
+```bash
+set -eu
+CLONE="$SCRATCH/spike/clone"
+[ -n "$SCRATCH" ] && [ -d "$CLONE" ] || { echo "CLONE saknas"; exit 1; }
+TOKEN=$(gh_token)
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64)"
+git clone https://github.com/HumblebragAB/e2e-spike.git "$CLONE/e2e-spike"
+# Bara README.md undantas: spelmalls CLAUDE.md skriver över spikens, annars fäller docs-testerna npm run check i steg 14.
+git -C /Users/erik/Web/spelmall archive 4a1fecb | tar -x -C "$CLONE/e2e-spike" --exclude=README.md
+cd "$CLONE/e2e-spike" && git add -A && git -c user.name="Spike" -c user.email="spike@invalid" commit -q -m "Spike: grundkod från spelmall 4a1fecb"
+git push origin main
+```
+
+Förväntat: push lyckas till `main`. Poll sedan `cf GET "/deployments/applications/$SPIKE_APP_UUID?skip=0&take=5"` var 30:e sekund: inom 2 minuter finns en post (S24, auto-deploy utan `POST /deploy`); spara `.deployments[0].deployment_uuid` som `SPIKE_DEPLOYMENT_UUID` i `ids.env` och bekräfta formen `{count, deployments[]}` med `deployment_uuid`, `status`, `created_at` och att listan är sorterad nyast först (S22). Poll `.deployments[0].status` (spara bara den) tills `finished` eller `failed`, högst 20 minuter. Parallellt, efter Eriks OK i steg 1: `~/.claude/bin/ssh-claude <coolify-host> 'free -m; docker stats --no-stream --format "{{.Name}} {{.MemUsage}}"'` var 30:e sekund, spara toppvärdet för använt minne och swap. Förväntat: `finished` (klonen lyckades = S18) och minst 512 MB ledigt minne under bygget. Ingen post inom 2 minuter, `failed` eller mindre marginal: stanna och fråga.
+
+  **S20 (Node 22):** läs byggloggen ur `cf GET /deployments/$SPIKE_DEPLOYMENT_UUID` (bara läsning med `read`). Fältet `logs` är en JSON-kodad lista där dolda poster (`hidden: true`) kan innehålla klonkommandot med token; `cf` lägger dessutom statusraden sist. Filtrera därför lokalt och spara bara de matchande raderna: `cf GET /deployments/$SPIKE_DEPLOYMENT_UUID | sed '$d' | jq -r '.logs | fromjson | .[] | select(.hidden != true) | .output' | grep -iE 'nodejs|node_?version|setup.*node|v2[0-9]\.' | sed -E 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/[REDACTED]/g'`. Är `logs` inte i den formen: stanna och fråga, skriv aldrig ut hela loggen och notera vilken Node-version nixpacks valde. Förväntat: Node 22 (nixpacks-planen visar `nodejs_22` eller `node --version` v22.x). Nixpacks standard är Node 18 och versionen kan sättas med miljövariabeln `NIXPACKS_NODE_VERSION`, med `engines.node` i `package.json` eller med `.nvmrc` (sidan anger inte inbördes prioritet); bara major-version stöds, och 16, 18, 20, 22 och 23 finns (nixpacks.com/docs/providers/node, läst 2026-10-13). Byggs det med Node 18 (eller faller `next build` på "Node.js version >= 20.9 is required"): stanna och fråga Erik om alternativet att sätta build-variabeln `NIXPACKS_NODE_VERSION=22` per app (samma `POST /applications/{uuid}/envs` som S4, `is_buildtime: true`). Väljer Erik det läggs variabeln till i steget `coolify_env` (Task 14) och i fakes, innan Task 2 påbörjas.
 
 - [ ] **Steg 11b: Byggkö (S21).** Fråga Erik (AskUserQuestion) att bekräfta i Coolify-UI:t (Servers → servern → Configuration, "Concurrent builds") att värdet är `1`; inget API-anrop gissas fram. Är det inte 1: stanna och fråga.
 
@@ -289,7 +344,7 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
 
 - [ ] **Steg 13: Labels och övervakning (S3).** Med Eriks OK: `ssh-claude <coolify-host> 'docker inspect $(docker ps -q --filter name=<SPIKE_APP_UUID>) --format "{{json .Config.Labels}}"'` och samma för en befintlig app som Erik konfigurerat med basic auth i UI:t (Erik namnger den). Jämför de `traefik.http.middlewares.*basicauth*`- och `routers.*.middlewares`-labels som finns. Läs därefter `robots-sync` och `coolify-health` på det sätt Erik angav i 0.12 och kontrollera att `spel-e2e-spike` inte flaggas. Avvikelse: stanna och fråga.
 
-- [ ] **Steg 14: Molnsessionen pushar till main (S6).** Med Eriks OK: invokera skillen `schedule` och skapa en engångs-routine på Eriks konto med repot `HumblebragAB/e2e-spike` och prompten: "Ändra första rubriken i README.md till 'Spike OK'. Committa och pusha direkt till grenen main, skapa ingen ny gren. Svara med commit-sha." Efter körningen: `gh GET /repos/HumblebragAB/e2e-spike/commits/main` → senaste commit har rubrikändringen. `cf GET "/deployments/applications/$SPIKE_APP_UUID?skip=0&take=5"` → en ny deployment startades av pushen (auto-deploy). Notera grenen routinen faktiskt använde.
+- [ ] **Steg 14: Molnsessionen pushar till main (S6).** Med Eriks OK: invokera skillen `schedule` och skapa en engångs-routine på Eriks konto med repot `HumblebragAB/e2e-spike` och prompten: "Ändra första rubriken i README.md till 'Spike OK'. Kör `npm ci` och `npm run check` (ska vara gröna). Committa och pusha direkt till grenen main, skapa ingen ny gren. Svara med commit-sha och utskriften från npm run check." Efter körningen: `gh GET /repos/HumblebragAB/e2e-spike/commits/main` → senaste commit har rubrikändringen. `cf GET "/deployments/applications/$SPIKE_APP_UUID?skip=0&take=5"` → en ny deployment, nyast först, startades av pushen (auto-deploy). Notera grenen routinen faktiskt använde och om `npm ci` nådde registret från molnmiljön (0.9).
 
 - [ ] **Steg 15: SiteOps-kontraktet (S19).** Mot 2a:s låsta kontrakt (2a måste vara deployad, se "Beroenden och ordning").
   1. `so GET "/sites?url=https%3A%2F%2Fe2e-spike.apps.humblebrag.se"` → 200 `{"data":[],"meta":{"total":0}}`. Finns redan en träff: stanna och fråga (någon annan har adressen).
@@ -298,13 +353,14 @@ so() { curl -s -w '\n%{http_code}\n' -X "$1" -H "X-Api-Key: $SITEOPS_API_KEY" -H
   4. `so GET /sites/$SPIKE_SITE_ID` → `.data.is_active == true`, `.data.monitoring_enabled == true`. `so GET /sites/$SPIKE_SITE_ID/environments` → en post med `type == "demo"`, `url` = Demo-URL, `is_monitored == true`, `has_basic_auth == true`; inget lösenord i svaret.
   5. `so PATCH /sites/$SPIKE_SITE_ID/environments/$SPIKE_ENV_ID '{"basic_auth_user":"demo","basic_auth_password":"demo","is_monitored":true}'` → 200 (ägarskapsbeviset som SiteOpsStep använder vid adoption).
   6. `so POST /sites/$SPIKE_SITE_ID/deactivate` → 200 `{"data":{"id":…,"is_active":false,"monitoring_enabled":false}}`; `so GET /sites/$SPIKE_SITE_ID` → `.data.is_active == false`.
+  7. Det smala scopet: `so POST /sites '{"name":"e2e-spike-utan-miljo","url":"https://e2e-spike-x.apps.humblebrag.se","type":"app"}'` (utan `environment`) → 422, och inget skapas (`so GET "/sites?url=https%3A%2F%2Fe2e-spike-x.apps.humblebrag.se"` → `total: 0`). Ger anropet 201: stanna och fråga Erik (nyckeln har för brett scope); den skapade webben avaktiveras då på sitt sparade id.
   Ett 403 på PATCH mot en webb som Erik pekar ut och som inte skapades av nyckeln testas inte i prod; det täcks av 2a:s tester.
 
-- [ ] **Steg 16: Städning på sparade id:n (S17).** Läs `ids.env`. Coolify: `cf GET "/projects/$COOLIFY_PROJECT_UUID/$COOLIFY_ENVIRONMENT_NAME"` → bekräfta att `SPIKE_APP_UUID` finns med namnet `spel-e2e-spike`; först då `cf DELETE /applications/$SPIKE_APP_UUID` → 200 `{message: "Application deletion request queued."}`; poll listningen var 30:e sekund tills uuid:t är borta (högst 10 min). GitHub: `gh GET /repos/HumblebragAB/e2e-spike` → `.id == SPIKE_REPO_ID`; först då `gh PATCH /repos/HumblebragAB/e2e-spike '{"archived":true}'` → 200 och `.archived == true`. SiteOps: redan avaktiverad i steg 15. Routinen från steg 14 tas bort med `schedule`-skillen om den inte är engångs. Inget raderas på något annat id än de sparade.
+- [ ] **Steg 16: Städning på sparade id:n (S17).** Läs `ids.env`. Coolify: `cf GET "/projects/$COOLIFY_PROJECT_UUID/$COOLIFY_ENVIRONMENT_NAME"` → bekräfta att `SPIKE_APP_UUID` finns med namnet `spel-e2e-spike`; först då `cf DELETE /applications/$SPIKE_APP_UUID` → 200 `{message: "Application deletion request queued."}`; poll listningen var 30:e sekund tills uuid:t är borta (högst 10 min). GitHub: `gh GET /repos/HumblebragAB/e2e-spike` → `.id == SPIKE_REPO_ID`; först då `gh PATCH /repos/HumblebragAB/e2e-spike '{"archived":true}'` → 200 och `.archived == true`. SiteOps: redan avaktiverad i steg 15. Routinen från steg 14 tas bort med `schedule`-skillen om den inte är engångs. Den lokala klonen tas bort på sin sparade sökväg: `rm -rf "$SCRATCH/spike/clone"` (bara den katalogen, som steg 11a skapade). Inget raderas på något annat id än de sparade.
 
-- [ ] **Steg 17: Skriv resultatet i bilagorna.** I `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` och `…-github-app.md`: ersätt varje "UNCONFIRMED" som spiken besvarade med "VERIFIERAT 2026-10-xx (spike): <faktum>", och lägg till ett avsnitt "## Spikresultat" med S1–S21, en rad var, inklusive Node-versionen (S20) och `concurrent_builds` (S21), inklusive tid till README (S11), byggtid och RAM-topp (S7), 422-body (S12) och formen på projekt- och env-listningen (S13, S15). Inga hemligheter, inga tokens.
+- [ ] **Steg 17: Skriv resultatet i bilagorna.** I `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` och `…-github-app.md`: ersätt varje "UNCONFIRMED" som spiken besvarade med "VERIFIERAT 2026-10-xx (spike): <faktum>", och lägg till ett avsnitt "## Spikresultat" med S1–S24, en rad var, inklusive Node-versionen (S20) och `concurrent_builds` (S21), inklusive tid till README (S11), svaret på PUT utan `sha` mot befintlig fil (S11), byggtid och RAM-topp (S7), 422-body (S12), formen på projekt-, env- och bygglistningen (S13, S15, S22) och tiden från push till första bygget (S24). I bilaga B §6: om Administration: write räckte (S8). Inga hemligheter, inga tokens.
 
-- [ ] **Steg 18: Stäm av mot planen.** Om något resultat avviker från Global Constraints (t.ex. `git_repository` måste vara full URL, envs-listningen saknar `key`, projekt-endpointen har annan form, eller 422-bodyn från S12 innehåller inte `already exists`, som `GitHubAppClient::generateFromTemplate()` och `ProvisioningFakes::githubNameTaken()` matchar på): stanna, fråga Erik med AskUserQuestion och uppdatera berörda tasks (Task 3 fixturer, Task 10, Task 14, Task 21) innan Task 2 påbörjas.
+- [ ] **Steg 18: Stäm av mot planen.** Om något resultat avviker från Global Constraints (t.ex. `git_repository` måste vara full URL, envs-listningen saknar `key`, projekt-endpointen har annan form, 422-bodyn från S12 innehåller inte `already exists`, som `GitHubAppClient::createRepository()` och `ProvisioningFakes::githubNameTaken()` matchar på, bygglistan har inte formen `{count, deployments[]}` som `CoolifyClient::latestDeployment()` och `ProvisioningFakes::coolifyDeployments()` bygger på, eller appen byggde vid skapandet): stanna, fråga Erik med AskUserQuestion och uppdatera berörda tasks (Task 3 fixturer, Task 9, Task 10, Task 13, Task 14, Task 19, Task 21) innan Task 2 påbörjas.
 
 - [ ] **Steg 19: Commit.**
 
@@ -324,7 +380,7 @@ cd $WT && git add docs/superpowers/specs/bilagor && git commit -m "Spike: verifi
 **Interfaces:**
 - Produces:
   - `config('provisioning.*')` med nycklarna nedan.
-  - `App\Provisioning\ProvisioningConfig::missing(): array` (lista med env-namn), `::privateKeyFile(): string`, `::demoUrl(string $slug): string`, `::coolifyAppName(string $slug): string`, `::githubOwner(): string`, `::templateRepo(): string`, `::repoFullName(string $slug): string`.
+  - `App\Provisioning\ProvisioningConfig::missing(): array` (lista med env-namn), `::privateKeyFile(): string`, `::demoUrl(string $slug): string`, `::coolifyAppName(string $slug): string`, `::githubOwner(): string` (validerat organisationsnamn), `::repoFullName(string $slug): string`. Inget `templateRepo()`: det finns inget mallrepo.
   - `interface App\Provisioning\SafeMessage` (markör).
 
 - [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset` och gå igenom ytan: privat nyckel på disk, tre API-nycklar, Slack-URL, MCP-argument från ett staff-konto, loggar, `last_error` som visas för medlemmar, Coolify-token som når hela teamet. Inga fynd utöver Review Focus → fortsätt; nya fynd → AskUserQuestion.
@@ -401,6 +457,15 @@ class ProvisioningConfigTest extends TestCase
         $this->assertSame('HumblebragAB/kattsvep', ProvisioningConfig::repoFullName('kattsvep'));
     }
 
+    public function test_owner_must_be_a_github_name(): void
+    {
+        ProvisioningFakes::configure();
+        config(['provisioning.github.owner' => 'HumblebragAB/../x']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        ProvisioningConfig::githubOwner();
+    }
+
     public function test_reserved_slugs_include_base_list_and_env_list(): void
     {
         $this->assertContains('www', config('provisioning.reserved_slugs'));
@@ -434,7 +499,8 @@ return [
         'installation_id' => env('GITHUB_APP_INSTALLATION_ID'),
         // Relativ till storage/, t.ex. app/private/github-app.pem. Filen ska ha läge 600.
         'private_key_path' => env('GITHUB_APP_PRIVATE_KEY_PATH'),
-        'template_repo' => env('GITHUB_TEMPLATE_REPO', 'HumblebragAB/spelmall'),
+        // Organisationen där spelrepona skapas (POST /orgs/{owner}/repos). Inget mallrepo.
+        'owner' => env('GITHUB_OWNER', 'HumblebragAB'),
     ],
 
     'coolify' => [
@@ -471,8 +537,9 @@ return [
 
     'max_demo_games' => 15,
     'max_new_per_day' => 5,
-    'deploy_timeout_minutes' => 15,
     'repo_ready_timeout_minutes' => 3,
+    // Invarianten: ett spel utan bygge larmar först när runnen är så här gammal.
+    'no_push_grace_days' => 7,
     'coolify_delete_timeout_minutes' => 10,
     'http_timeout_seconds' => 20,
 ];
@@ -505,7 +572,7 @@ final class ProvisioningConfig
         'GITHUB_APP_CLIENT_ID' => 'provisioning.github.client_id',
         'GITHUB_APP_INSTALLATION_ID' => 'provisioning.github.installation_id',
         'GITHUB_APP_PRIVATE_KEY_PATH' => 'provisioning.github.private_key_path',
-        'GITHUB_TEMPLATE_REPO' => 'provisioning.github.template_repo',
+        'GITHUB_OWNER' => 'provisioning.github.owner',
         'COOLIFY_URL' => 'provisioning.coolify.url',
         'COOLIFY_TOKEN' => 'provisioning.coolify.token',
         'COOLIFY_PROJECT_UUID' => 'provisioning.coolify.project_uuid',
@@ -561,14 +628,15 @@ final class ProvisioningConfig
         return 'spel-'.$slug;
     }
 
-    public static function templateRepo(): string
-    {
-        return (string) config('provisioning.github.template_repo');
-    }
-
+    // Hamnar i URL:er (/orgs/{owner}/repos, /repos/{owner}/...): bara GitHubs namnformat.
     public static function githubOwner(): string
     {
-        return explode('/', self::templateRepo(), 2)[0];
+        $owner = (string) config('provisioning.github.owner');
+        if (preg_match('/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\z/', $owner) !== 1) {
+            throw new \InvalidArgumentException('GITHUB_OWNER är inte ett giltigt organisationsnamn.');
+        }
+
+        return $owner;
     }
 
     public static function repoFullName(string $slug): string
@@ -592,6 +660,7 @@ final class ProvisioningConfig
         <env name="GITHUB_APP_CLIENT_ID" value=""/>
         <env name="GITHUB_APP_INSTALLATION_ID" value=""/>
         <env name="GITHUB_APP_PRIVATE_KEY_PATH" value=""/>
+        <env name="GITHUB_OWNER" value=""/>
         <env name="COOLIFY_URL" value=""/>
         <env name="COOLIFY_TOKEN" value=""/>
         <env name="COOLIFY_PROJECT_UUID" value=""/>
@@ -613,7 +682,7 @@ GITHUB_APP_CLIENT_ID=
 GITHUB_APP_INSTALLATION_ID=
 # Relativ till storage/, filen ska ha läge 600
 GITHUB_APP_PRIVATE_KEY_PATH=app/private/github-app.pem
-GITHUB_TEMPLATE_REPO=HumblebragAB/spelmall
+GITHUB_OWNER=HumblebragAB
 COOLIFY_URL=
 COOLIFY_TOKEN=
 COOLIFY_PROJECT_UUID=
@@ -635,7 +704,7 @@ PROVISIONING_RESERVED_SUBDOMAINS=
 cd $WT && php artisan test --filter=ProvisioningConfigTest
 ```
 
-Förväntat: `Tests: 6 passed`.
+Förväntat: `Tests: 7 passed`.
 
 - [ ] **Steg 10: Commit.**
 
@@ -716,7 +785,7 @@ final class ProvisioningFakes
             'provisioning.github.client_id' => 'Iv23testclientid',
             'provisioning.github.installation_id' => '4242',
             'provisioning.github.private_key_path' => self::KEY_FILE,
-            'provisioning.github.template_repo' => 'HumblebragAB/spelmall',
+            'provisioning.github.owner' => 'HumblebragAB',
             'provisioning.coolify.url' => self::COOLIFY,
             'provisioning.coolify.token' => self::COOLIFY_TOKEN,
             'provisioning.coolify.project_uuid' => self::PROJECT,
@@ -745,29 +814,29 @@ final class ProvisioningFakes
         ];
     }
 
-    /** GET /repos/{owner}/{repo} och 201 från /generate (spike S10). */
-    public static function githubRepo(string $slug, string $runUuid, bool $archived = false, ?string $template = 'HumblebragAB/spelmall', ?string $description = null): array
+    /** GET /repos/{owner}/{repo} och 201 från POST /orgs/{org}/repos (spike S10). */
+    public static function githubRepo(string $slug, string $runUuid, bool $archived = false, bool $private = true, ?string $description = null): array
     {
         return [
             'id' => 900000 + strlen($slug),
             'name' => $slug,
             'full_name' => "HumblebragAB/{$slug}",
-            'private' => true,
+            'private' => $private,
             'archived' => $archived,
             'description' => $description ?? "Computercat-spel {$slug} (run {$runUuid})",
-            'template_repository' => $template === null ? null : ['full_name' => $template],
         ];
     }
 
-    /** 422 från /generate när namnet redan finns i organisationen (spike S12; justeras efter den sparade bodyn). */
+    /** 422 från POST /orgs/{org}/repos när namnet redan finns (spike S12; justeras efter den sparade bodyn). */
     public static function githubNameTaken(): array
     {
         return ['message' => 'Repository creation failed.', 'errors' => [['resource' => 'Repository', 'code' => 'custom', 'field' => 'name', 'message' => 'name already exists on this account']]];
     }
 
-    public static function templateReadme(): string
+    /** README som auto_init skapar (innehållet verifieras i spike S11; steget skriver över hela filen). */
+    public static function autoInitReadme(string $slug): string
     {
-        return "# Spel\n\nBeskrivning.\n\n<!-- computercat:idea:start -->\n_Idén fylls i av create_game när spelet skapas._\n<!-- computercat:idea:end -->\n\nMer text.\n";
+        return "# {$slug}\nComputercat-spel {$slug}\n";
     }
 
     /** GET /repos/{o}/{r}/contents/{path} (spike S11). GitHub radbryter base64. */
@@ -807,16 +876,24 @@ final class ProvisioningFakes
         return ['uuid' => 'env-'.strtolower($key), 'key' => $key, 'value' => $value, 'is_buildtime' => $buildtime, 'is_runtime' => false, 'is_preview' => false];
     }
 
-    /** POST /deploy?uuid=. */
-    public static function coolifyDeployQueued(string $appUuid, string $deploymentUuid): array
+    /**
+     * GET /deployments/applications/{uuid}?skip=&take= (spike S22): Application::deployments()
+     * svarar {count, deployments}, nyast först. Varje post är en ApplicationDeploymentQueue.
+     *
+     * @param  list<array{0: string, 1: string, 2?: string}>  $deployments  [deployment_uuid, status, created_at]
+     */
+    public static function coolifyDeployments(array $deployments): array
     {
-        return ['deployments' => [['message' => 'Deployment request queued.', 'resource_uuid' => $appUuid, 'deployment_uuid' => $deploymentUuid]]];
-    }
-
-    /** GET /deployments/{uuid}, ApplicationDeploymentQueue. */
-    public static function coolifyDeployment(string $status, string $logs = 'Building... token=hemligt'): array
-    {
-        return ['status' => $status, 'logs' => $logs];
+        return [
+            'count' => count($deployments),
+            'deployments' => array_map(fn (array $d) => [
+                'deployment_uuid' => $d[0],
+                'status' => $d[1],
+                'created_at' => $d[2] ?? '2026-10-14T08:00:00.000000Z',
+                'commit' => 'abc123',
+                'logs' => 'Building... token=hemligt',
+            ], $deployments),
+        ];
     }
 
     /** DELETE /applications/{uuid}, 200. */
@@ -2326,6 +2403,964 @@ cd $WT && git add database/migrations/2026_10_15_100002_create_provisioning_runs
 
 ---
 
+## Task 8A: Byggguiden v1: import från spelmall, manifest och `BuildGuide`
+
+Sanningen för spelrepons grundkod flyttar hit från `~/Web/spelmall` (2b, commit `4a1fecb`, 83 tester). Efter den här tasken ändras guiden bara i computercat-api, och en publicerad version ändras aldrig.
+
+**Files:**
+- Create: `resources/byggguide/v1/manifest.json`, `resources/byggguide/v1/files/**` (kopierade), `resources/byggguide/v1/templates/README.md`, `app/Services/BuildGuide.php`, `app/Services/BuildGuideNotFound.php`, `app/Console/Commands/BuildGuideHash.php`, `tests/Feature/BuildGuideTest.php`
+- Modify: `resources/css/app.css`
+
+**Interfaces:**
+- Consumes: 2b-källan (bara läsning).
+- Produces (`App\Services\BuildGuide`, alla statiska):
+  - `LATEST = 'v1'`, `VERSION_PATTERN = '/^v[1-9][0-9]{0,2}\z/'`, `INLINE_MAX_BYTES = 30000`, `FROZEN` (version => sha256 av `manifest.json`)
+  - `versions(): list<string>`, `root(string $version): string`, `manifest(?string $version = null): array`
+  - `file(string $version, string $path): array{path: string, sha256: string, bytes: int, content: string}` (`BuildGuideNotFound` om sökvägen inte finns i manifestet; `RuntimeException` om filen inte matchar sin `sha256`)
+  - `claudeMd(string $version): string`, `readme(string $version, string $name): string` (README-mallen med namnet insatt, idé-blocket orört)
+  - `publicManifest(string $version): array` (utan `source`, med `delivery` per fil och `download_url` bara för `delivery: "download"`), `downloadUrl(string $version, string $path): string` (från `APP_URL`, alltid `https://`)
+  - `App\Services\BuildGuideNotFound extends RuntimeException`
+  - `php artisan computercat:byggguide:hash {version}` (vägrar för en version i `FROZEN` med värde)
+- Manifestets fält: `version`, `source`, `stack`, `node`, `overrides`, `output`, `env`, `commands` (`install`, `dev`, `test`, `build`), `required_checks[]` (`name`, `command`), `steps[]`, `server_templates.readme` (`source`, `sha256`, `bytes`), `files[]` (`path`, `source`, `sha256`, `bytes`), sorterade på `path`.
+
+- [ ] **Steg 1: Källan är ren.** Bara läsning i 2b-repot:
+
+```bash
+SRC=/Users/erik/Web/spelmall/.claude/worktrees/feat-spelmall
+[ -d "$SRC" ] || SRC=/Users/erik/Web/spelmall          # efter 2b Task 11 steg 5 (wt-finish)
+git -C "$SRC" rev-parse --short HEAD                   # förväntat: 4a1fecb
+git -C "$SRC" status --short                           # förväntat: ingen utskrift
+```
+
+Annan commit eller smutsigt träd: stanna och fråga Erik (AskUserQuestion) vilken commit som ska importeras.
+
+- [ ] **Steg 2: Kopiera filerna.** Bara spårade filer (`git archive`), aldrig `node_modules`, `out` eller `.env*` utöver exemplet. `README.md` blir mall; `CLAUDE.md` ersätts i steg 3. Dotfiler lagras som `dot.<namn>` så att computercat-api:s egen git inte läser `files/.gitignore` som en ignoreringsfil.
+
+```bash
+DEST=$WT/resources/byggguide/v1
+mkdir -p "$DEST/files" "$DEST/templates"
+git -C "$SRC" archive 4a1fecb | tar -x -C "$DEST/files"
+mv "$DEST/files/README.md" "$DEST/templates/README.md"
+mv "$DEST/files/.gitignore" "$DEST/files/dot.gitignore"
+mv "$DEST/files/.env.example" "$DEST/files/dot.env.example"
+find "$DEST/files" -name '.*' -print                    # förväntat: ingen utskrift
+find "$DEST/files" -type f | wc -l                      # förväntat: 48 (49 spårade filer i 2b minus README.md)
+```
+
+- [ ] **Steg 3: Byggguidens egna texter.** Fyra ändringar mot 2b, inget annat:
+
+1. `resources/byggguide/v1/files/CLAUDE.md` ersätts helt med:
+
+````markdown
+# CLAUDE.md
+
+Det här är ett Computercat-spel. Spelets idé står under "Idé" i `README.md`; läs den först.
+
+Byggguide: **v1**. Grundkoden (Computercat-klienten, konfiguration, tester och ett exempelspel) kommer från Computercats byggguide. Det finns inget mallrepo.
+
+## Steg 1: grundkoden (bara när `package.json` saknas)
+
+Ett nytt spelrepo innehåller bara `README.md` och den här filen. Gör så här innan något annat:
+
+1. Anropa `get_build_guide` i Computercat-connectorn med `{"version": "v1"}`. Svaret listar stacken med exakta versioner, installationskommandot, de obligatoriska kontrollerna och varje fil med `path`, `sha256` och `delivery`.
+2. Filer med `delivery: "mcp"`: hämta med `get_build_guide_file` (`{"path": "<path>", "version": "v1"}`) och skriv `content` **exakt** till `path` i repots rot. Filer med `delivery: "download"` (bland annat `package-lock.json`): `curl -fsS "<download_url>" -o "<path>"`.
+3. Kontrollera varje fil mot manifestet med `sha256sum <path>` (eller `shasum -a 256 <path>`). Avviker en fil: hämta den igen. Ändra den aldrig för hand.
+4. `README.md` finns inte i fillistan; låt den vara. `CLAUDE.md` finns i listan med samma innehåll som den här filen.
+5. Kör `npm ci`, sedan `npm run check` och `npm audit --omit=dev --audit-level=high`. Alla ska gå igenom utan att du ändrat något.
+6. Committa allt med meddelandet `Grundkod från byggguide v1` och pusha direkt till `main` (ingen annan gren). Coolify bygger då Demo för första gången. Följ upp med `get_provisioning_status` tills `demo.state` är `live`; Demo visar då exemplet (klickrace).
+7. Bygg sedan spelet enligt idén och reglerna nedan.
+
+Faller ett steg (verktyget svarar med fel, en kontroll blir röd utan att du ändrat något, `sha256` stämmer inte efter ny hämtning): stanna och beskriv felet. Laga aldrig byggguidens filer för att få det grönt; felet hör hemma i computercat-api.
+
+## Regler
+
+- **Backend är Computercat. Bygg aldrig en egen backend, databas eller API-route.** All kommunikation går genom `src/lib/computercat/`.
+- **Konfigurera topplistor, achievements, pooler m.m. med Computercat-connectorns verktyg** (`get_game`, `upsert_*`). **Hämta integrationsmanualen med `get_integration_guide`** innan du använder en byggsten du inte använt förut.
+- **Pusha till `main` när en ändring är klar och testad; det deployar Demo automatiskt.** Följ upp med `get_provisioning_status` och kontrollera Demo-adressen.
+- **Behövs serverlogik som byggstenarna inte har: beskriv behovet och föreslå en PR mot computercat-api, bygg inte runt det.**
+- **Klientkoden i `src/lib/computercat/` kommer från byggguiden.** Ändra den inte i spelet; behövs en ändring hör den hemma i en ny byggguideversion i computercat-api.
+
+## Köra och testa lokalt
+
+```bash
+npm ci
+cp .env.example .env.local    # NEXT_PUBLIC_COMPUTERCAT_GAME=<spelets slug>
+npm run dev                    # http://localhost:3000 (localhost är tillåtet i Computercats CORS)
+npm test                       # enhetstester, inget nätverk
+npm run check                  # typkontroll, lint, test, bygge, kontroll av out/
+```
+
+**Före varje push till `main`:** (1) `npm run check` grön, (2) `npm audit --omit=dev --audit-level=high` utan träff (avslutar med fel vid high eller critical i produktionsberoenden; åtgärda med `npm audit fix` eller uppdatera paketet, tysta aldrig). Bygget är en statisk export (`output: 'export'`): inga API-routes, inga serverkomponenter som hämtar data, ingen `next/font/google` (bygget ska klara sig utan nätverk).
+
+## Computercat i koden
+
+- `getComputercat()` ger klienten i webbläsaren. Den kastar aldrig: saknas `NEXT_PUBLIC_COMPUTERCAT_GAME` (eller körs den utanför webbläsaren) returnerar den `{ ok: false, error }`, och det felet ska visas för spelaren.
+- Spelaren (token) förnyas automatiskt vid start om den är äldre än 24 h (tokens gäller 90 dagar); du behöver inte göra något. `recordScore` kastar om resultatet inte kan sparas lokalt (full lagring): visa det för spelaren.
+- Resultat: `recordScore(typ, score, metadata?)` köar lokalt och skickar i bakgrunden. Visa `flushed`-resultatet för spelaren; dölj aldrig fel och visa aldrig påhittad topplistedata.
+- Topplistor: `leaderboards.get(typ)` (aktuell period enligt servern, UTC), `leaderboards.me(typ)`.
+- Sparningar: `saves.sync(nyckel, lokalt, merge)` hämtar, slår ihop och skickar med version.
+- Anti-cheat: `createProof(...)` i `metadata.proof` om spelet kräver bevis.
+
+## Exemplets topplista
+
+Exemplet skickar till `daily-clicks`. Skapa den innan du testar på Demo:
+
+`upsert_leaderboard_type` med `{"game": "<slug>", "slug": "daily-clicks", "name": "Dagens klick", "sort_direction": "desc", "score_label": "Klick", "period": "daily"}`
+
+När exemplet ersätts: skapa spelets egna topplistor på samma sätt, byt `LEADERBOARD_TYPE` i `src/game/constants.ts` och ta bort `src/game/exampleDocs.test.ts` tillsammans med exemplet. Byt också `title` i `src/app/layout.tsx`, `name` i `package.json` (kör sedan `npm install --package-lock-only`) och lagringsnyckeln `spelmall-click` (prefixet i `src/game/clickStore.ts`) till spelets namn.
+
+Låt de två raderna `computercat:idea` i `README.md` vara kvar; `test/docs.test.ts` vaktar dem.
+
+## Säkerhet
+
+Allt i `NEXT_PUBLIC_*` hamnar i den publika koden. Lägg aldrig nycklar eller lösenord där eller i repot.
+````
+
+2. `resources/byggguide/v1/templates/README.md` ersätts helt med (`{{name}}` fylls i av `create_game`; idé-blocket är kontraktet med `ReadmeIdea`):
+
+````markdown
+# {{name}}
+
+Ett Computercat-spel byggt med Next.js (statisk export), React, Tailwind, Zustand och framer-motion, enligt Computercats byggguide v1.
+
+## Idé
+
+<!-- computercat:idea:start -->
+_Idén fylls i av create_game när spelet skapas._
+<!-- computercat:idea:end -->
+
+## Kom igång
+
+Saknar repot `package.json` är det nytt: följ steg 1 i `CLAUDE.md`. Grundkoden hämtas med Computercat-verktyget `get_build_guide` och pushas till `main`.
+
+```bash
+npm ci
+cp .env.example .env.local   # sätt NEXT_PUBLIC_COMPUTERCAT_GAME till spelets slug
+npm run dev                   # http://localhost:3000
+```
+
+Utan `NEXT_PUBLIC_COMPUTERCAT_GAME` går spelet att spela, men en gul banner säger att inget skickas till Computercat.
+
+## Test och kontroll
+
+```bash
+npm test        # enhetstester (vitest), inget nätverk
+npm run check   # typkontroll, lint, test, bygge och kontroll av out/
+```
+
+`npm run check` ska vara grön, och `npm audit --omit=dev --audit-level=high` får inte ge något (high eller critical i produktionsberoenden), innan något pushas.
+
+## Backend
+
+Backend är Computercat (`https://api.computercat.co/api/v1`). Spelet har ingen egen server, databas eller API-route. Allt som pratar med Computercat ligger i `src/lib/computercat/`:
+
+- anonym spelare skapas automatiskt; token sparas i `localStorage` (giltig 90 dagar) och förnyas vid start via `POST /auth/refresh` när den är äldre än 24 h (saknas endpointen, eller är nätet nere, behålls token); vid 401 skapas en ny anonym spelare,
+- resultat köas lokalt först och skickas i bakgrunden (vid start, när nätet kommer tillbaka och varje minut),
+- topplistor (`leaderboards.get/me/submit`), sparningar med version (`saves.get/put/sync`) och anti-cheat-bevis (`createProof`).
+
+Topplistor, achievements, innehållspooler med mera konfigureras i Computercat, inte i koden. Den som har Computercat-connectorn i Claude gör det med verktygen `get_game` och `upsert_*`; integrationsmanualen fås med `get_integration_guide`.
+
+### Exemplets topplista
+
+Klickracet skickar till topplistan `daily-clicks` (dagens flest klick, högst vinner). Den skapas med `upsert_leaderboard_type`:
+
+```json
+{"game": "<slug>", "slug": "daily-clicks", "name": "Dagens klick", "sort_direction": "desc", "score_label": "Klick", "period": "daily"}
+```
+
+Dagliga perioder räknas av servern i UTC.
+
+### Anti-cheat
+
+Kräver spelet bevis (`require_proof`) skickas `metadata.proof` från `createProof`. Servern jämför bevisets tid med resultatet; för resultat som inte är tider ska spelets `proof_time_tolerance` vara 0.
+
+## Beroenden: `overrides` för vite
+
+`package.json` har `overrides: { "vite": "7.3.7" }`. Utan den drar vitest 4.1.11 in en vite-version som gör att en ren `npm ci` fallerar. Raden tas bort i en senare byggguideversion när vitest har ett vite-intervall som installeras rent.
+
+## Miljövariabler
+
+| Variabel | Krävs | Standard |
+|---|---|---|
+| `NEXT_PUBLIC_COMPUTERCAT_GAME` | ja | ingen standard (sätts som build-variabel på Coolify) |
+| `NEXT_PUBLIC_COMPUTERCAT_URL` | nej | `https://api.computercat.co/api/v1` |
+
+Värdena bakas in i den publika koden vid bygget. Lägg aldrig hemligheter i `NEXT_PUBLIC_*`.
+
+## Deploy
+
+Push till `main` bygger och deployar Demo automatiskt (Coolify, nixpacks, statiska filer från `out/` via nginx, Node 22 enligt `engines`). Första pushen, grundkoden, startar första bygget. Demo-adressen är `https://<slug>.apps.humblebrag.se` bakom basic auth. Status följs med Computercat-verktyget `get_provisioning_status`.
+
+## Idé-markörerna
+
+De två `computercat:idea`-raderna under "Idé" skrevs av `create_game` i computercat-api. Låt dem stå kvar och citera dem inte någon annanstans i den här filen; `test/docs.test.ts` kontrollerar att de finns exakt en gång var.
+````
+
+3. `resources/byggguide/v1/files/test/docs.test.ts`: lägg till `'get_build_guide',` direkt efter raden `'get_integration_guide',` i listan i testet "CLAUDE.md innehåller specens regler och verktyg".
+4. `resources/byggguide/v1/files/src/app/layout.tsx`: ersätt `description: 'Computercat-spel byggt från HumblebragAB/spelmall.',` med `description: 'Computercat-spel byggt enligt Computercats byggguide.',`.
+
+Kontrollera att inget annat i guiden pekar på mallrepot:
+
+```bash
+grep -rn "HumblebragAB/spelmall\|mallrepo\|create_game.*generate" "$DEST" --exclude=package-lock.json
+```
+
+Förväntat: ingen träff. (`spelmall` som paketnamn i `package.json`/`package-lock.json` och lagringsnyckeln `spelmall-click` står kvar; `CLAUDE.md` säger att spelet byter dem.)
+
+- [ ] **Steg 4: Manifestets fasta fält.** `files` och `server_templates` fylls av hash-kommandot i steg 8. `stack`, `node` och `overrides` läses ur den kopierade `package.json`, så att de inte skrivs av för hand:
+
+```bash
+cd "$DEST" && jq -n --slurpfile pkg files/package.json '
+  ($pkg[0]) as $p | {
+  version: "v1",
+  source: "spelmall 4a1fecb (2b), importerad till computercat-api",
+  stack: ($p.dependencies + $p.devDependencies),
+  node: $p.engines.node,
+  overrides: $p.overrides,
+  output: {type: "static-export", directory: "out", note: "next.config.ts sets output: \"export\"; Coolify serves out/ with nginx"},
+  env: {NEXT_PUBLIC_COMPUTERCAT_GAME: "the game slug; set as a build variable on Coolify by create_game, locally in .env.local", NEXT_PUBLIC_COMPUTERCAT_URL: "optional, default https://api.computercat.co/api/v1"},
+  commands: {install: "npm ci", dev: "npm run dev", test: "npm test", build: "npm run build"},
+  required_checks: [
+    {name: "check", command: "npm run check"},
+    {name: "audit", command: "npm audit --omit=dev --audit-level=high"},
+    {name: "static_export", command: "test -f out/index.html"}
+  ],
+  steps: [
+    "Write every file in files[] to its path in the repository root: delivery \"mcp\" via get_build_guide_file, delivery \"download\" via curl -fsS <download_url> -o <path>. README.md is not in the list; leave it as it is.",
+    "Verify every file with sha256sum against files[].sha256. Re-fetch on mismatch; never edit a guide file by hand.",
+    "Run commands.install, then every required_checks command in order. All must pass without code changes.",
+    "Commit as \"Grundkod från byggguide v1\" and push directly to main. Coolify builds the Demo on that push.",
+    "Follow up with get_provisioning_status until demo.state is \"live\", then build the game as described in CLAUDE.md."
+  ],
+  server_templates: {},
+  files: []
+}' > manifest.json && jq -r '.stack.next, .node, .overrides.vite' manifest.json
+```
+
+Förväntat: `16.4.0`, `22.x`, `7.3.7`.
+
+- [ ] **Steg 5: Fallerande test.** `tests/Feature/BuildGuideTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature;
+
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
+use Symfony\Component\Finder\Finder;
+use Tests\TestCase;
+
+// Byggguiden (spec 2c, "Byggguiden"). Två uttryck för samma sanning får aldrig
+// glida isär: manifestet och filerna på disk, och manifestets stack och package.json.
+class BuildGuideTest extends TestCase
+{
+    private ?string $tempRoot = null;
+
+    protected function tearDown(): void
+    {
+        // Bara katalogen som testet självt skapade.
+        if ($this->tempRoot !== null) {
+            File::deleteDirectory($this->tempRoot);
+        }
+        parent::tearDown();
+    }
+
+    /** Kopia av guiden i en temporär katalog, för tester som måste ändra filer. */
+    private function tempGuide(): string
+    {
+        $this->tempRoot = storage_path('framework/testing/byggguide-'.Str::lower(Str::random(10)));
+        File::copyDirectory(resource_path('byggguide'), $this->tempRoot);
+        config(['byggguide.path' => $this->tempRoot]);
+
+        return $this->tempRoot;
+    }
+
+    public function test_latest_version_exists(): void
+    {
+        $this->assertContains(BuildGuide::LATEST, BuildGuide::versions());
+        $this->assertSame('v1', BuildGuide::manifest()['version']);
+    }
+
+    public function test_manifest_has_the_rules(): void
+    {
+        $m = BuildGuide::manifest('v1');
+
+        $this->assertSame('22.x', $m['node']);
+        $this->assertSame(['vite' => '7.3.7'], $m['overrides']);
+        $this->assertSame('npm ci', $m['commands']['install']);
+        $this->assertSame(
+            ['npm run check', 'npm audit --omit=dev --audit-level=high', 'test -f out/index.html'],
+            array_column($m['required_checks'], 'command'),
+        );
+        $this->assertNotEmpty($m['steps']);
+        foreach ($m['stack'] as $package => $version) {
+            // Exakt låsta versioner: inga intervall.
+            $this->assertMatchesRegularExpression('/^\d+\.\d+\.\d+\z/', $version, $package);
+        }
+    }
+
+    public function test_stack_matches_package_json(): void
+    {
+        $package = json_decode(BuildGuide::file('v1', 'package.json')['content'], true, 32, JSON_THROW_ON_ERROR);
+        $m = BuildGuide::manifest('v1');
+
+        $this->assertSame($package['dependencies'] + $package['devDependencies'], $m['stack']);
+        $this->assertSame($package['overrides'], $m['overrides']);
+        $this->assertSame($package['engines']['node'], $m['node']);
+    }
+
+    public function test_every_file_matches_its_sha256_and_nothing_is_unlisted(): void
+    {
+        foreach (BuildGuide::versions() as $version) {
+            $root = BuildGuide::root($version);
+            $m = BuildGuide::manifest($version);
+            $listed = [];
+
+            foreach ($m['files'] as $entry) {
+                $this->assertFalse(str_contains($entry['path'], '..') || str_starts_with($entry['path'], '/'), $entry['path']);
+                $this->assertStringStartsWith('files/', $entry['source']);
+                $this->assertFileExists("{$root}/{$entry['source']}");
+                $this->assertSame($entry['sha256'], hash_file('sha256', "{$root}/{$entry['source']}"), $entry['path']);
+                $this->assertSame($entry['bytes'], filesize("{$root}/{$entry['source']}"), $entry['path']);
+                $listed[] = $entry['source'];
+            }
+
+            $readme = $m['server_templates']['readme'];
+            $this->assertSame($readme['sha256'], hash_file('sha256', "{$root}/{$readme['source']}"));
+            $listed[] = $readme['source'];
+
+            $onDisk = [];
+            foreach ((new Finder)->files()->in($root)->ignoreDotFiles(false)->notName('manifest.json') as $file) {
+                $onDisk[] = str_replace('\\', '/', $file->getRelativePathname());
+            }
+            sort($listed);
+            sort($onDisk);
+            $this->assertSame($listed, $onDisk, "{$version}: filer på disk och i manifestet skiljer sig");
+            $this->assertSame(count($m['files']), count(array_unique(array_column($m['files'], 'path'))), 'dubblerad path');
+        }
+    }
+
+    public function test_required_files_are_in_the_guide_and_readme_is_not(): void
+    {
+        $paths = array_column(BuildGuide::manifest('v1')['files'], 'path');
+
+        foreach (['package.json', 'package-lock.json', '.gitignore', '.env.example', 'next.config.ts', 'tsconfig.json', 'eslint.config.mjs', 'vitest.config.ts', 'postcss.config.mjs', 'scripts/check-export.mjs', 'CLAUDE.md', 'test/docs.test.ts', 'test/fakeFetch.ts', 'src/lib/computercat/index.ts', 'src/lib/computercat/auth.test.ts'] as $path) {
+            $this->assertContains($path, $paths);
+        }
+        // README skrivs av create_game ur mallen; spelets Claude skriver aldrig över den.
+        $this->assertNotContains('README.md', $paths);
+    }
+
+    public function test_claude_md_tells_the_game_claude_to_use_the_guide(): void
+    {
+        $md = BuildGuide::claudeMd('v1');
+
+        foreach (['Byggguide: **v1**', '`get_build_guide`', '`get_build_guide_file`', 'sha256sum', 'npm run check', 'npm audit --omit=dev --audit-level=high', 'Bygg aldrig en egen backend', 'Pusha till `main` när en ändring är klar och testad; det deployar Demo automatiskt.'] as $text) {
+            $this->assertStringContainsString($text, $md);
+        }
+        $this->assertStringNotContainsString('HumblebragAB/spelmall', $md);
+    }
+
+    public function test_readme_inserts_the_name_safely_and_keeps_one_pair_of_markers(): void
+    {
+        $readme = BuildGuide::readme('v1', "Katt<!-- x -->\nsvep");
+
+        $this->assertStringStartsWith("# Katt&lt;!-- x --&gt; svep\n", $readme);
+        $this->assertSame(1, substr_count($readme, '<!-- computercat:idea:start -->'));
+        $this->assertSame(1, substr_count($readme, '<!-- computercat:idea:end -->'));
+        $this->assertStringNotContainsString('{{name}}', $readme);
+    }
+
+    public function test_public_manifest_hides_sources_and_marks_large_files_for_download(): void
+    {
+        $public = BuildGuide::publicManifest('v1');
+        $files = collect($public['files'])->keyBy('path');
+
+        $this->assertSame('download', $files['package-lock.json']['delivery']);
+        $this->assertSame('mcp', $files['package.json']['delivery']);
+        $this->assertStringStartsWith('https://', $files['package-lock.json']['download_url']);
+        $this->assertStringEndsWith('/api/v1/build-guide/v1/files/package-lock.json', $files['package-lock.json']['download_url']);
+        $this->assertNull($files['.gitignore']['download_url']);
+        $this->assertArrayNotHasKey('source', $files['package.json']);
+        $this->assertArrayNotHasKey('server_templates', $public);
+    }
+
+    public function test_paths_outside_the_manifest_and_unknown_versions_are_refused(): void
+    {
+        foreach (['../../.env', '/etc/passwd', 'README.md', 'files/package.json'] as $path) {
+            try {
+                BuildGuide::file('v1', $path);
+                $this->fail("Släpptes igenom: {$path}");
+            } catch (BuildGuideNotFound) {
+                // väntat
+            }
+        }
+
+        foreach (['v0', 'v9', '../v1', 'v1/..', ''] as $version) {
+            try {
+                BuildGuide::manifest($version);
+                $this->fail("Släpptes igenom: {$version}");
+            } catch (BuildGuideNotFound) {
+                // väntat
+            }
+        }
+    }
+
+    public function test_tampered_file_fails_loudly_instead_of_being_served(): void
+    {
+        $root = $this->tempGuide();
+        file_put_contents("{$root}/v1/files/next.config.ts", "export default {};\n");
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('stämmer inte med manifestets sha256');
+        BuildGuide::file('v1', 'next.config.ts');
+    }
+
+    // En publicerad version ändras aldrig (spec 2c). Ändras manifest.json för
+    // en version i FROZEN fäller testet; en ändring ska bli en ny version.
+    public function test_published_versions_are_frozen(): void
+    {
+        foreach (BuildGuide::versions() as $version) {
+            $this->assertArrayHasKey($version, BuildGuide::FROZEN, "{$version} saknas i BuildGuide::FROZEN");
+            $this->assertNotSame('', BuildGuide::FROZEN[$version], "{$version} är inte låst i BuildGuide::FROZEN");
+            $this->assertSame(BuildGuide::FROZEN[$version], hash_file('sha256', BuildGuide::root($version).'/manifest.json'), "{$version} har ändrats efter publicering");
+        }
+    }
+
+    public function test_hash_command_refuses_a_frozen_version_and_hashes_an_unpublished_one(): void
+    {
+        $this->artisan('computercat:byggguide:hash v1')->expectsOutputToContain('är publicerad')->assertExitCode(1);
+
+        $root = $this->tempGuide();
+        File::copyDirectory("{$root}/v1", "{$root}/v2");
+        $manifest = json_decode(file_get_contents("{$root}/v2/manifest.json"), true);
+        $manifest['version'] = 'v2';
+        $manifest['files'] = [];
+        file_put_contents("{$root}/v2/manifest.json", json_encode($manifest));
+        file_put_contents("{$root}/v2/files/next.config.ts", "export default {};\n");
+
+        $this->artisan('computercat:byggguide:hash v2')->assertExitCode(0);
+
+        $this->assertSame(hash('sha256', "export default {};\n"), BuildGuide::file('v2', 'next.config.ts')['sha256']);
+        $this->assertContains('.gitignore', array_column(BuildGuide::manifest('v2')['files'], 'path'));
+    }
+}
+```
+
+- [ ] **Steg 6: Kör och se det falla.**
+
+```bash
+cd $WT && php artisan test --filter=BuildGuideTest
+```
+
+Förväntat: FAIL, `Class "App\Services\BuildGuide" not found`.
+
+- [ ] **Steg 7: `app/Services/BuildGuideNotFound.php`, `app/Services/BuildGuide.php` och `app/Console/Commands/BuildGuideHash.php`.**
+
+```php
+<?php
+
+namespace App\Services;
+
+// Version eller sökväg finns inte i byggguiden. Meddelandet innehåller aldrig
+// anroparens indata och får visas i verktygssvar.
+class BuildGuideNotFound extends \RuntimeException
+{
+}
+```
+
+```php
+<?php
+
+namespace App\Services;
+
+// Byggguiden (spec 2c, "Byggguiden"): versionerade byggregler och färdiga,
+// testade klientfiler för spelrepon. Filerna ligger i resources/byggguide/<version>/
+// och beskrivs av manifest.json med sha256 per fil. Sökvägar slås bara upp i
+// manifestet; varje läsning kontrollerar sha256 och kastar vid avvikelse, så att
+// det som serveras alltid är det som verifierades (computercat:byggguide:verify).
+final class BuildGuide
+{
+    public const LATEST = 'v1';
+
+    public const VERSION_PATTERN = '/^v[1-9][0-9]{0,2}\z/';
+
+    // Ett MCP-svar ska hålla sig under Claude Codes 50 000 tecken även efter
+    // JSON-escaping (code.claude.com/docs/en/mcp). Större filer hämtas via REST.
+    public const INLINE_MAX_BYTES = 30000;
+
+    // sha256 av manifest.json för publicerade versioner. En publicerad version
+    // ändras aldrig; en ändring blir en ny version. BuildGuideTest vaktar.
+    public const FROZEN = [
+        'v1' => '',
+    ];
+
+    /** @return list<string> */
+    public static function versions(): array
+    {
+        $versions = [];
+        foreach (glob(self::base().'/*', GLOB_ONLYDIR) ?: [] as $dir) {
+            if (preg_match(self::VERSION_PATTERN, basename($dir)) === 1 && is_file($dir.'/manifest.json')) {
+                $versions[] = basename($dir);
+            }
+        }
+        usort($versions, fn (string $a, string $b) => (int) substr($a, 1) <=> (int) substr($b, 1));
+
+        return $versions;
+    }
+
+    public static function root(string $version): string
+    {
+        if (preg_match(self::VERSION_PATTERN, $version) !== 1 || ! is_file(self::base()."/{$version}/manifest.json")) {
+            throw new BuildGuideNotFound('Unknown build guide version.');
+        }
+
+        return self::base().'/'.$version;
+    }
+
+    public static function manifest(?string $version = null): array
+    {
+        $root = self::root($version ?? self::LATEST);
+        $manifest = json_decode((string) file_get_contents($root.'/manifest.json'), true, 32, JSON_THROW_ON_ERROR);
+
+        if (! is_array($manifest) || ($manifest['version'] ?? null) !== basename($root) || ! is_array($manifest['files'] ?? null)) {
+            throw new \RuntimeException('Byggguidens manifest för '.basename($root).' är ogiltigt.');
+        }
+
+        return $manifest;
+    }
+
+    /** @return array{path: string, sha256: string, bytes: int, content: string} */
+    public static function file(string $version, string $path): array
+    {
+        foreach (self::manifest($version)['files'] as $entry) {
+            if (($entry['path'] ?? null) === $path) {
+                return [
+                    'path' => $entry['path'],
+                    'sha256' => $entry['sha256'],
+                    'bytes' => $entry['bytes'],
+                    'content' => self::read($version, $entry['source'], $entry['sha256']),
+                ];
+            }
+        }
+
+        throw new BuildGuideNotFound('Build guide file not found.');
+    }
+
+    public static function claudeMd(string $version): string
+    {
+        return self::file($version, 'CLAUDE.md')['content'];
+    }
+
+    // README-mallen med spelets namn i rubriken. Idé-blocket lämnas orört;
+    // ReadmeIdea fyller det. Namnet får inte kunna skapa en markör eller HTML.
+    public static function readme(string $version, string $name): string
+    {
+        $template = self::manifest($version)['server_templates']['readme'] ?? null;
+        if (! is_array($template)) {
+            throw new \RuntimeException("Byggguiden {$version} saknar README-mall.");
+        }
+
+        $text = self::read($version, $template['source'], $template['sha256']);
+        $safe = str_replace(['<', '>'], ['&lt;', '&gt;'], trim((string) preg_replace('/\s+/u', ' ', $name)));
+
+        return str_replace('{{name}}', $safe, $text);
+    }
+
+    // Det som MCP-verktygen och REST visar: inga interna sökvägar.
+    public static function publicManifest(string $version): array
+    {
+        $m = self::manifest($version);
+
+        return [
+            'version' => $m['version'],
+            'stack' => $m['stack'],
+            'node' => $m['node'],
+            'overrides' => $m['overrides'],
+            'output' => $m['output'],
+            'env' => $m['env'],
+            'commands' => $m['commands'],
+            'required_checks' => $m['required_checks'],
+            'steps' => $m['steps'],
+            'files' => array_map(fn (array $f) => [
+                'path' => $f['path'],
+                'sha256' => $f['sha256'],
+                'bytes' => $f['bytes'],
+                'delivery' => $f['bytes'] <= self::INLINE_MAX_BYTES ? 'mcp' : 'download',
+                // Bara stora filer hämtas via REST. Dotfiler (.gitignore) går alltid via MCP,
+                // eftersom Forges nginx nekar sökvägar med /. i produktion.
+                'download_url' => $f['bytes'] <= self::INLINE_MAX_BYTES ? null : self::downloadUrl($m['version'], $f['path']),
+            ], $m['files']),
+        ];
+    }
+
+    // Från APP_URL och alltid https: url() kan ge http:// bakom proxyn, och
+    // spelets Claude hämtar med curl -fsS utan -L.
+    public static function downloadUrl(string $version, string $path): string
+    {
+        $base = rtrim((string) preg_replace('#^http://#', 'https://', (string) config('app.url')), '/');
+
+        return $base.'/api/v1/build-guide/'.$version.'/files/'.implode('/', array_map('rawurlencode', explode('/', $path)));
+    }
+
+    private static function read(string $version, string $source, string $sha256): string
+    {
+        $file = self::root($version).'/'.$source;
+        // source kommer ur manifestet, aldrig från anroparen; kontrollen är ett extra skydd.
+        if (str_contains($source, '..') || ! is_file($file)) {
+            throw new \RuntimeException("Byggguidens fil {$source} saknas i {$version}.");
+        }
+
+        $content = (string) file_get_contents($file);
+        if (! hash_equals($sha256, hash('sha256', $content))) {
+            throw new \RuntimeException("Byggguidens fil {$source} i {$version} stämmer inte med manifestets sha256.");
+        }
+
+        return $content;
+    }
+
+    private static function base(): string
+    {
+        // Tester pekar om till en temporär kopia; i drift alltid resources/byggguide.
+        return rtrim((string) (config('byggguide.path') ?: resource_path('byggguide')), '/');
+    }
+}
+```
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Console\Command;
+use Symfony\Component\Finder\Finder;
+
+// Skriver files[] och server_templates i manifest.json utifrån filerna på disk.
+// Bara för en version som inte är publicerad: en publicerad version ändras aldrig.
+class BuildGuideHash extends Command
+{
+    protected $signature = 'computercat:byggguide:hash {version : Byggguidens version, t.ex. v2}';
+
+    protected $description = 'Skriver sha256 och bytes för byggguidens filer i manifest.json (bara opublicerade versioner)';
+
+    public function handle(): int
+    {
+        $version = (string) $this->argument('version');
+
+        if ((BuildGuide::FROZEN[$version] ?? '') !== '') {
+            $this->error("{$version} är publicerad och ändras aldrig. Skapa en ny version.");
+
+            return self::FAILURE;
+        }
+
+        try {
+            $root = BuildGuide::root($version);
+        } catch (BuildGuideNotFound $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $readme = $root.'/templates/README.md';
+        if (! is_file($readme)) {
+            $this->error("{$version} saknar templates/README.md.");
+
+            return self::FAILURE;
+        }
+
+        $files = [];
+        foreach ((new Finder)->files()->in($root.'/files')->ignoreDotFiles(false)->ignoreVCS(false) as $file) {
+            $relative = str_replace('\\', '/', $file->getRelativePathname());
+            // Dotfiler lagras som dot.<namn>; en riktig dotfil (t.ex. .DS_Store) är ett misstag.
+            foreach (explode('/', $relative) as $segment) {
+                if (str_starts_with($segment, '.')) {
+                    $this->error("files/{$relative}: dotfiler lagras som dot.<namn>. Ta bort eller byt namn och kör igen.");
+
+                    return self::FAILURE;
+                }
+            }
+            $files[] = [
+                'path' => self::targetPath($relative),
+                'source' => 'files/'.$relative,
+                'sha256' => hash_file('sha256', $file->getPathname()),
+                'bytes' => $file->getSize(),
+            ];
+        }
+        usort($files, fn (array $a, array $b) => strcmp($a['path'], $b['path']));
+
+        $manifest = json_decode((string) file_get_contents($root.'/manifest.json'), true, 32, JSON_THROW_ON_ERROR);
+        $manifest['server_templates'] = ['readme' => ['source' => 'templates/README.md', 'sha256' => hash_file('sha256', $readme), 'bytes' => filesize($readme)]];
+        $manifest['files'] = $files;
+
+        file_put_contents($root.'/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)."\n");
+        $this->info(count($files)." filer i {$version}.");
+
+        return self::SUCCESS;
+    }
+
+    // Dotfiler lagras som dot.<namn> så att computercat-api:s git inte läser dem.
+    private static function targetPath(string $relative): string
+    {
+        return implode('/', array_map(
+            fn (string $segment) => str_starts_with($segment, 'dot.') ? '.'.substr($segment, 4) : $segment,
+            explode('/', $relative),
+        ));
+    }
+}
+```
+
+- [ ] **Steg 8: Hasha och lås v1.**
+
+```bash
+cd $WT && php artisan computercat:byggguide:hash v1
+jq '.files | length' resources/byggguide/v1/manifest.json
+SHA=$(shasum -a 256 resources/byggguide/v1/manifest.json | cut -c1-64)
+sed -i '' "s/'v1' => '',/'v1' => '$SHA',/" app/Services/BuildGuide.php
+grep -n "'v1' => '" app/Services/BuildGuide.php
+```
+
+Förväntat: `48 filer i v1.`, `48`, och raden `'v1' => '<64 hextecken>',`. Låset gör att varje senare ändring i `resources/byggguide/v1` fäller `test_published_versions_are_frozen`. Behöver v1 rättas före första deploy (fynd i Task 8B eller Task 22): töm värdet, kör hash igen, lås på nytt och skriv varför i commit-meddelandet. Efter deploy (Task 23) blir varje ändring `v2`.
+
+- [ ] **Steg 9: Tailwind i computercat-api ska inte läsa guiden.** Tailwind 4 hittar källor själv och skulle annars plocka klassnamn ur guidens `.tsx`. Lägg till i `resources/css/app.css` efter raden `@source '../**/*.js';`:
+
+```css
+@source not '../byggguide';
+```
+
+(`@source not` finns från Tailwind 4.1; `package.json` har `^4.0.0`.) Kontrollera: `cd $WT && npm run build` lyckas och `grep -c "spelmall" public/build/assets/*.css` ger `0`.
+
+- [ ] **Steg 10: Kör testet.**
+
+```bash
+cd $WT && php artisan test --filter=BuildGuideTest
+```
+
+Förväntat: `Tests: 12 passed`.
+
+- [ ] **Steg 11: Commit.**
+
+```bash
+cd $WT && git add resources/byggguide resources/css/app.css app/Services/BuildGuide.php app/Services/BuildGuideNotFound.php app/Console/Commands/BuildGuideHash.php tests/Feature/BuildGuideTest.php && git commit -m "Byggguide v1: importerad från spelmall 4a1fecb, manifest med sha256, BuildGuide och hash-kommando"
+```
+
+gitleaks i pre-commit kan flagga teststrängar i guidens filer (t.ex. `'9|token'` i `test/integration.test.tsx`). Flaggar den: läs fyndet, och är det en teststräng, ändra strängen i guiden (och kör steg 8 och 10 igen) i stället för att kringgå kontrollen.
+
+---
+
+## Task 8B: `computercat:byggguide:verify`
+
+Bevisar att guiden bygger och passerar sina egna kontroller som den skrivs ut, med kommandona ur manifestet. Körs lokalt och i utveckling, aldrig i produktion och aldrig i en request.
+
+**Files:**
+- Create: `app/Console/Commands/VerifyBuildGuide.php`, `tests/Feature/Console/BuildGuideCommandsTest.php`
+
+**Interfaces:**
+- Consumes: `BuildGuide::manifest()`, `::file()`, `::readme()`.
+- Produces: `php artisan computercat:byggguide:verify {version?} {--keep}`; exitkod 0 när `commands.install` och varje `required_checks[].command` lyckas, annars 1. `VerifyBuildGuide::SLUG = 'byggguide-verify'` (build-variabeln under verifieringen).
+
+- [ ] **Steg 1: Fallerande test.** `tests/Feature/Console/BuildGuideCommandsTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature\Console;
+
+use App\Console\Commands\VerifyBuildGuide;
+use App\Services\BuildGuide;
+use Illuminate\Process\PendingProcess;
+use Illuminate\Support\Facades\Process;
+use Tests\TestCase;
+
+class BuildGuideCommandsTest extends TestCase
+{
+    public function test_verify_refuses_in_production(): void
+    {
+        Process::fake();
+        $this->app['env'] = 'production';
+
+        $this->artisan('computercat:byggguide:verify')->expectsOutputToContain('aldrig i produktion')->assertExitCode(1);
+
+        Process::assertNothingRan();
+    }
+
+    public function test_verify_writes_every_file_and_runs_the_manifest_commands_in_order(): void
+    {
+        $ran = [];
+        $checkedFiles = false;
+        Process::fake(function (PendingProcess $process) use (&$ran, &$checkedFiles) {
+            $ran[] = ['command' => $process->command, 'path' => $process->path, 'game' => $process->environment['NEXT_PUBLIC_COMPUTERCAT_GAME'] ?? null];
+            if (! $checkedFiles) {
+                // Före första kommandot: varje fil finns med rätt sha256, och README från mallen.
+                foreach (BuildGuide::manifest('v1')['files'] as $entry) {
+                    $this->assertSame($entry['sha256'], hash_file('sha256', $process->path.'/'.$entry['path']), $entry['path']);
+                }
+                $this->assertStringContainsString('<!-- computercat:idea:start -->', file_get_contents($process->path.'/README.md'));
+                $checkedFiles = true;
+            }
+
+            return Process::result();
+        });
+
+        $this->artisan('computercat:byggguide:verify v1')->expectsOutputToContain('Byggguide v1: OK')->assertExitCode(0);
+
+        $m = BuildGuide::manifest('v1');
+        $this->assertSame([$m['commands']['install'], ...array_column($m['required_checks'], 'command')], array_column($ran, 'command'));
+        $this->assertCount(1, array_unique(array_column($ran, 'path')));
+        $this->assertSame([VerifyBuildGuide::SLUG], array_values(array_unique(array_column($ran, 'game'))));
+        $this->assertTrue($checkedFiles);
+        // Den tillfälliga katalogen är borta efteråt.
+        $this->assertDirectoryDoesNotExist($ran[0]['path']);
+    }
+
+    public function test_verify_stops_at_the_first_failing_check(): void
+    {
+        $ran = [];
+        Process::fake(function (PendingProcess $process) use (&$ran) {
+            $ran[] = $process->command;
+
+            return $process->command === 'npm run check' ? Process::result(output: '', errorOutput: 'lint failed', exitCode: 1) : Process::result();
+        });
+
+        $this->artisan('computercat:byggguide:verify')->expectsOutputToContain('npm run check misslyckades')->assertExitCode(1);
+
+        $this->assertSame(['npm ci', 'npm run check'], $ran);
+    }
+
+    public function test_verify_rejects_unknown_version(): void
+    {
+        Process::fake();
+
+        $this->artisan('computercat:byggguide:verify v9')->assertExitCode(1);
+
+        Process::assertNothingRan();
+    }
+}
+```
+
+- [ ] **Steg 2: Kör och se det falla.**
+
+```bash
+cd $WT && php artisan test --filter=BuildGuideCommandsTest
+```
+
+Förväntat: FAIL, `The command "computercat:byggguide:verify" does not exist.`
+
+- [ ] **Steg 3: `app/Console/Commands/VerifyBuildGuide.php`.**
+
+```php
+<?php
+
+namespace App\Console\Commands;
+
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Str;
+
+// Skriver ut byggguiden som spelets Claude gör (varje fil, kontrollerad mot
+// sha256, plus README ur mallen) och kör manifestets install- och kontrollkommandon.
+// Kör npm med nätverk: bara lokalt, aldrig i produktion, aldrig i en request.
+class VerifyBuildGuide extends Command
+{
+    public const SLUG = 'byggguide-verify';
+
+    protected $signature = 'computercat:byggguide:verify {version? : Standard: senaste versionen} {--keep : Behåll den tillfälliga katalogen}';
+
+    protected $description = 'Skriver ut byggguiden i en tillfällig katalog och kör npm ci och de obligatoriska kontrollerna (bara lokalt)';
+
+    public function handle(): int
+    {
+        if (app()->environment('production')) {
+            $this->error('computercat:byggguide:verify körs bara lokalt, aldrig i produktion.');
+
+            return self::FAILURE;
+        }
+
+        $version = (string) ($this->argument('version') ?? BuildGuide::LATEST);
+        try {
+            $manifest = BuildGuide::manifest($version);
+        } catch (BuildGuideNotFound $e) {
+            $this->error($e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        $dir = sys_get_temp_dir().'/byggguide-verify-'.Str::lower(Str::random(12));
+        mkdir($dir, 0700);
+
+        try {
+            foreach ($manifest['files'] as $entry) {
+                $file = BuildGuide::file($version, $entry['path']);
+                $target = $dir.'/'.$file['path'];
+                if (! is_dir(dirname($target))) {
+                    mkdir(dirname($target), 0700, true);
+                }
+                file_put_contents($target, $file['content']);
+                if (hash_file('sha256', $target) !== $file['sha256']) {
+                    $this->error("{$file['path']} skrevs inte exakt.");
+
+                    return self::FAILURE;
+                }
+            }
+            file_put_contents($dir.'/README.md', BuildGuide::readme($version, 'Byggguide-verifiering'));
+
+            $env = ['NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG];
+            foreach ([$manifest['commands']['install'], ...array_column($manifest['required_checks'], 'command')] as $command) {
+                $this->line("> {$command}");
+                $result = Process::path($dir)->env($env)->timeout(900)->run($command, fn (string $type, string $output) => $this->output->write($output));
+                if ($result->failed()) {
+                    $this->error("{$command} misslyckades (exitkod {$result->exitCode()}).");
+
+                    return self::FAILURE;
+                }
+            }
+
+            $this->info("Byggguide {$version}: OK (".count($manifest['files']).' filer, '.implode(', ', array_column($manifest['required_checks'], 'name')).').');
+
+            return self::SUCCESS;
+        } finally {
+            if ($this->option('keep')) {
+                $this->line("Katalogen behålls: {$dir}");
+            } else {
+                // Bara katalogen som skapades ovan.
+                File::deleteDirectory($dir);
+            }
+        }
+    }
+}
+```
+
+- [ ] **Steg 4: Kör testet.**
+
+```bash
+cd $WT && php artisan test --filter=BuildGuideCommandsTest
+```
+
+Förväntat: `Tests: 4 passed`.
+
+- [ ] **Steg 5: Verifiera guiden på riktigt (lokalt, nätverk mot npm-registret).**
+
+```bash
+cd $WT && php artisan computercat:byggguide:verify v1
+```
+
+Förväntat: `npm ci` utan fel, `npm run check` grön (83 tester i vitest, bygget, `check-export: OK (out/index.html, slug "byggguide-verify" inbakad)`), `npm audit` med exitkod 0, och sista raden `Byggguide v1: OK (48 filer, check, audit, static_export).` Röd kontroll: rätta i `resources/byggguide/v1` enligt Task 8A steg 8 (lås upp, hash, lås) och kör igen; en high/critical i `npm audit` som saknar fix: stanna och fråga Erik (AskUserQuestion).
+
+- [ ] **Steg 6: Commit.**
+
+```bash
+cd $WT && git add app/Console/Commands/VerifyBuildGuide.php tests/Feature/Console/BuildGuideCommandsTest.php && git commit -m "computercat:byggguide:verify: skriver ut guiden och kör manifestets kontroller, bara lokalt"
+```
+
+---
+
 ## Task 9: GitHubAppClient
 
 **Files:**
@@ -2339,9 +3374,9 @@ cd $WT && git add database/migrations/2026_10_15_100002_create_provisioning_runs
   - `jwt(?DateTimeImmutable $now = null): string`
   - `installationToken(): string`, `forgetInstallationToken(): void`
   - `getRepository(string $name): ?array` (null vid 404)
-  - `generateFromTemplate(string $name, string $description): ?array` (null bara vid 422 där namnet redan finns; andra 422 kastar `ExternalApiException`)
+  - `createRepository(string $name, string $description): ?array` (`POST /orgs/{owner}/repos` med `private: true`, `auto_init: true`; null bara vid 422 där namnet redan finns; andra 422 kastar `ExternalApiException`)
   - `getFile(string $name, string $path): ?array` → `array{sha: string, text: string}` eller null vid 404
-  - `putFile(string $name, string $path, string $text, string $sha, string $message): void` (skriver på `main`)
+  - `putFile(string $name, string $path, string $text, ?string $sha, string $message): void` (skriver på `main`; `sha` null skapar en ny fil)
   - `archiveRepository(string $name): array`
 
 - [ ] **Steg 1: Fallerande test.** `tests/Feature/Provisioning/GitHubAppClientTest.php`:
@@ -2404,51 +3439,64 @@ class GitHubAppClientTest extends ProvisioningTestCase
         $this->assertStringNotContainsString($first, (string) Cache::get('provisioning:github:installation-token'));
     }
 
-    public function test_generate_sends_private_true_and_mints_new_token_afterwards(): void
+    public function test_create_sends_exact_body_and_mints_new_token_afterwards(): void
     {
         Http::fake([
             self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
-            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(ProvisioningFakes::githubRepo('kattsvep', 'run-1'), 201),
+            'api.github.com/orgs/HumblebragAB/repos' => Http::response(ProvisioningFakes::githubRepo('kattsvep', 'run-1'), 201),
             'api.github.com/repos/HumblebragAB/kattsvep' => Http::response(ProvisioningFakes::githubRepo('kattsvep', 'run-1')),
         ]);
 
-        $repo = $this->client()->generateFromTemplate('kattsvep', 'Computercat-spel kattsvep (run run-1)');
+        $repo = $this->client()->createRepository('kattsvep', 'Computercat-spel kattsvep (run run-1)');
         $this->client()->getRepository('kattsvep');
 
         $this->assertSame('HumblebragAB/kattsvep', $repo['full_name']);
-        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/generate') && $r->data() === [
-            'owner' => 'HumblebragAB',
+        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r->url() === 'https://api.github.com/orgs/HumblebragAB/repos' && $r->data() === [
             'name' => 'kattsvep',
             'description' => 'Computercat-spel kattsvep (run run-1)',
+            // Standardvärdet är false (publikt repo); skickas alltid uttryckligen.
             'private' => true,
-            'include_all_branches' => false,
+            'auto_init' => true,
         ]);
-        // En token före generate, en ny efter.
+        // En token före skapandet, en ny efter.
         $this->assertCount(2, Http::recorded(fn ($r) => str_ends_with($r->url(), '/access_tokens')));
     }
 
-    public function test_generate_returns_null_when_the_name_already_exists(): void
+    public function test_create_returns_null_when_the_name_already_exists(): void
     {
         Http::fake([
             self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
-            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(ProvisioningFakes::githubNameTaken(), 422),
+            'api.github.com/orgs/HumblebragAB/repos' => Http::response(ProvisioningFakes::githubNameTaken(), 422),
         ]);
 
-        $this->assertNull($this->client()->generateFromTemplate('kattsvep', 'd'));
+        $this->assertNull($this->client()->createRepository('kattsvep', 'd'));
     }
 
-    // Ett 422 av annat skäl (t.ex. mallen inte markerad som mall) får aldrig
+    // Ett 422 av annat skäl (t.ex. "the endpoint has been spammed") får aldrig
     // tolkas som "namnet upptaget": då skulle slugen släppas av fel anledning.
-    public function test_generate_throws_on_other_422(): void
+    public function test_create_throws_on_other_422(): void
     {
         Http::fake([
             self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
-            'api.github.com/repos/HumblebragAB/spelmall/generate' => Http::response(['message' => 'Repository is not a template.'], 422),
+            'api.github.com/orgs/HumblebragAB/repos' => Http::response(['message' => 'Validation failed, or the endpoint has been spammed.'], 422),
         ]);
 
         $this->expectException(ExternalApiException::class);
-        $this->expectExceptionMessage('GitHub POST /repos/HumblebragAB/spelmall/generate returned 422');
-        $this->client()->generateFromTemplate('kattsvep', 'd');
+        $this->expectExceptionMessage('GitHub POST /orgs/HumblebragAB/repos returned 422');
+        $this->client()->createRepository('kattsvep', 'd');
+    }
+
+    // 403 (t.ex. saknad rättighet, spike S8) kastas och syns; inget nytt försök.
+    public function test_create_throws_on_403(): void
+    {
+        Http::fake([
+            self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/orgs/HumblebragAB/repos' => Http::response(['message' => 'Resource not accessible by integration'], 403),
+        ]);
+
+        $this->expectException(ExternalApiException::class);
+        $this->expectExceptionMessage('returned 403');
+        $this->client()->createRepository('kattsvep', 'd');
     }
 
     public function test_get_repository_returns_null_on_404_and_throws_on_500(): void
@@ -2479,7 +3527,20 @@ class GitHubAppClientTest extends ProvisioningTestCase
         $this->client()->putFile('kattsvep', 'README.md', 'Ny text', $file['sha'], 'Meddelande');
 
         $this->assertSame(['sha' => 'readme-sha-1', 'text' => '# Hej å'], $file);
-        Http::assertSent(fn ($r) => $r->method() === 'PUT' && $r->data() === ['message' => 'Meddelande', 'content' => base64_encode('Ny text'), 'sha' => 'readme-sha-1', 'branch' => 'main']);
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && $r->data() === ['message' => 'Meddelande', 'content' => base64_encode('Ny text'), 'branch' => 'main', 'sha' => 'readme-sha-1']);
+    }
+
+    // En ny fil (CLAUDE.md) skapas utan sha (spike S11).
+    public function test_put_new_file_omits_sha(): void
+    {
+        Http::fake([
+            self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/kattsvep/contents/CLAUDE.md' => Http::response(['content' => ['sha' => 'ny']], 201),
+        ]);
+
+        $this->client()->putFile('kattsvep', 'CLAUDE.md', '# CLAUDE.md', null, 'Meddelande');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && $r->data() === ['message' => 'Meddelande', 'content' => base64_encode('# CLAUDE.md'), 'branch' => 'main']);
     }
 
     public function test_get_file_returns_null_on_404(): void
@@ -2648,16 +3709,17 @@ class GitHubAppClient
         return $response->status() === 404 ? null : $response->json();
     }
 
-    public function generateFromTemplate(string $name, string $description): ?array
+    // Bilaga B §6: POST /orgs/{org}/repos. auto_init ger en första commit med
+    // README, så att Contents-API:t kan skriva README och CLAUDE.md direkt.
+    public function createRepository(string $name, string $description): ?array
     {
-        [$templateOwner, $templateName] = explode('/', ProvisioningConfig::templateRepo(), 2);
-        $response = $this->github('POST', "/repos/{$templateOwner}/{$this->repoName($templateName)}/generate", [
-            'owner' => $this->owner(),
+        $path = '/orgs/'.$this->owner().'/repos';
+        $response = $this->github('POST', $path, [
             'name' => $this->repoName($name),
             'description' => $description,
             // Standardvärdet är false (publikt repo); skickas alltid uttryckligen.
             'private' => true,
-            'include_all_branches' => false,
+            'auto_init' => true,
         ], [422]);
 
         // Bilaga B §2: det är inte dokumenterat att en redan utfärdad token
@@ -2674,7 +3736,7 @@ class GitHubAppClient
             return null;
         }
 
-        throw new ExternalApiException('GitHub', 'POST', "/repos/{$templateOwner}/{$templateName}/generate", 422, Redactor::body($response->body()));
+        throw new ExternalApiException('GitHub', 'POST', $path, 422, Redactor::body($response->body()));
     }
 
     /** @return array{sha: string, text: string}|null */
@@ -2700,15 +3762,20 @@ class GitHubAppClient
         return ['sha' => $sha, 'text' => $text];
     }
 
-    public function putFile(string $name, string $path, string $text, string $sha, string $message): void
+    // sha krävs för att skriva över en befintlig fil och utelämnas för en ny (spike S11).
+    public function putFile(string $name, string $path, string $text, ?string $sha, string $message): void
     {
-        $this->github('PUT', '/repos/'.$this->owner().'/'.$this->repoName($name).'/contents/'.$this->filePath($path), [
+        $body = [
             'message' => $message,
             'content' => base64_encode($text),
-            'sha' => $sha,
-            // Kontraktet med mallen (2b): skrivningen sker på main.
+            // Spelrepona har bara main; Coolify bygger main.
             'branch' => 'main',
-        ]);
+        ];
+        if ($sha !== null) {
+            $body['sha'] = $sha;
+        }
+
+        $this->github('PUT', '/repos/'.$this->owner().'/'.$this->repoName($name).'/contents/'.$this->filePath($path), $body);
     }
 
     public function archiveRepository(string $name): array
@@ -2766,12 +3833,12 @@ class GitHubAppClient
 cd $WT && php artisan test --filter=GitHubAppClientTest
 ```
 
-Förväntat: `Tests: 11 passed`. Om `test_generate_sends_private_true_and_mints_new_token_afterwards` räknar fel antal token-anrop: kontrollera att `forgetInstallationToken()` anropas även vid 422.
+Förväntat: `Tests: 13 passed`. Om `test_create_sends_exact_body_and_mints_new_token_afterwards` räknar fel antal token-anrop: kontrollera att `forgetInstallationToken()` anropas även vid 422.
 
 - [ ] **Steg 5: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/Clients/GitHubAppClient.php tests/Feature/Provisioning/GitHubAppClientTest.php && git commit -m "GitHubAppClient: JWT, installationstoken, generate, contents och arkivering utan DELETE"
+cd $WT && git add app/Provisioning/Clients/GitHubAppClient.php tests/Feature/Provisioning/GitHubAppClientTest.php && git commit -m "GitHubAppClient: JWT, installationstoken, organisationsrepo, contents och arkivering utan DELETE"
 ```
 
 ---
@@ -2792,7 +3859,7 @@ cd $WT && git add app/Provisioning/Clients/GitHubAppClient.php tests/Feature/Pro
   - `application(string $uuid): array`
   - `environmentVariables(string $uuid): array`
   - `createBuildVariable(string $uuid, string $key, string $value): void`, `updateBuildVariable(string $uuid, string $key, string $value): void`
-  - `deploy(string $uuid): string` (deployment-uuid), `deploymentStatus(string $deploymentUuid): string`
+  - `latestDeployment(string $uuid): ?array` → `array{deployment_uuid: string, status: string, created_at: string}` eller null när appen aldrig byggts (`GET /deployments/applications/{uuid}?skip=0&take=1`, spike S22). Ingen metod startar ett bygge.
   - `deleteApplication(string $uuid): void`
   - `CoolifyConflictException`, `CoolifyGuardException` (båda `SafeMessage`).
 
@@ -2933,36 +4000,58 @@ class CoolifyClientTest extends ProvisioningTestCase
         Http::assertSent(fn ($r) => $r->method() === 'DELETE' && $r->url() === 'https://coolify.test/api/v1/applications/app-1');
     }
 
-    public function test_build_variable_and_deploy_are_guarded_and_use_post(): void
+    public function test_build_variable_is_guarded_and_uses_post(): void
     {
         $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
         Http::fake([
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
             'coolify.test/api/v1/applications/app-1/envs' => Http::response(ProvisioningFakes::coolifyEnv('NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep'), 201),
-            'coolify.test/api/v1/deploy*' => Http::response(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-1')),
         ]);
 
         $this->client()->createBuildVariable('app-1', 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep');
-        $deployment = $this->client()->deploy('app-1');
 
-        $this->assertSame('dep-1', $deployment);
         Http::assertSent(fn ($r) => $r->method() === 'POST' && str_ends_with($r->url(), '/applications/app-1/envs') && $r->data() === [
             'key' => 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'value' => 'kattsvep', 'is_preview' => false, 'is_buildtime' => true, 'is_runtime' => false,
         ]);
-        Http::assertSent(fn ($r) => $r->method() === 'POST' && $r->url() === 'https://coolify.test/api/v1/deploy?uuid=app-1');
     }
 
-    public function test_deployment_status_is_validated(): void
+    public function test_latest_deployment_reads_the_newest_and_validates_status(): void
     {
+        $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
+        $this->provisioningRun(['coolify_app_uuid' => 'app-2']);
+        $this->provisioningRun(['coolify_app_uuid' => 'app-3']);
         Http::fake([
-            'coolify.test/api/v1/deployments/dep-1' => Http::response(ProvisioningFakes::coolifyDeployment('in_progress')),
-            'coolify.test/api/v1/deployments/dep-2' => Http::response(ProvisioningFakes::coolifyDeployment('weird')),
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'in_progress', '2026-10-14T09:00:00.000000Z'], ['dep-1', 'finished']])),
+            'coolify.test/api/v1/deployments/applications/app-2*' => Http::response(ProvisioningFakes::coolifyDeployments([])),
+            'coolify.test/api/v1/deployments/applications/app-3*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-9', 'weird']])),
         ]);
 
-        $this->assertSame('in_progress', $this->client()->deploymentStatus('dep-1'));
+        $this->assertSame(['deployment_uuid' => 'dep-2', 'status' => 'in_progress', 'created_at' => '2026-10-14T09:00:00.000000Z'], $this->client()->latestDeployment('app-1'));
+        $this->assertNull($this->client()->latestDeployment('app-2'));
+        Http::assertSent(fn ($r) => $r->method() === 'GET' && $r->url() === 'https://coolify.test/api/v1/deployments/applications/app-1?skip=0&take=1');
 
         $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
-        $this->client()->deploymentStatus('dep-2');
+        $this->client()->latestDeployment('app-3');
+    }
+
+    // Läsning kräver också att uuid:t kommer från en run (spärren gäller alla anrop med app-uuid).
+    public function test_latest_deployment_refuses_unknown_uuid(): void
+    {
+        Http::fake();
+
+        $this->expectException(CoolifyGuardException::class);
+        try {
+            $this->client()->latestDeployment('okand');
+        } finally {
+            Http::assertNothingSent();
+        }
+    }
+
+    public function test_client_cannot_start_a_build(): void
+    {
+        foreach ((new \ReflectionClass(CoolifyClient::class))->getMethods() as $method) {
+            $this->assertDoesNotMatchRegularExpression('/^(deploy|start|restart|redeploy)/i', $method->getName());
+        }
     }
 }
 ```
@@ -3134,29 +4223,33 @@ class CoolifyClient
         $this->coolify('PATCH', '/applications/'.$uuid.'/envs', $this->buildVariable($key, $value));
     }
 
-    public function deploy(string $uuid): string
+    // Computercat startar aldrig ett bygge (byggguiden: första bygget kommer
+    // från auto-deploy när spelets Claude pushar). Bara läsning av senaste bygget.
+    // Svarsformen {count, deployments[]} nyast först är verifierad i spike S22.
+    /** @return array{deployment_uuid: string, status: string, created_at: string}|null */
+    public function latestDeployment(string $uuid): ?array
     {
-        $this->assertInDemoProject($uuid);
-        $path = '/deploy?'.http_build_query(['uuid' => $uuid]);
-        $response = $this->coolify('POST', $path);
-        $deployment = $response->json('deployments.0.deployment_uuid');
-        if (! is_string($deployment) || $deployment === '') {
-            throw new ExternalApiException('Coolify', 'POST', $path, $response->status(), 'response lacks deployments[0].deployment_uuid');
+        $this->assertKnown($uuid);
+        $path = '/deployments/applications/'.$uuid.'?'.http_build_query(['skip' => 0, 'take' => 1]);
+        $deployments = $this->coolify('GET', $path)->json('deployments');
+        if (! is_array($deployments)) {
+            throw new ExternalApiException('Coolify', 'GET', $path, 200, 'response lacks deployments[]');
+        }
+        if ($deployments === []) {
+            return null;
         }
 
-        return $deployment;
-    }
-
-    public function deploymentStatus(string $deploymentUuid): string
-    {
-        $this->assertUuidFormat($deploymentUuid);
-        $path = '/deployments/'.$deploymentUuid;
-        $status = $this->coolify('GET', $path)->json('status');
+        $latest = $deployments[0];
+        $status = $latest['status'] ?? null;
         if (! in_array($status, self::DEPLOYMENT_STATUSES, true)) {
             throw new ExternalApiException('Coolify', 'GET', $path, 200, 'unknown deployment status: '.(is_scalar($status) ? (string) $status : gettype($status)));
         }
 
-        return $status;
+        return [
+            'deployment_uuid' => (string) ($latest['deployment_uuid'] ?? ''),
+            'status' => $status,
+            'created_at' => (string) ($latest['created_at'] ?? ''),
+        ];
     }
 
     // Asynkron i Coolify (DeleteResourceJob); standardvärdena på query-flaggorna (alla true) används.
@@ -3221,12 +4314,12 @@ class CoolifyClient
 cd $WT && php artisan test --filter=CoolifyClientTest
 ```
 
-Förväntat: `Tests: 9 passed`.
+Förväntat: `Tests: 11 passed`.
 
 - [ ] **Steg 6: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/Clients/CoolifyClient.php app/Provisioning/Clients/CoolifyConflictException.php app/Provisioning/Clients/CoolifyGuardException.php tests/Feature/Provisioning/CoolifyClientTest.php && git commit -m "CoolifyClient: Demo-appar, skapa, build-variabel, deploy och radering bakom uuid- och projektspärr"
+cd $WT && git add app/Provisioning/Clients/CoolifyClient.php app/Provisioning/Clients/CoolifyConflictException.php app/Provisioning/Clients/CoolifyGuardException.php tests/Feature/Provisioning/CoolifyClientTest.php && git commit -m "CoolifyClient: Demo-appar, skapa, build-variabel, senaste bygget och radering bakom uuid- och projektspärr"
 ```
 
 ---
@@ -3358,7 +4451,7 @@ class SiteOpsClientTest extends ProvisioningTestCase
 
     public function test_403_on_create_throws_with_path(): void
     {
-        Http::fake(['siteops.test/api/v1/sites' => Http::response(['message' => 'Missing scope sites:write'], 403)]);
+        Http::fake(['siteops.test/api/v1/sites' => Http::response(['message' => 'Missing scope demo-sites:write'], 403)]);
 
         $this->expectException(ExternalApiException::class);
         $this->expectExceptionMessage('SiteOps POST /sites returned 403');
@@ -3405,7 +4498,8 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 // SiteOps API v1 enligt det låsta kontraktet i delprojekt 2a. Nyckeln har
-// sites:read och sites:write; API:t har ingen radering. PATCH och deactivate
+// sites:read och det smala demo-sites:write: bara Demo-webbar, aldrig
+// credentials, pejl_customer_id eller cms_type (422). API:t har ingen radering. PATCH och deactivate
 // fungerar bara på webbar som Computercats egen klient skapade (403 annars).
 class SiteOpsClient
 {
@@ -3658,13 +4752,13 @@ class AdvanceProvisioningRunTest extends ProvisioningTestCase
     public function test_wait_releases_job_and_keeps_step_pending(): void
     {
         $run = $this->startedRun();
-        $this->fakeStep(RepoStep::class, fn () => StepResult::wait(30, ['deployment_uuid' => 'dep-1']));
+        $this->fakeStep(RepoStep::class, fn () => StepResult::wait(10, ['readme_wait_started_at' => '2026-10-14T08:00:00+00:00']));
 
         $job = $this->runJob($run);
 
-        $job->assertReleased(delay: 30);
+        $job->assertReleased(delay: 10);
         $this->assertSame(ProvisioningStep::PENDING, $this->stepStatus($run, 'repo'));
-        $this->assertSame('dep-1', $run->steps()->where('step', 'repo')->first()->detail['deployment_uuid']);
+        $this->assertSame('2026-10-14T08:00:00+00:00', $run->steps()->where('step', 'repo')->first()->detail['readme_wait_started_at']);
         Queue::assertPushed(AdvanceProvisioningRun::class, 1);
     }
 
@@ -3763,7 +4857,8 @@ class AdvanceProvisioningRunTest extends ProvisioningTestCase
         // --tries=1 på workern skulle annars fälla jobbet vid andra release().
         $this->assertSame(0, $job->tries);
         $this->assertNotNull($job->retryUntil());
-        $this->assertTrue($job->retryUntil()->greaterThan(now()->addMinutes(config('provisioning.deploy_timeout_minutes'))));
+        // Längsta väntan i ett steg är Coolify-raderingen (arkivering) och README efter skapandet.
+        $this->assertTrue($job->retryUntil()->greaterThan(now()->addMinutes(max(config('provisioning.coolify_delete_timeout_minutes'), config('provisioning.repo_ready_timeout_minutes')))));
         // Ett jobb som pågår längre än retry_after körs annars en gång till parallellt.
         $this->assertLessThan(config('queue.connections.database.retry_after'), $job->timeout);
         // Ett undantag som ändå når kön får inte köras om i en tät loop.
@@ -3810,7 +4905,8 @@ class AdvanceProvisioningRunTest extends ProvisioningTestCase
     {
         $this->assertSame(GameStep::class, Saga::PROVISION_STEPS['game']);
         $this->assertSame(CoolifyDeleteStep::class, Saga::ARCHIVE_STEPS['coolify_delete']);
-        $this->assertSame(['repo', 'game', 'coolify_app', 'coolify_env', 'cors', 'siteops', 'deploy'], array_keys(Saga::PROVISION_STEPS));
+        // Inget deploy-steg: repot är redo för kod efter siteops, och första bygget kommer från pushen.
+        $this->assertSame(['repo', 'game', 'coolify_app', 'coolify_env', 'cors', 'siteops'], array_keys(Saga::PROVISION_STEPS));
         $this->assertSame(['coolify_delete', 'siteops_deactivate', 'repo_archive', 'game_deactivate'], array_keys(Saga::ARCHIVE_STEPS));
     }
 }
@@ -3851,7 +4947,7 @@ final class StepResult
         return new self(self::DONE, $detail);
     }
 
-    // Steget är inte klart än (bygge pågår, README inte skapad): jobbet släpps och körs igen.
+    // Steget är inte klart än (README inte skapad, Coolify-appen inte borta): jobbet släpps och körs igen.
     public static function wait(int $seconds, array $detail = []): self
     {
         return new self(self::WAIT, $detail, $seconds);
@@ -3917,7 +5013,6 @@ final class Saga
         'coolify_env' => Steps\CoolifyEnvStep::class,
         'cors' => Steps\CorsStep::class,
         'siteops' => Steps\SiteOpsStep::class,
-        'deploy' => Steps\DeployStep::class,
     ];
 
     public const ARCHIVE_STEPS = [
@@ -3956,18 +5051,6 @@ final class Saga
 
         if ($updated !== 1) {
             return false;
-        }
-
-        // Ett deploy-steg som dog på kö-timeout (failed()-kroken, inte DeployStep)
-        // har kvar deployment_uuid med passerad deadline. Flytta det till
-        // previous_deployments som DeployStep::forget() gör, så att retry startar
-        // ett nytt bygge i stället för att genast falla på det gamla.
-        $deploy = $run->steps()->where('step', 'deploy')->where('status', ProvisioningStep::FAILED)->first();
-        if ($deploy !== null && isset($deploy->detail['deployment_uuid'])) {
-            $detail = $deploy->detail;
-            $detail['previous_deployments'] = [...($detail['previous_deployments'] ?? []), $detail['deployment_uuid']];
-            unset($detail['deployment_uuid'], $detail['deploy_started_at']);
-            $deploy->update(['detail' => $detail]);
         }
 
         $run->steps()->where('status', ProvisioningStep::FAILED)->update(['status' => ProvisioningStep::PENDING]);
@@ -4042,7 +5125,8 @@ class AdvanceProvisioningRun implements ShouldQueue
     public function retryUntil(): \Illuminate\Support\Carbon
     {
         // Ett nytt jobb köas per steg, så fönstret gäller ett steg i taget.
-        return now()->addMinutes((int) config('provisioning.deploy_timeout_minutes') + 10);
+        // Längsta väntan: Coolify-radering (10 min) eller README (3 min), plus marginal.
+        return now()->addMinutes(max((int) config('provisioning.coolify_delete_timeout_minutes'), (int) config('provisioning.repo_ready_timeout_minutes')) + 10);
     }
 
     public function middleware(): array
@@ -4170,8 +5254,8 @@ cd $WT && git add app/Provisioning/Saga.php app/Provisioning/StepResult.php app/
 - Test: `tests/Unit/Provisioning/ReadmeIdeaTest.php`, `tests/Feature/Provisioning/RepoStepTest.php`, `tests/Feature/Provisioning/GameStepTest.php`, `tests/Feature/Provisioning/StepTestHelpers.php`
 
 **Interfaces:**
-- Consumes: `GitHubAppClient`, `ProvisioningConfig`, `StepResult`, `StepFailed`.
-- Produces: `ReadmeIdea::insert(string $readme, string $idea): string`, `ReadmeIdea::START`, `ReadmeIdea::END`; `RepoStep`, `GameStep` (implementerar `Step`). Sätter `provisioning_runs.github_repo`, `game_id`, `demo_url`.
+- Consumes: `GitHubAppClient`, `ProvisioningConfig`, `BuildGuide::readme()`, `BuildGuide::claudeMd()`, `BuildGuide::LATEST` (Task 8A), `StepResult`, `StepFailed`.
+- Produces: `ReadmeIdea::insert(string $readme, string $idea): string`, `ReadmeIdea::START`, `ReadmeIdea::END`; `RepoStep`, `GameStep` (implementerar `Step`). Sätter `provisioning_runs.github_repo`, `game_id`, `demo_url`; `repo`-stegets `detail` får `repo_ok`, `readme_wait_started_at`, `build_guide` (versionen som skrevs), `readme`, `claude_md`.
 
 - [ ] **Steg 1: Testhjälpare.** `tests/Feature/Provisioning/StepTestHelpers.php`:
 
@@ -4218,10 +5302,11 @@ use PHPUnit\Framework\TestCase;
 
 class ReadmeIdeaTest extends TestCase
 {
-    // Kontraktet med spelmallen (2b, "Gränssnitt mot 2c"). Ändras här bara samtidigt som där.
+    // Kontraktet med byggguidens README-mall (resources/byggguide/<version>/templates/README.md,
+    // ursprungligen 2b "Gränssnitt mot 2c"). Ändras här bara samtidigt som i en ny guideversion.
     private const README = "# Spel\n\n<!-- computercat:idea:start -->\n_Idén fylls i av create_game när spelet skapas._\n<!-- computercat:idea:end -->\n\nSlut.\n";
 
-    public function test_markers_match_the_template_contract(): void
+    public function test_markers_match_the_readme_template_contract(): void
     {
         $this->assertSame('<!-- computercat:idea:start -->', ReadmeIdea::START);
         $this->assertSame('<!-- computercat:idea:end -->', ReadmeIdea::END);
@@ -4281,9 +5366,10 @@ class ReadmeIdeaTest extends TestCase
 namespace Tests\Feature\Provisioning;
 
 use App\Models\ProvisioningRun;
-use App\Provisioning\StepFailed;
+use App\Provisioning\ReadmeIdea;
 use App\Provisioning\StepResult;
 use App\Provisioning\Steps\RepoStep;
+use App\Services\BuildGuide;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\ProvisioningFakes;
 
@@ -4295,26 +5381,36 @@ class RepoStepTest extends ProvisioningTestCase
 
     private const REPO = 'api.github.com/repos/HumblebragAB/kattsvep';
 
-    private const GENERATE = 'api.github.com/repos/HumblebragAB/spelmall/generate';
+    private const CREATE = 'api.github.com/orgs/HumblebragAB/repos';
 
     private const README = 'api.github.com/repos/HumblebragAB/kattsvep/contents/README.md';
 
+    private const CLAUDE = 'api.github.com/repos/HumblebragAB/kattsvep/contents/CLAUDE.md';
+
     private function run_(): ProvisioningRun
     {
-        return $this->provisioningRun(['slug' => 'kattsvep', 'idea' => 'Minröj där katter letar bajs.']);
+        return $this->provisioningRun(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'idea' => 'Minröj där katter letar bajs.']);
     }
 
-    public function test_creates_repo_waits_for_readme_then_writes_idea(): void
+    private function wantedReadme(): string
+    {
+        return ReadmeIdea::insert(BuildGuide::readme('v1', 'Kattsvep'), 'Minröj där katter letar bajs.');
+    }
+
+    public function test_creates_repo_waits_for_readme_then_writes_readme_and_claude_md(): void
     {
         $run = $this->run_();
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
             self::REPO => Http::response(['message' => 'Not Found'], 404),
-            self::GENERATE => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid), 201),
+            self::CREATE => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid), 201),
             self::README => Http::sequence()
                 ->push(['message' => 'Not Found'], 404)
-                ->push(ProvisioningFakes::githubContent(ProvisioningFakes::templateReadme()))
+                ->push(ProvisioningFakes::githubContent(ProvisioningFakes::autoInitReadme('kattsvep')))
                 ->push(['content' => ['sha' => 'ny']]),
+            self::CLAUDE => Http::sequence()
+                ->push(['message' => 'Not Found'], 404)
+                ->push(['content' => ['sha' => 'claude']], 201),
         ]);
 
         $first = $this->runStep(RepoStep::class, $run, 'repo');
@@ -4324,24 +5420,44 @@ class RepoStepTest extends ProvisioningTestCase
         $this->assertSame(10, $first->seconds);
         $this->assertSame(StepResult::DONE, $second->outcome);
         $this->assertSame('HumblebragAB/kattsvep', $run->fresh()->github_repo);
-        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/generate') && $r['private'] === true && $r['description'] === "Computercat-spel kattsvep (run {$run->uuid})");
-        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_contains(base64_decode($r['content']), "<!-- computercat:idea:start -->\nMinröj där katter letar bajs.\n<!-- computercat:idea:end -->") && $r['sha'] === 'readme-sha-1');
-        $this->assertCount(1, Http::recorded(fn ($r) => str_ends_with($r->url(), '/generate')));
+        $this->assertSame('v1', $run->steps()->where('step', 'repo')->first()->detail['build_guide']);
+        Http::assertSent(fn ($r) => $r->url() === 'https://'.self::CREATE && $r['private'] === true && $r['auto_init'] === true && $r['description'] === "Computercat-spel kattsvep (run {$run->uuid})");
+        // README: hela filen ersätts av mallen med namn och idé, med auto_init-filens sha.
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/README.md') && base64_decode($r['content']) === $this->wantedReadme() && $r['sha'] === 'readme-sha-1');
+        // CLAUDE.md: ny fil, exakt byggguidens, utan sha.
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && base64_decode($r['content']) === BuildGuide::claudeMd('v1') && ! isset($r['sha']));
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->url() === 'https://'.self::CREATE));
     }
 
-    public function test_own_repository_is_adopted_on_retry(): void
+    public function test_own_repository_is_adopted_on_retry_and_correct_files_are_not_rewritten(): void
     {
         $run = $this->run_();
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
             self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
-            self::README => Http::sequence()
-                ->push(ProvisioningFakes::githubContent(ProvisioningFakes::templateReadme()))
-                ->push(['content' => ['sha' => 'ny']]),
+            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
+            self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'), 'claude-sha')),
         ]);
 
         $this->assertSame(StepResult::DONE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
-        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/generate'));
+        Http::assertNotSent(fn ($r) => $r->url() === 'https://'.self::CREATE || $r->method() === 'PUT');
+    }
+
+    public function test_changed_claude_md_is_overwritten_with_its_sha(): void
+    {
+        $run = $this->run_();
+        Http::fake([
+            self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
+            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
+            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
+            self::CLAUDE => Http::sequence()
+                ->push(ProvisioningFakes::githubContent("# Gammal\n", 'claude-sha'))
+                ->push(['content' => ['sha' => 'ny']]),
+        ]);
+
+        $this->runStep(RepoStep::class, $run, 'repo');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && $r['sha'] === 'claude-sha');
     }
 
     public function test_foreign_repository_releases_the_slug(): void
@@ -4349,25 +5465,27 @@ class RepoStepTest extends ProvisioningTestCase
         $run = $this->run_();
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
-            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', 'annan-run', template: null, description: 'Mattias gamla repo')),
+            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', 'annan-run', description: 'Mattias gamla repo')),
         ]);
 
         $result = $this->runStep(RepoStep::class, $run, 'repo');
 
         $this->assertSame(StepResult::RELEASE, $result->outcome);
         $this->assertStringContainsString('Slug is taken on GitHub', $result->reason);
-        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/generate') || $r->method() === 'PUT');
+        Http::assertNotSent(fn ($r) => $r->url() === 'https://'.self::CREATE || $r->method() === 'PUT');
     }
 
-    public function test_repo_from_other_template_with_our_uuid_is_not_adopted(): void
+    // Ett publikt repo adopteras aldrig, även med vårt run-uuid i beskrivningen.
+    public function test_public_repo_with_our_uuid_is_not_adopted(): void
     {
         $run = $this->run_();
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
-            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid, template: 'HumblebragAB/annan-mall')),
+            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid, private: false)),
         ]);
 
         $this->assertSame(StepResult::RELEASE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
+        Http::assertNotSent(fn ($r) => $r->method() === 'PUT');
     }
 
     // Spec: 422 "name already exists" utan match släpper slugen. Appen ser inte
@@ -4380,10 +5498,10 @@ class RepoStepTest extends ProvisioningTestCase
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
             self::REPO => Http::sequence()
                 ->push(['message' => 'Not Found'], 404)
-                ->push(ProvisioningFakes::githubRepo('kattsvep', 'annan-run', template: null))
+                ->push(ProvisioningFakes::githubRepo('kattsvep', 'annan-run'))
                 ->push(['message' => 'Not Found'], 404)
                 ->push(['message' => 'Not Found'], 404),
-            self::GENERATE => Http::response(ProvisioningFakes::githubNameTaken(), 422),
+            self::CREATE => Http::response(ProvisioningFakes::githubNameTaken(), 422),
         ]);
 
         $this->assertSame(StepResult::RELEASE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
@@ -4400,38 +5518,26 @@ class RepoStepTest extends ProvisioningTestCase
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
             self::REPO => Http::response(['message' => 'Not Found'], 404),
-            self::GENERATE => Http::response(['message' => 'Repository is not a template.'], 422),
+            self::CREATE => Http::response(['message' => 'Validation failed, or the endpoint has been spammed.'], 422),
         ]);
 
         $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
         $this->runStep(RepoStep::class, $run, 'repo');
     }
 
-    public function test_readme_without_markers_fails(): void
+    // En omkörning skriver samma guideversion som första försöket, även om en nyare kommit.
+    public function test_retry_keeps_the_build_guide_version_of_the_first_attempt(): void
     {
         $run = $this->run_();
+        $this->stepRow($run, 'repo')->update(['detail' => ['repo_ok' => true, 'readme_wait_started_at' => now()->toIso8601String(), 'build_guide' => 'v1']]);
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
-            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
-            self::README => Http::response(ProvisioningFakes::githubContent("# Utan markörer\n")),
-        ]);
-
-        $this->expectException(StepFailed::class);
-        $this->runStep(RepoStep::class, $run, 'repo');
-    }
-
-    public function test_readme_that_already_has_the_idea_is_not_rewritten(): void
-    {
-        $run = $this->run_();
-        $written = \App\Provisioning\ReadmeIdea::insert(ProvisioningFakes::templateReadme(), 'Minröj där katter letar bajs.');
-        Http::fake([
-            self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
-            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
-            self::README => Http::response(ProvisioningFakes::githubContent($written)),
+            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
+            self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'))),
         ]);
 
         $this->assertSame(StepResult::DONE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
-        Http::assertNotSent(fn ($r) => $r->method() === 'PUT');
+        Http::assertNotSent(fn ($r) => $r->method() === 'PUT' || str_ends_with($r->url(), '/repos/HumblebragAB/kattsvep'));
     }
 
     public function test_readme_that_never_appears_fails_after_timeout(): void
@@ -4446,7 +5552,7 @@ class RepoStepTest extends ProvisioningTestCase
         $this->assertSame(StepResult::WAIT, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
         $this->travel(4)->minutes();
 
-        $this->expectException(StepFailed::class);
+        $this->expectException(\App\Provisioning\StepFailed::class);
         $this->runStep(RepoStep::class, $run, 'repo');
     }
 }
@@ -4521,9 +5627,9 @@ Förväntat: FAIL, `Class "App\Provisioning\ReadmeIdea" not found` m.fl.
 
 namespace App\Provisioning;
 
-// Mallens README har ett block mellan två markörrader som create_game fyller
-// med spelets idé. Kontraktet ägs av spelmallen (2b, "Gränssnitt mot 2c:
-// idé-markören i README.md") och vaktas där av test/docs.test.ts.
+// Byggguidens README-mall har ett block mellan två markörrader som create_game
+// fyller med spelets idé. Kontraktet ägs av byggguiden (templates/README.md, från 2b "Gränssnitt mot 2c:
+// idé-markören i README.md") och vaktas av BuildGuideTest och, i varje spelrepo, test/docs.test.ts.
 final class ReadmeIdea
 {
     public const START = '<!-- computercat:idea:start -->';
@@ -4576,11 +5682,14 @@ use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\ReadmeIdea;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
+use App\Services\BuildGuide;
 use Illuminate\Support\Carbon;
 
-// Repot skapas från mallen och idén skrivs i README. Ett repo med samma namn
-// adopteras bara om det bevisligen skapats av just den här runnen (run-uuid i
-// beskrivningen och mallen som källa); annars släpps slugen.
+// Ett tomt privat repo skapas (auto_init) och får README (byggguidens mall med
+// namn och idé) och CLAUDE.md (byggguidens). Grundkoden skriver spelets Claude
+// själv med get_build_guide. Ett repo med samma namn adopteras bara om det
+// bevisligen skapats av just den här runnen (run-uuid i beskrivningen, privat);
+// annars släpps slugen.
 final class RepoStep implements Step
 {
     public function __construct(private GitHubAppClient $github) {}
@@ -4597,11 +5706,14 @@ final class RepoStep implements Step
             $run->update(['github_repo' => ProvisioningConfig::repoFullName($run->slug)]);
             $detail['repo_ok'] = true;
             $detail['readme_wait_started_at'] = now()->toIso8601String();
+            // Samma version vid omkörning, även om en nyare publiceras under tiden.
+            $detail['build_guide'] = BuildGuide::LATEST;
         }
+        $version = $detail['build_guide'] ?? BuildGuide::LATEST;
 
-        // /generate är asynkront i praktiken: innehållet kan saknas en stund.
-        $file = $this->github->getFile($run->slug, 'README.md');
-        if ($file === null) {
+        // auto_init skapar README i första commiten; den kan saknas en kort stund.
+        $readme = $this->github->getFile($run->slug, 'README.md');
+        if ($readme === null) {
             $deadline = Carbon::parse($detail['readme_wait_started_at'])->addMinutes((int) config('provisioning.repo_ready_timeout_minutes'));
             if ($deadline->isPast()) {
                 throw new StepFailed('README.md did not appear in the new repository within '.config('provisioning.repo_ready_timeout_minutes').' minutes.');
@@ -4610,12 +5722,21 @@ final class RepoStep implements Step
             return StepResult::wait(10, $detail);
         }
 
-        $updated = ReadmeIdea::insert($file['text'], (string) $run->idea);
-        if ($updated !== $file['text']) {
-            $this->github->putFile($run->slug, 'README.md', $updated, $file['sha'], "Spelidé från create_game (run {$run->uuid})");
+        // Hela README ersätts; ReadmeIdea fallerar (och inget skrivs) om mallens markörer är fel.
+        $wanted = ReadmeIdea::insert(BuildGuide::readme($version, (string) $run->name), (string) $run->idea);
+        if ($readme['text'] !== $wanted) {
+            $this->github->putFile($run->slug, 'README.md', $wanted, $readme['sha'], "README från byggguide {$version} (run {$run->uuid})");
         }
 
-        return StepResult::done($detail + ['readme' => 'written']);
+        $claude = BuildGuide::claudeMd($version);
+        $existing = $this->github->getFile($run->slug, 'CLAUDE.md');
+        if ($existing === null) {
+            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, null, "CLAUDE.md från byggguide {$version} (run {$run->uuid})");
+        } elseif ($existing['text'] !== $claude) {
+            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, $existing['sha'], "CLAUDE.md från byggguide {$version} (run {$run->uuid})");
+        }
+
+        return StepResult::done($detail + ['readme' => 'written', 'claude_md' => 'written']);
     }
 
     private function ensureRepository(ProvisioningRun $run): ?StepResult
@@ -4623,14 +5744,14 @@ final class RepoStep implements Step
         $existing = $this->github->getRepository($run->slug);
 
         if ($existing === null) {
-            $created = $this->github->generateFromTemplate($run->slug, "Computercat-spel {$run->slug} (run {$run->uuid})");
+            $created = $this->github->createRepository($run->slug, "Computercat-spel {$run->slug} (run {$run->uuid})");
             if ($created !== null) {
                 return null;
             }
 
             // 422 "name already exists" (andra 422 kastar i klienten). Appen är
-            // installerad på "Only select repositories" och ser bara mallen och
-            // repon den själv skapat, så ett främmande repo ger 404 här.
+            // installerad på "Only select repositories" och ser bara repon den
+            // själv skapat, så ett främmande repo ger 404 här.
             $existing = $this->github->getRepository($run->slug);
             if ($existing === null) {
                 return StepResult::releaseSlug('Slug is taken on GitHub: '.ProvisioningConfig::repoFullName($run->slug).' already exists (not visible to Computercat). Choose another slug.');
@@ -4648,7 +5769,7 @@ final class RepoStep implements Step
     {
         return is_string($repo['description'] ?? null)
             && str_contains($repo['description'], $run->uuid)
-            && ($repo['template_repository']['full_name'] ?? null) === ProvisioningConfig::templateRepo();
+            && ($repo['private'] ?? null) === true;
     }
 }
 ```
@@ -4712,10 +5833,12 @@ cd $WT && php artisan test --filter='ReadmeIdeaTest|RepoStepTest|GameStepTest'
 
 Förväntat: `Tests: 22 passed` (ReadmeIdeaTest 10 inkl. 6 dataset, RepoStepTest 9, GameStepTest 3).
 
+Kontraktet mellan guidens README-mall och `ReadmeIdea` prövas mot den riktiga mallen i `RepoStepTest::wantedReadme()`; en mall utan giltiga markörer fäller därför testerna här innan den når ett repo.
+
 - [ ] **Steg 8: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/ReadmeIdea.php app/Provisioning/Steps/RepoStep.php app/Provisioning/Steps/GameStep.php tests/Unit/Provisioning/ReadmeIdeaTest.php tests/Feature/Provisioning/RepoStepTest.php tests/Feature/Provisioning/GameStepTest.php tests/Feature/Provisioning/StepTestHelpers.php && git commit -m "Provisioneringssteg repo och game: mall, idé i README, slug släpps vid främmande repo"
+cd $WT && git add app/Provisioning/ReadmeIdea.php app/Provisioning/Steps/RepoStep.php app/Provisioning/Steps/GameStep.php tests/Unit/Provisioning/ReadmeIdeaTest.php tests/Feature/Provisioning/RepoStepTest.php tests/Feature/Provisioning/GameStepTest.php tests/Feature/Provisioning/StepTestHelpers.php && git commit -m "Provisioneringssteg repo och game: tomt repo, README och CLAUDE.md ur byggguiden, slug släpps vid främmande repo"
 ```
 
 ---
@@ -4927,7 +6050,7 @@ use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 
-// Build-variabeln som spelmallen läser. Tokenen saknar read:sensitive, så
+// Build-variabeln som byggguidens klientkod läser. Tokenen saknar read:sensitive, så
 // värdet kan vara dolt i listningen; då skrivs det över med PATCH.
 final class CoolifyEnvStep implements Step
 {
@@ -5004,17 +6127,19 @@ cd $WT && git add app/Provisioning/Steps/CoolifyAppStep.php app/Provisioning/Ste
 
 ---
 
-## Task 15: Stegen `siteops` och `deploy`
+## Task 15: Steget `siteops` och `DemoProbe`
+
+Det finns inget deploy-steg (revision 2026-10-13): efter `siteops` är runnen `succeeded` och repot redo för kod. Första bygget startar när spelets Claude pushar grundkoden. `DemoProbe` behövs ändå, av `get_provisioning_status` (Task 19) och invarianten (Task 21).
 
 **Files:**
-- Create: `app/Provisioning/DemoProbe.php`, `app/Provisioning/Steps/SiteOpsStep.php`, `app/Provisioning/Steps/DeployStep.php`
-- Test: `tests/Feature/Provisioning/SiteOpsAndDeployStepsTest.php`
+- Create: `app/Provisioning/DemoProbe.php`, `app/Provisioning/Steps/SiteOpsStep.php`
+- Test: `tests/Feature/Provisioning/SiteOpsStepTest.php`
 
 **Interfaces:**
-- Consumes: `SiteOpsClient`, `CoolifyClient`, `config('provisioning.demo.*')`, `config('provisioning.deploy_timeout_minutes')`.
-- Produces: `DemoProbe::status(string $url): int` (0 vid anslutningsfel), `SiteOpsStep` (skapar, eller adopterar enligt ägarskapsregeln i Global Constraints), `DeployStep`. Sätter `provisioning_runs.siteops_site_id`; stegets `detail` får `deployment_uuid`, `deploy_started_at`, `previous_deployments`, `demo_status`.
+- Consumes: `SiteOpsClient`, `config('provisioning.demo.*')`.
+- Produces: `DemoProbe::status(string $url): int` (0 vid anslutningsfel), `SiteOpsStep` (skapar, eller adopterar enligt ägarskapsregeln i Global Constraints). Sätter `provisioning_runs.siteops_site_id`.
 
-- [ ] **Steg 1: Fallerande test.** `tests/Feature/Provisioning/SiteOpsAndDeployStepsTest.php`:
+- [ ] **Steg 1: Fallerande test.** `tests/Feature/Provisioning/SiteOpsStepTest.php`:
 
 ```php
 <?php
@@ -5024,24 +6149,16 @@ namespace Tests\Feature\Provisioning;
 use App\Provisioning\DemoProbe;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
-use App\Provisioning\Steps\DeployStep;
 use App\Provisioning\Steps\SiteOpsStep;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\ProvisioningFakes;
 
-class SiteOpsAndDeployStepsTest extends ProvisioningTestCase
+class SiteOpsStepTest extends ProvisioningTestCase
 {
     use StepTestHelpers;
 
     private const DEMO = 'https://kattsvep.apps.humblebrag.se';
-
-    private const PROJECT_URL = 'coolify.test/api/v1/projects/demo-project-uuid/production';
-
-    private function deployRun(): \App\Models\ProvisioningRun
-    {
-        return $this->provisioningRun(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'coolify_app_uuid' => 'app-1', 'demo_url' => self::DEMO]);
-    }
 
     private function siteopsRun(): \App\Models\ProvisioningRun
     {
@@ -5164,97 +6281,6 @@ class SiteOpsAndDeployStepsTest extends ProvisioningTestCase
         $this->runStep(SiteOpsStep::class, $run, 'siteops');
     }
 
-    public function test_deploy_starts_polls_and_checks_demo_url(): void
-    {
-        $run = $this->deployRun();
-        Http::fake([
-            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
-            'coolify.test/api/v1/deploy*' => Http::response(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-1')),
-            'coolify.test/api/v1/deployments/dep-1' => Http::sequence()
-                ->push(ProvisioningFakes::coolifyDeployment('queued'))
-                ->push(ProvisioningFakes::coolifyDeployment('in_progress'))
-                ->push(ProvisioningFakes::coolifyDeployment('finished')),
-            self::DEMO => Http::response('<html></html>'),
-        ]);
-
-        $start = $this->runStep(DeployStep::class, $run, 'deploy');
-        $queued = $this->runStep(DeployStep::class, $run, 'deploy');
-        $building = $this->runStep(DeployStep::class, $run, 'deploy');
-        $finished = $this->runStep(DeployStep::class, $run, 'deploy');
-
-        $this->assertSame([StepResult::WAIT, 30], [$start->outcome, $start->seconds]);
-        $this->assertSame([StepResult::WAIT, 30], [$queued->outcome, $queued->seconds]);
-        $this->assertSame(StepResult::WAIT, $building->outcome);
-        $this->assertSame(StepResult::DONE, $finished->outcome);
-        $this->assertCount(1, Http::recorded(fn ($r) => str_contains($r->url(), '/deploy?')));
-        Http::assertSent(fn ($r) => str_starts_with($r->url(), self::DEMO)
-            && ($r->header('Authorization')[0] ?? null) === 'Basic '.base64_encode('demo:demo'));
-    }
-
-    public function test_failed_deployment_fails_and_next_retry_deploys_again(): void
-    {
-        $run = $this->deployRun();
-        Http::fake([
-            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
-            'coolify.test/api/v1/deploy*' => Http::sequence()
-                ->push(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-1'))
-                ->push(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-2')),
-            'coolify.test/api/v1/deployments/dep-1' => Http::response(ProvisioningFakes::coolifyDeployment('failed')),
-        ]);
-
-        $this->runStep(DeployStep::class, $run, 'deploy');
-        try {
-            $this->runStep(DeployStep::class, $run, 'deploy');
-            $this->fail('Ett misslyckat bygge gav inget fel.');
-        } catch (StepFailed $e) {
-            $this->assertSame('Coolify deployment dep-1 ended with status failed.', $e->getMessage());
-        }
-
-        $detail = $run->steps()->where('step', 'deploy')->first()->detail;
-        $this->assertArrayNotHasKey('deployment_uuid', $detail);
-        $this->assertSame(['dep-1'], $detail['previous_deployments']);
-
-        $again = $this->runStep(DeployStep::class, $run, 'deploy');
-        $this->assertSame(StepResult::WAIT, $again->outcome);
-        $this->assertSame('dep-2', $run->steps()->where('step', 'deploy')->first()->detail['deployment_uuid']);
-    }
-
-    public function test_deploy_times_out_after_15_minutes(): void
-    {
-        $run = $this->deployRun();
-        Http::fake([
-            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
-            'coolify.test/api/v1/deploy*' => Http::response(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-1')),
-            'coolify.test/api/v1/deployments/dep-1' => Http::response(ProvisioningFakes::coolifyDeployment('in_progress')),
-        ]);
-
-        $this->runStep(DeployStep::class, $run, 'deploy');
-        $this->travel(16)->minutes();
-
-        $this->expectException(StepFailed::class);
-        $this->expectExceptionMessage('did not finish within 15 minutes');
-        $this->runStep(DeployStep::class, $run, 'deploy');
-    }
-
-    public function test_finished_but_demo_not_200_waits_then_fails(): void
-    {
-        $run = $this->deployRun();
-        Http::fake([
-            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
-            'coolify.test/api/v1/deploy*' => Http::response(ProvisioningFakes::coolifyDeployQueued('app-1', 'dep-1')),
-            'coolify.test/api/v1/deployments/dep-1' => Http::response(ProvisioningFakes::coolifyDeployment('finished')),
-            self::DEMO => Http::response('Bad Gateway', 502),
-        ]);
-
-        $this->runStep(DeployStep::class, $run, 'deploy');
-        $this->assertSame([StepResult::WAIT, 15], [($r = $this->runStep(DeployStep::class, $run, 'deploy'))->outcome, $r->seconds]);
-        $this->travel(16)->minutes();
-
-        $this->expectException(StepFailed::class);
-        $this->expectExceptionMessage('the Demo URL answered 502');
-        $this->runStep(DeployStep::class, $run, 'deploy');
-    }
-
     public function test_demo_probe_returns_zero_on_connection_error_and_refuses_foreign_hosts(): void
     {
         Http::fake([self::DEMO => fn () => throw new ConnectionException('timeout')]);
@@ -5270,7 +6296,7 @@ class SiteOpsAndDeployStepsTest extends ProvisioningTestCase
 - [ ] **Steg 2: Kör och se det falla.**
 
 ```bash
-cd $WT && php artisan test --filter=SiteOpsAndDeployStepsTest
+cd $WT && php artisan test --filter=SiteOpsStepTest
 ```
 
 Förväntat: FAIL, `Class "App\Provisioning\Steps\SiteOpsStep" not found`.
@@ -5391,104 +6417,18 @@ final class SiteOpsStep implements Step
 }
 ```
 
-- [ ] **Steg 5: `app/Provisioning/Steps/DeployStep.php`.**
-
-```php
-<?php
-
-namespace App\Provisioning\Steps;
-
-use App\Models\ProvisioningRun;
-use App\Models\ProvisioningStep;
-use App\Provisioning\Clients\CoolifyClient;
-use App\Provisioning\DemoProbe;
-use App\Provisioning\StepFailed;
-use App\Provisioning\StepResult;
-use Illuminate\Support\Arr;
-use Illuminate\Support\Carbon;
-
-// Första deployen: POST /deploy, sedan poll var 30:e sekund tills finished
-// (högst 15 min från start) och till sist GET Demo-URL med basic auth → 200.
-// Ett misslyckat eller för långsamt bygge flyttas till previous_deployments,
-// så att retry_provisioning startar ett nytt bygge i stället för att polla det gamla.
-final class DeployStep implements Step
-{
-    public function __construct(private CoolifyClient $coolify) {}
-
-    public function run(ProvisioningRun $run, ProvisioningStep $step): StepResult
-    {
-        $detail = $step->detail ?? [];
-        $uuid = $run->coolify_app_uuid ?? throw new StepFailed('No Coolify application is recorded for this run.');
-
-        if (! isset($detail['deployment_uuid'])) {
-            $started = [
-                'deployment_uuid' => $this->coolify->deploy($uuid),
-                'deploy_started_at' => now()->toIso8601String(),
-            ];
-            // Sparas direkt, inte först när motorn slår ihop detail: dör jobbet
-            // mellan svaret och motorns sparning pollar omkörningen samma bygge
-            // i stället för att starta ett andra. Kvar finns bara fönstret där
-            // själva svaret går förlorat; då köar Coolify ett andra bygge
-            // (concurrent_builds = 1, S21), vilket är ofarligt.
-            $step->update(['detail' => [...$detail, ...$started]]);
-
-            return StepResult::wait(30, $started);
-        }
-
-        $deployment = $detail['deployment_uuid'];
-        $deadline = Carbon::parse($detail['deploy_started_at'])->addMinutes((int) config('provisioning.deploy_timeout_minutes'));
-        $status = $this->coolify->deploymentStatus($deployment);
-
-        if (in_array($status, ['failed', 'cancelled-by-user'], true)) {
-            $this->forget($step, $detail);
-
-            throw new StepFailed("Coolify deployment {$deployment} ended with status {$status}.");
-        }
-
-        if ($status === 'finished') {
-            $code = DemoProbe::status((string) $run->demo_url);
-            if ($code === 200) {
-                return StepResult::done(['demo_status' => 200]);
-            }
-            if ($deadline->isPast()) {
-                throw new StepFailed("Deployment {$deployment} finished but the Demo URL answered {$code}.");
-            }
-
-            return StepResult::wait(15, ['demo_status' => $code]);
-        }
-
-        if ($deadline->isPast()) {
-            $this->forget($step, $detail);
-
-            throw new StepFailed("Coolify deployment {$deployment} did not finish within ".config('provisioning.deploy_timeout_minutes').' minutes.');
-        }
-
-        return StepResult::wait(30);
-    }
-
-    private function forget(ProvisioningStep $step, array $detail): void
-    {
-        $step->update(['detail' => array_merge(Arr::except($detail, ['deployment_uuid', 'deploy_started_at']), [
-            'previous_deployments' => [...($detail['previous_deployments'] ?? []), $detail['deployment_uuid']],
-        ])]);
-    }
-}
-```
-
-`array_merge` i motorn och i `StepTestHelpers` lägger aldrig tillbaka `deployment_uuid` eftersom undantaget kastas innan något `detail` returneras; motorn läser `$step->detail` från samma instans som `forget()` uppdaterat.
-
-- [ ] **Steg 6: Kör testet.**
+- [ ] **Steg 5: Kör testet.**
 
 ```bash
-cd $WT && php artisan test --filter=SiteOpsAndDeployStepsTest
+cd $WT && php artisan test --filter=SiteOpsStepTest
 ```
 
-Förväntat: `Tests: 13 passed` (8 för siteops inkl. 3 dataset, 5 för deploy och DemoProbe).
+Förväntat: `Tests: 9 passed` (8 för siteops inkl. 3 dataset, 1 för DemoProbe).
 
-- [ ] **Steg 7: Commit.**
+- [ ] **Steg 6: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/DemoProbe.php app/Provisioning/Steps/SiteOpsStep.php app/Provisioning/Steps/DeployStep.php tests/Feature/Provisioning/SiteOpsAndDeployStepsTest.php && git commit -m "Provisioneringssteg siteops och deploy med polling, tidsgräns och kontroll av Demo-adressen"
+cd $WT && git add app/Provisioning/DemoProbe.php app/Provisioning/Steps/SiteOpsStep.php tests/Feature/Provisioning/SiteOpsStepTest.php && git commit -m "Provisioneringssteg siteops och DemoProbe"
 ```
 
 ---
@@ -6308,6 +7248,371 @@ cd $WT && git add app/Mcp tests/Feature/Mcp && git commit -m "MCP: GameAccess::i
 
 ---
 
+## Task 17A: `get_build_guide`, `get_build_guide_file` och publik REST för byggguiden
+
+Erik ville ha "en endpoint i API:et" som ger byggreglerna. MCP-verktygen är huvudvägen (spelets Claude har connectorn). REST finns för filer över MCP-gränsen (`package-lock.json`, cirka 300 KB) och för den som bara har `curl`. REST är publik och bara läsbar: innehållet är byggregler och klientkod som ändå hamnar i varje spels publika JavaScript, utan hemligheter. Den har egen gräns och slår bara upp sökvägar i manifestet, så den vidgar inte attackytan.
+
+**Files:**
+- Create: `app/Mcp/Tools/GetBuildGuideTool.php`, `app/Mcp/Tools/GetBuildGuideFileTool.php`, `app/Http/Controllers/Api/V1/BuildGuideController.php`, `tests/Feature/Mcp/BuildGuideToolsTest.php`, `tests/Feature/Api/V1/BuildGuideApiTest.php`
+- Modify: `app/Mcp/ComputercatServer.php`, `routes/api.php`, `app/Providers/AppServiceProvider.php`
+
+**Interfaces:**
+- Consumes: `PlatformTool` (Task 17), `BuildGuide` (Task 8A).
+- Produces:
+  - `get_build_guide(version?)` (staff) → JSON `BuildGuide::publicManifest()` + `available_versions`.
+  - `get_build_guide_file(path, version?)` (staff) → JSON `{path, sha256, bytes, delivery, download_url, content}`; `content` är `null`, `delivery` `"download"` och `download_url` en `https://`-adress när filen är större än `BuildGuide::INLINE_MAX_BYTES`; annars är `download_url` `null`.
+  - `GET /api/v1/build-guide` och `GET /api/v1/build-guide/{version}` → 200 `{"data": <publicManifest + available_versions>}`, 404 `{"message": "Build guide version not found."}`.
+  - `GET /api/v1/build-guide/{version}/files/{path}` → 200 filen som `text/plain; charset=utf-8` med `X-Content-SHA256`, `ETag`, `Cache-Control: public, max-age=3600`, `X-Content-Type-Options: nosniff`; 404 `{"message": "Build guide file not found."}`.
+  - Gränsen `build-guide`: 30/min per IP (utöver API:ts globala 60/min).
+
+- [ ] **Steg 1: Hotmodell för den publika vägen.** Invokera `security-first-mindset` för REST-vägarna: oautentiserad läsning, sökväg från anroparen, filinnehåll som svar. Kontrollera mot planen: sökvägen jämförs bara med manifestets `path` (aldrig `file_get_contents` på indata), version begränsas av routens mönster och `VERSION_PATTERN`, svaret är `text/plain` med `nosniff`, inga cookies eller sessionsdata behövs, gränsen 30/min. Nya fynd: AskUserQuestion.
+
+- [ ] **Steg 2: Fallerande tester.**
+
+`tests/Feature/Mcp/BuildGuideToolsTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature\Mcp;
+
+use App\Models\McpAuditLog;
+use App\Services\BuildGuide;
+
+class BuildGuideToolsTest extends McpTestCase
+{
+    public function test_staff_gets_the_manifest_without_any_game(): void
+    {
+        $result = $this->callTool($this->staffMember(), 'get_build_guide');
+
+        $this->assertTrue($result['ok'], $result['text']);
+        $json = json_decode($result['text'], true);
+        $this->assertSame('v1', $json['version']);
+        $this->assertSame('16.4.0', $json['stack']['next']);
+        $this->assertContains('npm audit --omit=dev --audit-level=high', array_column($json['required_checks'], 'command'));
+        $this->assertSame(['v1'], $json['available_versions']);
+        $this->assertSame(['ok'], McpAuditLog::where('tool', 'get_build_guide')->pluck('outcome')->all());
+    }
+
+    public function test_file_is_returned_exactly_with_its_sha256(): void
+    {
+        $result = $this->callTool($this->staffMember(), 'get_build_guide_file', ['path' => 'next.config.ts', 'version' => 'v1']);
+
+        $this->assertTrue($result['ok'], $result['text']);
+        $json = json_decode($result['text'], true);
+        $this->assertSame(BuildGuide::file('v1', 'next.config.ts')['content'], $json['content']);
+        $this->assertSame(hash('sha256', $json['content']), $json['sha256']);
+        $this->assertSame('mcp', $json['delivery']);
+    }
+
+    public function test_large_file_points_to_download(): void
+    {
+        $json = json_decode($this->callTool($this->staffMember(), 'get_build_guide_file', ['path' => 'package-lock.json'])['text'], true);
+
+        $this->assertSame('download', $json['delivery']);
+        $this->assertNull($json['content']);
+        $this->assertStringEndsWith('/api/v1/build-guide/v1/files/package-lock.json', $json['download_url']);
+    }
+
+    public function test_unknown_path_and_version_are_errors(): void
+    {
+        $staff = $this->staffMember();
+
+        $this->assertStringContainsString('No such file', $this->callTool($staff, 'get_build_guide_file', ['path' => '../../.env'])['text']);
+        $this->assertStringContainsString('No such file', $this->callTool($staff, 'get_build_guide_file', ['path' => 'README.md'])['text']);
+        $this->assertStringContainsString('Unknown build guide version', $this->callTool($staff, 'get_build_guide', ['version' => 'v9'])['text']);
+        $this->assertFalse($this->callTool($staff, 'get_build_guide', ['version' => 'x'])['ok']);
+    }
+
+    // Claude Code lägger svar över 50 000 tecken i en fil (code.claude.com/docs/en/mcp).
+    public function test_every_mcp_response_fits_below_50000_characters(): void
+    {
+        $staff = $this->staffMember();
+
+        $this->assertLessThan(50000, mb_strlen($this->callTool($staff, 'get_build_guide')['text']));
+        foreach (BuildGuide::manifest('v1')['files'] as $entry) {
+            $text = $this->callTool($staff, 'get_build_guide_file', ['path' => $entry['path']])['text'];
+            $this->assertLessThan(50000, mb_strlen($text), $entry['path']);
+        }
+    }
+}
+```
+
+`tests/Feature/Api/V1/BuildGuideApiTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature\Api\V1;
+
+use App\Services\BuildGuide;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
+use Tests\TestCase;
+
+class BuildGuideApiTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_manifest_is_public_and_cacheable(): void
+    {
+        $response = $this->getJson('/api/v1/build-guide')->assertOk();
+
+        $this->assertSame('v1', $response->json('data.version'));
+        $this->assertSame(BuildGuide::publicManifest('v1')['files'], $response->json('data.files'));
+        $this->assertStringContainsString('public', $response->headers->get('Cache-Control'));
+        $this->getJson('/api/v1/build-guide/v1')->assertOk()->assertJsonPath('data.version', 'v1');
+    }
+
+    public function test_file_is_served_as_plain_text_with_sha256(): void
+    {
+        $response = $this->get('/api/v1/build-guide/v1/files/package-lock.json')->assertOk();
+
+        $this->assertSame(BuildGuide::file('v1', 'package-lock.json')['content'], $response->getContent());
+        $this->assertSame(hash('sha256', $response->getContent()), $response->headers->get('X-Content-SHA256'));
+        $this->assertStringStartsWith('text/plain', $response->headers->get('Content-Type'));
+        $this->assertSame('nosniff', $response->headers->get('X-Content-Type-Options'));
+        $this->get('/api/v1/build-guide/v1/files/src/lib/computercat/index.ts')->assertOk();
+        $this->get('/api/v1/build-guide/v1/files/.gitignore')->assertOk();
+    }
+
+    public function test_unknown_files_versions_and_traversal_are_404(): void
+    {
+        $this->getJson('/api/v1/build-guide/v9')->assertNotFound()->assertJsonPath('message', 'Build guide version not found.');
+        $this->getJson('/api/v1/build-guide/v1/files/README.md')->assertNotFound()->assertJsonPath('message', 'Build guide file not found.');
+        $this->getJson('/api/v1/build-guide/v1/files/..%2F..%2F..%2F.env')->assertNotFound();
+        $this->getJson('/api/v1/build-guide/v1/files/files/package.json')->assertNotFound();
+        $this->getJson('/api/v1/build-guide/x1')->assertNotFound();
+    }
+
+    public function test_routes_have_their_own_rate_limit(): void
+    {
+        $this->assertNotNull(RateLimiter::limiter('build-guide'));
+        foreach (['/api/v1/build-guide', '/api/v1/build-guide/v1', '/api/v1/build-guide/v1/files/package.json'] as $uri) {
+            $route = Route::getRoutes()->match(Request::create($uri));
+            $this->assertContains('throttle:build-guide', $route->gatherMiddleware(), $uri);
+        }
+    }
+}
+```
+
+- [ ] **Steg 3: Kör och se dem falla.**
+
+```bash
+cd $WT && php artisan test --filter='BuildGuideToolsTest|BuildGuideApiTest'
+```
+
+Förväntat: FAIL (verktyget `get_build_guide` och routen finns inte).
+
+- [ ] **Steg 4: Verktygen.**
+
+`app/Mcp/Tools/GetBuildGuideTool.php`:
+
+```php
+<?php
+
+namespace App\Mcp\Tools;
+
+use App\Models\User;
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\Validator;
+use Laravel\Mcp\Response;
+
+// Byggguidens manifest för ett nytt spelrepo (spec 2c, "Byggguiden"). Tar inget spel.
+class GetBuildGuideTool extends PlatformTool
+{
+    protected string $name = 'get_build_guide';
+
+    protected string $description = 'Get the Computercat build guide for a game repo: the stack with exact versions, the install command, the required checks, the ordered steps, and every file to write (path, sha256, bytes, delivery). Fetch files with delivery "mcp" with get_build_guide_file and files with delivery "download" with curl from download_url. Write every file exactly and verify its sha256. Contains no secrets.';
+
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'version' => $schema->string()->description('Optional, e.g. "v1". Omitted = the latest version.'),
+        ];
+    }
+
+    protected function run(array $args, User $user): Response
+    {
+        $validator = Validator::make($args, ['version' => ['sometimes', 'string', 'regex:'.BuildGuide::VERSION_PATTERN]]);
+        if ($validator->fails()) {
+            return $this->validationFailed($validator->errors()->toArray());
+        }
+
+        try {
+            $guide = BuildGuide::publicManifest($args['version'] ?? BuildGuide::LATEST);
+        } catch (BuildGuideNotFound) {
+            return Response::error('Unknown build guide version. Available: '.implode(', ', BuildGuide::versions()).'.');
+        }
+
+        return $this->json($guide + ['available_versions' => BuildGuide::versions()]);
+    }
+}
+```
+
+`app/Mcp/Tools/GetBuildGuideFileTool.php`:
+
+```php
+<?php
+
+namespace App\Mcp\Tools;
+
+use App\Models\User;
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\Validator;
+use Laravel\Mcp\Response;
+
+// En fil ur byggguiden. Stora filer (package-lock.json) skickas inte här:
+// svaret hålls under Claude Codes 50 000 tecken och pekar på REST-vägen.
+class GetBuildGuideFileTool extends PlatformTool
+{
+    protected string $name = 'get_build_guide_file';
+
+    protected string $description = 'Get one file from the Computercat build guide: path, sha256, bytes and the exact content to write at that path in the game repo. Files larger than 30000 bytes return content null and a download_url (fetch with curl). Use the paths listed by get_build_guide.';
+
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'path' => $schema->string()->description('A path from get_build_guide, e.g. "src/lib/computercat/index.ts".')->required(),
+            'version' => $schema->string()->description('Optional, e.g. "v1". Omitted = the latest version.'),
+        ];
+    }
+
+    protected function run(array $args, User $user): Response
+    {
+        $validator = Validator::make($args, [
+            'path' => ['required', 'string', 'max:200'],
+            'version' => ['sometimes', 'string', 'regex:'.BuildGuide::VERSION_PATTERN],
+        ]);
+        if ($validator->fails()) {
+            return $this->validationFailed($validator->errors()->toArray());
+        }
+
+        $version = $args['version'] ?? BuildGuide::LATEST;
+        try {
+            $file = BuildGuide::file($version, $args['path']);
+        } catch (BuildGuideNotFound) {
+            return Response::error("No such file in build guide {$version}. Call get_build_guide for the file list.");
+        }
+
+        $inline = $file['bytes'] <= BuildGuide::INLINE_MAX_BYTES;
+
+        return $this->json([
+            'path' => $file['path'],
+            'sha256' => $file['sha256'],
+            'bytes' => $file['bytes'],
+            'delivery' => $inline ? 'mcp' : 'download',
+            'download_url' => $inline ? null : BuildGuide::downloadUrl($version, $file['path']),
+            'content' => $inline ? $file['content'] : null,
+        ]);
+    }
+}
+```
+
+`$version` i felmeddelandet har redan passerat `VERSION_PATTERN`. En `RuntimeException` från `BuildGuide` (fil som inte matchar sin `sha256`) fångas av `PlatformTool` och blir "Unexpected error (ref …)" med fullständig logg: guiden serverar aldrig en fil som avviker.
+
+Registrera i `app/Mcp/ComputercatServer.php`, direkt efter `Tools\ListGamesTool::class,`:
+
+```php
+        Tools\GetBuildGuideTool::class,
+        Tools\GetBuildGuideFileTool::class,
+```
+
+- [ ] **Steg 5: REST.**
+
+`app/Http/Controllers/Api/V1/BuildGuideController.php`:
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api\V1;
+
+use App\Http\Controllers\Controller;
+use App\Services\BuildGuide;
+use App\Services\BuildGuideNotFound;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
+
+// Publik, bara läsning (spec 2c, "Byggguiden"). Sökvägen slås bara upp i
+// manifestet; inget från anroparen når filsystemet.
+class BuildGuideController extends Controller
+{
+    public function show(?string $version = null): JsonResponse
+    {
+        try {
+            $guide = BuildGuide::publicManifest($version ?? BuildGuide::LATEST);
+        } catch (BuildGuideNotFound) {
+            return response()->json(['message' => 'Build guide version not found.'], 404);
+        }
+
+        return response()->json(['data' => $guide + ['available_versions' => BuildGuide::versions()]])
+            ->header('Cache-Control', 'public, max-age=300');
+    }
+
+    public function file(string $version, string $path): Response|JsonResponse
+    {
+        try {
+            $file = BuildGuide::file($version, $path);
+        } catch (BuildGuideNotFound) {
+            return response()->json(['message' => 'Build guide file not found.'], 404);
+        }
+
+        return response($file['content'], 200, [
+            'Content-Type' => 'text/plain; charset=utf-8',
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Content-SHA256' => $file['sha256'],
+            'ETag' => '"'.$file['sha256'].'"',
+            'Cache-Control' => 'public, max-age=3600',
+        ]);
+    }
+}
+```
+
+I `routes/api.php`: lägg till `use App\Http\Controllers\Api\V1\BuildGuideController;` bland importerna och, inne i `Route::prefix('v1')`-gruppen efter `// Games (public)`-raderna:
+
+```php
+    // Byggguiden (publik, bara läsning; spec 2c "Byggguiden")
+    Route::middleware('throttle:build-guide')->group(function () {
+        Route::get('/build-guide', [BuildGuideController::class, 'show']);
+        Route::get('/build-guide/{version}', [BuildGuideController::class, 'show'])->where('version', 'v[1-9][0-9]{0,2}');
+        Route::get('/build-guide/{version}/files/{path}', [BuildGuideController::class, 'file'])
+            ->where('version', 'v[1-9][0-9]{0,2}')
+            ->where('path', '.*');
+    });
+```
+
+I `app/Providers/AppServiceProvider.php`, efter `RateLimiter::for('auth', …)`:
+
+```php
+        // Byggguiden (publik, bara läsning). Ett nytt spelrepo behöver två anrop
+        // (manifest och package-lock.json); resten går via MCP.
+        RateLimiter::for('build-guide', function (Request $request) {
+            return Limit::perMinute(30)->by('build-guide:'.$request->ip());
+        });
+```
+
+- [ ] **Steg 6: Kör testen och invarianterna.**
+
+```bash
+cd $WT && php artisan test --filter='BuildGuideToolsTest|BuildGuideApiTest|ToolInvariantsTest|PlatformToolTest'
+```
+
+Förväntat: `BuildGuideToolsTest` 5 passed (nekande av icke-staff täcks av `PlatformToolTest`), `BuildGuideApiTest` 4 passed, invarianterna gröna (båda verktygen ärver `PlatformTool`).
+
+- [ ] **Steg 7: Commit.**
+
+```bash
+cd $WT && git add app/Mcp/Tools/GetBuildGuideTool.php app/Mcp/Tools/GetBuildGuideFileTool.php app/Mcp/ComputercatServer.php app/Http/Controllers/Api/V1/BuildGuideController.php routes/api.php app/Providers/AppServiceProvider.php tests/Feature/Mcp/BuildGuideToolsTest.php tests/Feature/Api/V1/BuildGuideApiTest.php && git commit -m "Byggguiden: get_build_guide, get_build_guide_file och publik REST med egen gräns"
+```
+
+---
+
 ## Task 18: `create_game`
 
 **Files:**
@@ -6491,7 +7796,7 @@ class CreateGameTool extends PlatformTool
 {
     protected string $name = 'create_game';
 
-    protected string $description = 'Create a new game: a private GitHub repo HumblebragAB/<slug> from the game template (the idea is written to its README), the game in Computercat (active, not publicly listed, you as owner), a Demo site at https://<slug>.apps.humblebrag.se behind basic auth, monitoring, and a first deploy. Returns immediately with a run id; follow up with get_provisioning_status. Limits: 15 Demo games in total and 5 new games per user per 24 hours.';
+    protected string $description = 'Create a new game: an empty private GitHub repo HumblebragAB/<slug> with README.md (the idea) and CLAUDE.md from the build guide, the game in Computercat (active, not publicly listed, you as owner), a Demo site at https://<slug>.apps.humblebrag.se behind basic auth that deploys on every push to main, and monitoring. No code is pushed: the game repo then follows CLAUDE.md (get_build_guide) and its first push builds the Demo. Returns immediately with a run id; follow up with get_provisioning_status. Limits: 15 Demo games in total and 5 new games per user per 24 hours.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -6546,7 +7851,7 @@ class CreateGameTool extends PlatformTool
             'status' => $run->status,
             'repo' => ProvisioningConfig::repoFullName($run->slug),
             'demo_url' => ProvisioningConfig::demoUrl($run->slug),
-            'next' => "Call get_provisioning_status with game \"{$run->slug}\" until status is \"succeeded\" (usually 5-15 minutes). The game appears in list_games once the step \"game\" is done.",
+            'next' => "Call get_provisioning_status with game \"{$run->slug}\" until status is \"succeeded\" (usually 1-3 minutes). The repo is then ready for code: open {$run->slug} in a Claude Code session and follow CLAUDE.md step 1 (get_build_guide, write the files, run the checks, push to main); the first push builds the Demo. The game appears in list_games once the step \"game\" is done.",
         ]);
     }
 
@@ -6590,7 +7895,7 @@ class CreateGameTool extends PlatformTool
 - [ ] **Steg 4: Registrera verktyget.** I `app/Mcp/ComputercatServer.php`: lägg `Tools\CreateGameTool::class,` efter `Tools\ListGamesTool::class,` och ersätt `$instructions` med:
 
 ```php
-    protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Create new Demo games with create_game and follow them with get_provisioning_status. Only games you are a member of are visible.';
+    protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Create new Demo games with create_game and follow them with get_provisioning_status. A new game repo gets its base code from the build guide (get_build_guide, get_build_guide_file). Only games you are a member of are visible.';
 ```
 
 - [ ] **Steg 5: Kör testet och invarianterna.**
@@ -6616,8 +7921,8 @@ cd $WT && git add app/Mcp/Tools/CreateGameTool.php app/Mcp/ComputercatServer.php
 - Modify: `app/Mcp/ComputercatServer.php`
 
 **Interfaces:**
-- Consumes: `GameTool::whenGameMissing()`, `GameTool::transactional()`, `GameAccess::isOwner()`, `Saga::retry()`, `Redactor`.
-- Produces: `get_provisioning_status(game)` → JSON `{slug, provisioning: {run, status, steps[], last_error, updated_at}, archive: {...}|null, repo_url, demo_url, demo_basic_auth: {username, password}}`; `retry_provisioning(game)` → JSON `{run, status: "running", resumes_at}`.
+- Consumes: `GameTool::whenGameMissing()`, `GameTool::transactional()`, `GameAccess::isOwner()`, `Saga::retry()`, `Redactor`, `CoolifyClient::latestDeployment()`, `DemoProbe::status()`.
+- Produces: `get_provisioning_status(game)` → JSON `{slug, provisioning: {run, status, steps[], last_error, updated_at}, archive: {...}|null, repo_url, demo_url, demo_basic_auth: {username, password}, demo: null | {state, latest_deployment: {status, created_at}|null, url_status: int|null, next?, error?}}`. `demo` finns bara för en lyckad provisioneringsrun; `state` ∈ `awaiting_code` (inget bygge än: redo för kod), `building`, `live` (senaste bygget `finished` och Demo svarar 200), `deployed_not_answering`, `deploy_failed`, `unknown` (Coolify gick inte att läsa; felet visas); `retry_provisioning(game)` → JSON `{run, status: "running", resumes_at}`.
 
 - [ ] **Steg 1: Fallerande tester.**
 
@@ -6628,10 +7933,12 @@ cd $WT && git add app/Mcp/Tools/CreateGameTool.php app/Mcp/ComputercatServer.php
 
 namespace Tests\Feature\Mcp;
 
+use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Provisioning\Saga;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\Support\CreatesProvisioningRuns;
 use Tests\Support\ProvisioningFakes;
@@ -6667,6 +7974,8 @@ class ProvisioningStatusToolTest extends McpTestCase
         $this->assertSame(['username' => 'demo', 'password' => 'demo'], $json['demo_basic_auth']);
         $this->assertStringNotContainsString(ProvisioningFakes::COOLIFY_TOKEN, $result['text']);
         $this->assertNull($json['archive']);
+        // Bara en lyckad run får demo-läget (och bara då anropas Coolify).
+        $this->assertNull($json['demo']);
     }
 
     public function test_creator_sees_run_before_game_exists_but_others_do_not(): void
@@ -6683,6 +7992,80 @@ class ProvisioningStatusToolTest extends McpTestCase
         $this->assertFalse($theirs['ok']);
         $this->assertStringContainsString('Game not found', $theirs['text']);
         $this->assertSame(['ok', 'denied'], McpAuditLog::where('tool', 'get_provisioning_status')->orderBy('id')->pluck('outcome')->all());
+    }
+
+    private function succeededRun(): ProvisioningRun
+    {
+        $game = $this->game('kattsvep');
+        $run = $this->provisioningRun(['slug' => 'kattsvep', 'game_id' => $game->id, 'status' => ProvisioningRun::SUCCEEDED, 'github_repo' => 'HumblebragAB/kattsvep', 'coolify_app_uuid' => 'app-1', 'demo_url' => 'https://kattsvep.apps.humblebrag.se']);
+        Saga::start($run);
+        $run->steps()->update(['status' => ProvisioningStep::DONE]);
+
+        return $run;
+    }
+
+    private function demoFor(array $fakes): array
+    {
+        $run = $this->succeededRun();
+        Http::fake($fakes);
+
+        $result = $this->callTool($this->staffMember(Game::where('slug', 'kattsvep')->firstOrFail()), 'get_provisioning_status', ['game' => 'kattsvep']);
+        $this->assertTrue($result['ok'], $result['text']);
+
+        return json_decode($result['text'], true)['demo'];
+    }
+
+    // Redo för kod: ingen push än. Inget fel, men en tydlig nästa åtgärd.
+    public function test_succeeded_run_without_any_build_is_awaiting_code(): void
+    {
+        $demo = $this->demoFor(['coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([]))]);
+
+        $this->assertSame('awaiting_code', $demo['state']);
+        $this->assertNull($demo['latest_deployment']);
+        $this->assertNull($demo['url_status']);
+        $this->assertStringContainsString('get_build_guide', $demo['next']);
+        Http::assertNotSent(fn ($r) => str_starts_with($r->url(), 'https://kattsvep.apps.humblebrag.se'));
+    }
+
+    public function test_finished_build_and_answering_demo_is_live(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('<html></html>'),
+        ]);
+
+        $this->assertSame(['state' => 'live', 'latest_deployment' => ['status' => 'finished', 'created_at' => '2026-10-14T08:00:00.000000Z'], 'url_status' => 200], $demo);
+    }
+
+    public function test_failed_build_is_reported_with_the_demo_status(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ]);
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertSame(502, $demo['url_status']);
+    }
+
+    public function test_finished_build_but_demo_not_answering(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ]);
+
+        $this->assertSame('deployed_not_answering', $demo['state']);
+    }
+
+    // Fail loud: ett Coolify-fel döljs inte som "awaiting_code".
+    public function test_coolify_error_is_shown_not_hidden(): void
+    {
+        $demo = $this->demoFor(['coolify.test/api/v1/deployments/applications/app-1*' => Http::response(['message' => 'Unauthenticated.'], 401)]);
+
+        $this->assertSame('unknown', $demo['state']);
+        $this->assertNotEmpty($demo['error']);
+        $this->assertStringNotContainsString(ProvisioningFakes::COOLIFY_TOKEN, $demo['error']);
     }
 
     public function test_game_without_run_answers_clearly(): void
@@ -6803,16 +8186,21 @@ use App\Models\Game;
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Models\User;
+use App\Provisioning\Clients\CoolifyClient;
+use App\Provisioning\DemoProbe;
 use App\Provisioning\Http\Redactor;
+use App\Provisioning\SafeMessage;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Laravel\Mcp\Response;
 
 class GetProvisioningStatusTool extends GameTool
 {
     protected string $name = 'get_provisioning_status';
 
-    protected string $description = 'Show how provisioning (or archiving) of a game is going: each step with status, the repo URL, the Demo URL with its basic auth login, and the latest error. Works for the creator even if the game has not been created yet.';
+    protected string $description = 'Show how provisioning (or archiving) of a game is going: each step with status, the repo URL, the Demo URL with its basic auth login, and the latest error. After a successful run, "demo" tells whether code has been pushed and built: awaiting_code (ready for code, follow CLAUDE.md step 1), building, live, deployed_not_answering or deploy_failed. Works for the creator even if the game has not been created yet.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -6860,6 +8248,56 @@ class GetProvisioningStatusTool extends GameTool
                 'username' => (string) config('provisioning.demo.basic_auth_user'),
                 'password' => (string) config('provisioning.demo.basic_auth_password'),
             ],
+            'demo' => $this->demo($provision),
+        ];
+    }
+
+    // Efter en lyckad run är repot redo för kod. Har spelets Claude pushat
+    // grundkoden, och svarar Demo? Ett Coolify-fel visas, det döljs aldrig.
+    private function demo(?ProvisioningRun $run): ?array
+    {
+        if ($run === null || $run->status !== ProvisioningRun::SUCCEEDED || $run->coolify_app_uuid === null) {
+            return null;
+        }
+
+        try {
+            $latest = app(CoolifyClient::class)->latestDeployment($run->coolify_app_uuid);
+        } catch (\Throwable $e) {
+            $ref = (string) Str::uuid();
+            Log::warning('get_provisioning_status kunde inte läsa Coolify-byggen', ['ref' => $ref, 'run' => $run->uuid, 'exception' => $e]);
+
+            return [
+                'state' => 'unknown',
+                'latest_deployment' => null,
+                'url_status' => null,
+                'error' => $e instanceof SafeMessage ? Redactor::limit(Redactor::scrubSecrets($e->getMessage())) : "Could not read Coolify deployments (ref {$ref}).",
+            ];
+        }
+
+        if ($latest === null) {
+            return [
+                'state' => 'awaiting_code',
+                'latest_deployment' => null,
+                'url_status' => null,
+                'next' => 'Ready for code: in the game repo, follow CLAUDE.md step 1 (get_build_guide, write the files, run the checks) and push to main. The push builds the Demo.',
+            ];
+        }
+
+        $state = match ($latest['status']) {
+            'finished' => 'live',
+            'failed', 'cancelled-by-user' => 'deploy_failed',
+            default => 'building',
+        };
+        // Även efter ett misslyckat bygge kan ett tidigare bygge svara; därför prövas adressen.
+        $code = $state === 'building' ? null : DemoProbe::status((string) $run->demo_url);
+        if ($state === 'live' && $code !== 200) {
+            $state = 'deployed_not_answering';
+        }
+
+        return [
+            'state' => $state,
+            'latest_deployment' => ['status' => $latest['status'], 'created_at' => $latest['created_at']],
+            'url_status' => $code,
         ];
     }
 
@@ -7366,7 +8804,7 @@ cd $WT && git add app/Mcp/Tools/RequestLiveTool.php app/Mcp/Tools/ArchiveGameToo
 - Modify: `routes/console.php`
 
 **Interfaces:**
-- Consumes: `GitHubAppClient::getRepository()`, `CoolifyClient::demoApplications()`, `::application()`, `SiteOpsClient::site()`, `::environments()`, `DemoProbe::status()`, `SlackAlert`.
+- Consumes: `GitHubAppClient::getRepository()`, `CoolifyClient::demoApplications()`, `::application()`, `::latestDeployment()`, `SiteOpsClient::site()`, `::environments()`, `DemoProbe::status()`, `SlackAlert`, `config('provisioning.no_push_grace_days')`.
 - Produces: `php artisan computercat:check-provisioning [--dry-run]`; exitkod 0 vid 0 avvikelser, 1 annars; sista raden `N avvikelse(r).`
 
 Kontroller (spec 2c "Invariant" plus en för fastnade sagor):
@@ -7377,7 +8815,10 @@ Kontroller (spec 2c "Invariant" plus en för fastnade sagor):
 | `run:<uuid>:coolify` | Appen `spel-<slug>` med sparat uuid saknas i Demo-projektet |
 | `run:<uuid>:basic_auth` | `is_http_basic_auth_enabled` är inte `true` |
 | `run:<uuid>:siteops` | Sajten är inte aktiv eller har `monitoring_enabled: false`, eller demo-miljön (`type: demo`, url = Demo-URL) saknas, är inte övervakad eller saknar basic auth (`has_basic_auth`) |
-| `run:<uuid>:demo` | Demo-URL svarar inte 200 med basic auth |
+| `run:<uuid>:no_code` | Appen har inget bygge och runnen är äldre än `no_push_grace_days` (7) dagar. Yngre: ingen avvikelse, bara en rad `väntar på kod` i utskriften |
+| `run:<uuid>:deploy_failed` | Senaste bygget är `failed` eller `cancelled-by-user` |
+| `run:<uuid>:deploy` | Byggen för appen gick inte att läsa |
+| `run:<uuid>:demo` | Appen har byggts men Demo-URL svarar inte 200 med basic auth (prövas inte innan något bygge finns) |
 | `coolify:orphan:<uuid>` | En app `spel-*` i Demo-projektet saknar run |
 | `run:<uuid>:stuck` | En run har stått på `running` utan stegaktivitet i 30 minuter (kö-workern) |
 | `coolify:list` | Demo-projektet gick inte att läsa |
@@ -7421,6 +8862,7 @@ class CheckProvisioningTest extends ProvisioningTestCase
             'api.github.com/repos/HumblebragAB/kattsvep' => Http::response(ProvisioningFakes::githubRepo('kattsvep', $this->run->uuid)),
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep'), ProvisioningFakes::coolifyApp('app-x', 'ordjakt')])),
             'coolify.test/api/v1/applications/app-1' => Http::response(ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')),
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished']])),
             'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments(self::DEMO)),
             'siteops.test/api/v1/sites/42' => Http::response(ProvisioningFakes::siteopsSite(42, self::DEMO)),
             self::DEMO => Http::response('<html></html>'),
@@ -7500,6 +8942,38 @@ class CheckProvisioningTest extends ProvisioningTestCase
             ->assertExitCode(1);
     }
 
+    // Redo för kod men ingen push än: tyst i karenstiden, sedan en avvikelse.
+    public function test_game_without_deployment_is_quiet_for_7_days_then_reported(): void
+    {
+        $this->fakeHealthy([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([])),
+            self::DEMO => Http::response('Not Found', 404),
+        ]);
+
+        $this->artisan('computercat:check-provisioning --dry-run')
+            ->expectsOutputToContain('väntar på kod')
+            ->expectsOutput('0 avvikelse(r).')
+            ->assertExitCode(0);
+        Http::assertNotSent(fn ($r) => str_starts_with($r->url(), self::DEMO));
+
+        $this->travel(8)->days();
+
+        $this->artisan('computercat:check-provisioning --dry-run')
+            ->expectsOutputToContain("run:{$this->run->uuid}:no_code")
+            ->assertExitCode(1);
+    }
+
+    public function test_failed_latest_build_is_a_deviation(): void
+    {
+        $this->fakeHealthy([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed'], ['dep-1', 'finished']])),
+        ]);
+
+        $this->artisan('computercat:check-provisioning --dry-run')
+            ->expectsOutputToContain("run:{$this->run->uuid}:deploy_failed")
+            ->assertExitCode(1);
+    }
+
     public function test_missing_configuration_fails(): void
     {
         config(['provisioning.coolify.token' => '']);
@@ -7549,7 +9023,9 @@ use Throwable;
 /**
  * Invarianten för provisioneringen (spec 2c): varje lyckad run har ett
  * oarkiverat repo, en Coolify-app spel-<slug> med basic auth i Demo-projektet,
- * en aktiv och övervakad SiteOps-sajt och en Demo-URL som svarar 200. Omvänt
+ * en aktiv och övervakad SiteOps-sajt, och, när spelets Claude har pushat,
+ * ett lyckat senaste bygge och en Demo-URL som svarar 200. Ett spel utan
+ * bygge larmar först efter karenstiden (no_push_grace_days). Omvänt
  * har varje spel-*-app i Demo-projektet en run. Fastnade sagor larmar också,
  * eftersom en död kö-worker annars aldrig syns.
  */
@@ -7661,11 +9137,44 @@ class CheckProvisioning extends Command
             return "SiteOps-sajten {$run->siteops_site_id} har ingen miljö med {$run->demo_url}.";
         });
 
-        $this->check("{$key}:demo", "Demo-adressen för {$run->slug}", function () use ($run) {
-            $status = DemoProbe::status((string) $run->demo_url);
+        $this->checkDeployment($key, $run, $coolify);
+    }
 
-            return $status === 200 ? null : "{$run->demo_url} svarade {$status} med basic auth.";
-        });
+    // Repot är redo för kod efter sagan; första bygget kommer från spelets push.
+    // Inget bygge: tyst i karenstiden, sedan avvikelse. Med bygge: senaste får
+    // inte ha fallerat, och Demo ska svara 200.
+    private function checkDeployment(string $key, ProvisioningRun $run, CoolifyClient $coolify): void
+    {
+        try {
+            $latest = $coolify->latestDeployment((string) $run->coolify_app_uuid);
+        } catch (Throwable $e) {
+            $this->deviations["{$key}:deploy"] = "Kunde inte läsa byggen för {$run->slug}: ".$this->describe($e);
+
+            return;
+        }
+
+        if ($latest === null) {
+            $grace = (int) config('provisioning.no_push_grace_days');
+            if ($run->created_at->gt(now()->subDays($grace))) {
+                $this->line("{$run->slug}: väntar på kod (inget bygge än, skapad {$run->created_at->toDateString()}).");
+            } else {
+                $this->deviations["{$key}:no_code"] = "{$run->slug} har inget bygge {$grace} dagar efter att repot skapades. Har spelets Claude pushat grundkoden (CLAUDE.md steg 1)?";
+            }
+
+            return;
+        }
+
+        if (in_array($latest['status'], ['failed', 'cancelled-by-user'], true)) {
+            $this->deviations["{$key}:deploy_failed"] = "Senaste bygget av {$run->slug} ({$latest['deployment_uuid']}) slutade med {$latest['status']}.";
+        }
+
+        if ($latest['status'] === 'finished' || isset($this->deviations["{$key}:deploy_failed"])) {
+            $this->check("{$key}:demo", "Demo-adressen för {$run->slug}", function () use ($run) {
+                $status = DemoProbe::status((string) $run->demo_url);
+
+                return $status === 200 ? null : "{$run->demo_url} svarade {$status} med basic auth.";
+            });
+        }
     }
 
     private function checkStuck(): void
@@ -7713,7 +9222,7 @@ Schedule::command('computercat:check-provisioning')->dailyAt('06:15')->withoutOv
 cd $WT && php artisan test --filter=CheckProvisioningTest
 ```
 
-Förväntat: `Tests: 8 passed`.
+Förväntat: `Tests: 10 passed`.
 
 - [ ] **Steg 6: Commit.**
 
@@ -7740,12 +9249,12 @@ Förväntat: pint utan anmärkningar; `Tests: N passed` utan fel eller varningar
 - [ ] **Steg 2: Svep efter syskon (klass, inte instans).** Kör och läs varje träff:
 
 ```bash
-cd $WT && grep -rn "Http::" app | grep -v "app/Provisioning\|app/Support/SlackAlert.php" ; grep -rn "DB::transaction\|beginTransaction" app/Provisioning app/Jobs app/Mcp ; grep -rn -e '->delete(' -e "'DELETE'" -e '"DELETE"' app/Provisioning ; grep -rn "{\$game->slug}\|{\$ex->slug}" app/Services
+cd $WT && grep -rn "Http::" app | grep -v "app/Provisioning\|app/Support/SlackAlert.php" ; grep -rn "DB::transaction\|beginTransaction" app/Provisioning app/Jobs app/Mcp ; grep -rn -e '->delete(' -e "'DELETE'" -e '"DELETE"' app/Provisioning ; grep -rn "{\$game->slug}\|{\$ex->slug}" app/Services ; grep -rn "/deploy?\|'/deploy'\|generate\|spelmall\|template_repo\|GITHUB_TEMPLATE_REPO" app config tests .env.example phpunit.xml ; grep -rn "Process::\|file_get_contents\|resource_path('byggguide" app | grep -v "app/Services/BuildGuide.php\|app/Console/Commands/VerifyBuildGuide.php\|app/Console/Commands/BuildGuideHash.php"
 ```
 
-Förväntat: inga nya HTTP-anrop utanför klienterna/SlackAlert/DemoProbe; `DB::transaction` bara i `GameStep` och `AdvanceProvisioningRun::complete()` (utan HTTP inuti), plus befintliga `DB::beginTransaction` i `GameTool` (app/Mcp); `DELETE` bara i `CoolifyClient::deleteApplication()`; ingen oescapad slug i IntegrationGuide. En avvikande träff som inte kan fixas direkt: AskUserQuestion.
+Förväntat: inga nya HTTP-anrop utanför klienterna/SlackAlert/DemoProbe; `DB::transaction` bara i `GameStep` och `AdvanceProvisioningRun::complete()` (utan HTTP inuti), plus befintliga `DB::beginTransaction` i `GameTool` (app/Mcp); `DELETE` bara i `CoolifyClient::deleteApplication()`; ingen oescapad slug i IntegrationGuide; inget `POST /deploy`, `/generate`, mallrepo eller `GITHUB_TEMPLATE_REPO` kvar (träffar på ordet `generate` i orelaterad befintlig kod läses och lämnas); `Process` och filläsning av guiden bara i `BuildGuide` och de två byggguidekommandona (befintliga träffar i annan kod läses och lämnas). En avvikande träff som inte kan fixas direkt: AskUserQuestion.
 
-- [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate mot `git diff main...HEAD`. Läs särskilt: att inga nycklar når `AuditLogger` (verktygsargumenten är slug, name, idea, domain), att `last_error` och tool-svar bara bär `SafeMessage`-text, att GitHub-klienten saknar DELETE, att Coolify-spärren gäller alla muterande anrop, att SlackAlert aldrig loggar URL:en, att privat nyckel kräver läge 600, och att en kapad staff-session högst når 5 nya spel per dygn och bara arkiverar egna olistade spel.
+- [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate mot `git diff main...HEAD`. Läs särskilt: att inga nycklar når `AuditLogger` (verktygsargumenten är slug, name, idea, domain), att `last_error` och tool-svar bara bär `SafeMessage`-text, att GitHub-klienten saknar DELETE, att Coolify-spärren gäller alla muterande anrop, att SlackAlert aldrig loggar URL:en, att privat nyckel kräver läge 600, att en kapad staff-session högst når 5 nya spel per dygn och bara arkiverar egna olistade spel, att byggguidens REST-vägar inte når något utanför manifestet (sökväg från anroparen jämförs bara med `files[].path`), svarar `text/plain` med `nosniff` och har `throttle:build-guide`, att en fil som inte matchar sin `sha256` aldrig skickas, att `computercat:byggguide:verify` vägrar i produktion, och att Coolify-klienten saknar metod för att starta ett bygge.
 
 - [ ] **Steg 4: completion-gate.** Invokera `completion-gate`. Block 1 ("fungerar det") kan inte bevisas med testsviten ensam; det bevisas av Task 24 mot riktiga tjänster. Gaten passeras här för koden ("redo för deploy"), och körs igen efter Task 24 innan något kallas klart. Icke-blockerande fynd buntas till en AskUserQuestion.
 
@@ -7794,7 +9303,7 @@ git -C /Users/erik/Web/computercat-api push origin main
 
 Förväntat: tre migrationer körda (`add_is_listed_to_games_table`, `create_provisioning_runs_table`, `create_provisioning_steps_table`); invarianten skriver `0 avvikelse(r).` och listar inga `coolify:orphan` (spike-appen är raderad). En `coolify:orphan` eller ett konfigurationsfel: stanna och fråga.
 
-- [ ] **Steg 6: Rök-test utan dataändring.** `curl -s https://api.computercat.co/api/v1/games | jq '.data | length'` → samma antal som noterades före push i steg 1. Erik kontrollerar i claude.ai att connectorn listar `create_game`, `get_provisioning_status`, `retry_provisioning`, `request_live` och `archive_game` (AskUserQuestion). Mattias informeras inte än.
+- [ ] **Steg 6: Rök-test utan dataändring.** `curl -s https://api.computercat.co/api/v1/games | jq '.data | length'` → samma antal som noterades före push i steg 1. Byggguiden: `curl -s https://api.computercat.co/api/v1/build-guide | jq -r '.data.version, (.data.files | length)'` → `v1` och `48`; `curl -s -D - -o "$SCRATCH/lock.json" https://api.computercat.co/api/v1/build-guide/v1/files/package-lock.json | grep -i '^x-content-sha256'` och `shasum -a 256 "$SCRATCH/lock.json"` ger samma värde (filen tas sedan bort på sin sökväg). Erik kontrollerar i claude.ai att connectorn listar `create_game`, `get_build_guide`, `get_build_guide_file`, `get_provisioning_status`, `retry_provisioning`, `request_live` och `archive_game` (AskUserQuestion). Mattias informeras inte än.
 
 ---
 
@@ -7808,9 +9317,9 @@ Första data-muterande körningen mot riktiga tjänster efter deploy. Ingen kund
 
 - [ ] **Steg 1: OK för routine A (AskUserQuestion).** "Skapa routine A på ditt konto (Computercat-connectorn påslagen, inget repo) som kör create_game för kattsvep? Den skapar riktiga resurser: repo, Coolify-app, SiteOps-sajt, spel i Computercat. Under körningen läser jag `computercat:check-provisioning --dry-run` på prod via ssh-claude var femte minut (bara läsning)." Utan OK: stanna.
 
-- [ ] **Steg 2: Routine A.** Invokera skillen `schedule` och skapa en engångs-routine på Eriks konto, connectorn Computercat påslagen, inget repo, med exakt prompten: "Skapa ett nytt spel i Computercat: Kattsvep (slug `kattsvep`), ett minröj där katter letar bajs, med daglig topplista för snabbaste rensning. Följ upp med get_provisioning_status tills Demo-adressen svarar." Följ körningen. Under tiden, var femte minut: `ssh-claude --via-home forge@46.246.48.182 "cd $SITE && sudo -n -u computercat php8.4 artisan computercat:check-provisioning --dry-run"` (läsning; ingår i Eriks OK i steg 1). Fastnar sagan (`stuck`) eller blir `failed`: läs `last_error` via routinens get_provisioning_status, stanna och fråga Erik innan `retry_provisioning`.
+- [ ] **Steg 2: Routine A.** Invokera skillen `schedule` och skapa en engångs-routine på Eriks konto, connectorn Computercat påslagen, inget repo, med exakt prompten: "Skapa ett nytt spel i Computercat: Kattsvep (slug `kattsvep`), ett minröj där katter letar bajs, med daglig topplista för snabbaste rensning. Följ upp med get_provisioning_status tills provisioneringen är klar och repot är redo för kod." Följ körningen. Förväntat slut: `provisioning.status == "succeeded"` och `demo.state == "awaiting_code"`. Under tiden, var femte minut: `ssh-claude --via-home forge@46.246.48.182 "cd $SITE && sudo -n -u computercat php8.4 artisan computercat:check-provisioning --dry-run"` (läsning; ingår i Eriks OK i steg 1). Fastnar sagan (`stuck`) eller blir `failed`: läs `last_error` via routinens get_provisioning_status, stanna och fråga Erik innan `retry_provisioning`.
 
-- [ ] **Steg 3: Routine B.** När routine A rapporterat `succeeded`: fråga Erik (AskUserQuestion): "Routine B bygger Kattsvep, pushar till main i HumblebragAB/kattsvep (Coolify auto-deployar Demo) och skriver topplistekonfiguration i Computercat-prod via connectorn. OK?" Utan OK: stanna. Efter OK: skapa med `schedule`-skillen en routine B på Eriks konto med repot `HumblebragAB/kattsvep` och connectorn påslagen. Kan skillen inte koppla repot: AskUserQuestion till Erik att koppla det i routinens inställningar (ett klick). Prompt: "Bygg spelet enligt README och CLAUDE.md, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen."
+- [ ] **Steg 3: Routine B.** När routine A rapporterat `succeeded`: fråga Erik (AskUserQuestion): "Routine B hämtar byggguiden, pushar grundkoden och sedan spelet till main i HumblebragAB/kattsvep (Coolify auto-deployar Demo vid varje push) och skriver topplistekonfiguration i Computercat-prod via connectorn. OK?" Utan OK: stanna. Efter OK: skapa med `schedule`-skillen en routine B på Eriks konto med repot `HumblebragAB/kattsvep` och connectorn påslagen. Kan skillen inte koppla repot: AskUserQuestion till Erik att koppla det i routinens inställningar (ett klick). Prompt: "Följ CLAUDE.md: hämta byggguiden med get_build_guide, skriv grundkoden, kör kontrollerna och pusha till main. Bygg sedan spelet enligt README, konfigurera topplistan via Computercat, pusha till main och verifiera på Demo-adressen." Följ körningen med `get_provisioning_status`-anropen i revisionsloggen: efter första pushen ska `demo.state` gå `awaiting_code` → `building` → `live` (klickracet), efter spelets push åter till `live`.
 
 - [ ] **Steg 4: Verifiera (efter routine B).** Fråga först Erik (AskUserQuestion): "Verifieringen skriver i prod: en anonym spelare `acceptans` och en topplistetid i Computercat (punkt 2), invarianten utan `--dry-run` som kan larma i Slack (punkt 3), och `artisan tinker` på prod som bara läser revisionsloggen (punkt 4). OK?" Utan OK: stanna. Varje punkt med kommando och förväntat utfall; inga tokens skrivs ut (spara i skalvariabler):
 
@@ -7823,6 +9332,15 @@ curl -s -u "$DEMO_BASIC_AUTH" https://kattsvep.apps.humblebrag.se/ | grep -o '/_
 ```
 
 Öppna sedan sidan i webbläsaren (skillen `anthropic-skills:chrome-browser`) med basic auth och kontrollera att spelplanen ritas och att konsolen saknar fel.
+
+1b. Grundkoden kom ur byggguiden. Med `gh` (Eriks behörighet, bara läsning): hitta commiten `Grundkod från byggguide v1` (`gh api "repos/HumblebragAB/kattsvep/commits?per_page=100" --jq '.[] | select(.commit.message|startswith("Grundkod från byggguide v1")) | .sha'`), hämta den i `$SCRATCH/kattsvep` (`gh repo clone HumblebragAB/kattsvep "$SCRATCH/kattsvep" && git -C "$SCRATCH/kattsvep" checkout <sha>`) och jämför varje fil i manifestet:
+
+```bash
+curl -s https://api.computercat.co/api/v1/build-guide/v1 | jq -r '.data.files[] | "\(.sha256)  \(.path)"' > "$SCRATCH/kattsvep-v1.sha256"
+(cd "$SCRATCH/kattsvep" && shasum -a 256 -c "$SCRATCH/kattsvep-v1.sha256" | grep -v ': OK$')
+```
+
+Förväntat: ingen utskrift (alla 48 filer `OK`). Klonen tas bort på sin sökväg efteråt.
 
 2. Anonym spelare skickar en tid från Demo-origin (CORS-preflight OK) och syns i topplistan. Topplistans slug (`$LB`) hämtas från routine B:s rapport eller `get_game`.
 
@@ -7843,16 +9361,16 @@ Spelaren och tiden finns kvar i prod; Erik beslutar om dem i steg 5. Avvisar ant
 4. Revisionsloggen visar routinernas anrop:
 
 ```bash
-~/.claude/bin/ssh-claude --via-home forge@46.246.48.182 "cd $SITE && sudo -n -u computercat php8.4 artisan tinker --execute=\"echo App\\Models\\McpAuditLog::where('created_at','>=',now()->subDay())->whereIn('tool',['create_game','get_provisioning_status','upsert_leaderboard_type','get_game'])->orderBy('id')->get(['tool','outcome','created_at'])->toJson();\""
+~/.claude/bin/ssh-claude --via-home forge@46.246.48.182 "cd $SITE && sudo -n -u computercat php8.4 artisan tinker --execute=\"echo App\\Models\\McpAuditLog::where('created_at','>=',now()->subDay())->whereIn('tool',['create_game','get_provisioning_status','get_build_guide','get_build_guide_file','upsert_leaderboard_type','get_game'])->orderBy('id')->get(['tool','outcome','created_at'])->toJson();\""
 ```
 
-Förväntat: minst `create_game` (ok), flera `get_provisioning_status` (ok) och `upsert_leaderboard_type` (ok).
+Förväntat: minst `create_game` (ok), `get_build_guide` (ok), flera `get_build_guide_file` (ok), flera `get_provisioning_status` (ok) och `upsert_leaderboard_type` (ok).
 
 5. `GET https://api.computercat.co/api/v1/games` innehåller inte `kattsvep` (olistat).
 
 Faller någon punkt: stanna, beskriv vad som avviker och fråga Erik (AskUserQuestion). Ingen retry eller ändring utan svar.
 
-- [ ] **Steg 5: completion-gate och Eriks beslut.** Kör `completion-gate` igen med verifieringen ovan som bevis (Demo-URL, topplisteraden, invariantens utskrift, revisionsloggens rader). Fråga sedan Erik med AskUserQuestion: "Kattsvep: (a) lever vidare som Demo, (b) arkiveras med archive_game (repo arkiveras, Coolify-appen tas bort, SiteOps avaktiveras, spelet stängs av), (c) acceptansspelaren och tiden tas bort först". Vid (b) körs `archive_game` av Erik via connectorn eller en routine; verifiera därefter att `get_provisioning_status` visar arkiveringsrunnen `succeeded` och att `computercat:check-provisioning` är grön. Vid (c): radera bara på den användares id som skapades i steg 4 punkt 2 (läs id ur `/auth/me` med samma token), räkna först, och bara efter Eriks uttryckliga OK.
+- [ ] **Steg 5: completion-gate och Eriks beslut.** Kör `completion-gate` igen med verifieringen ovan som bevis (Demo-URL, sha256-jämförelsen av grundkoden, topplisteraden, invariantens utskrift, revisionsloggens rader). Fråga sedan Erik med AskUserQuestion: "Kattsvep: (a) lever vidare som Demo, (b) arkiveras med archive_game (repo arkiveras, Coolify-appen tas bort, SiteOps avaktiveras, spelet stängs av), (c) acceptansspelaren och tiden tas bort först". Vid (b) körs `archive_game` av Erik via connectorn eller en routine; verifiera därefter att `get_provisioning_status` visar arkiveringsrunnen `succeeded` och att `computercat:check-provisioning` är grön. Vid (c): radera bara på den användares id som skapades i steg 4 punkt 2 (läs id ur `/auth/me` med samma token), räkna först, och bara efter Eriks uttryckliga OK.
 
 - [ ] **Steg 6: Mattias.** Fråga Erik (AskUserQuestion) om och när Mattias ska informeras. Planen informerar aldrig själv.
 
@@ -7860,8 +9378,8 @@ Faller någon punkt: stanna, beskriv vad som avviker och fråga Erik (AskUserQue
 
 ## Spec-avvikelser och tolkningar som planen gör
 
-1. **Coolify-token behöver `read`** utöver `write` + `deploy` (bilaga A §7: alla GET kräver `read`; sagan pollar och invarianten läser). Specen är rättad 2026-10-13 (Förutsättningar 4, Säkerhet). Task 0.6.
-2. **SiteOps-nyckeln behöver `sites:read`** utöver `sites:write`. Specen är rättad 2026-10-13 (Förutsättningar 6). Task 0.8.
+1. **Coolify-token behöver `read`** utöver `write` (bilaga A §7: alla GET kräver `read`; status, invariant och bygglistan läser). Sedan revisionen 2026-10-13 behövs inte `deploy`: Computercat startar inga byggen. Specen är rättad (Förutsättningar 4, Säkerhet). Task 0.6.
+2. **SiteOps-nyckeln behöver `sites:read`** utöver skrivscopet, och skrivscopet är det smala `demo-sites:write` (Eriks beslut 2026-10-13), inte `sites:write`. Specen är rättad (Förutsättningar 6, Säkerhet, 2a-tabellen). Task 0.8.
 3. **SiteOps-adoption kräver ägarskap.** En webb som uppslaget eller 409 pekar på adopteras bara om den har rätt adress, är aktiv, har en demo-miljö med adressen och `PATCH` av miljön ger 200 (2a:s spärr på `sites.api_client_id`). Specen säger bara "annars uppslag på exakt URL". Task 11, Task 15.
 4. **Invarianten läser `monitoring_enabled` och miljöns `has_basic_auth`** (2a Task 6) utöver `is_active` och `is_monitored`, eftersom 2a:s avaktivering stänger av `monitoring_enabled` och en Demo-miljö utan basic auth ger 401 i SiteOps övervakning. Task 21.
 5. **Kö-workern:** `--timeout=120` är längre än databasköns `retry_after` (90 s), och `--tries=1` fäller ett jobb som släpps med `release()`. Planen sätter `$tries = 0`, `retryUntil()` och `$timeout = 60` på jobbet och föreslår `--timeout=60` eller `DB_QUEUE_RETRY_AFTER=180`. Task 0.3, Task 12.
@@ -7872,3 +9390,9 @@ Faller någon punkt: stanna, beskriv vad som avviker och fråga Erik (AskUserQue
 10. **`get_provisioning_status`/`retry_provisioning` tar `game`**, men ett fel i `repo` inträffar innan spelet finns. Planen låter den som skapade runnen nå den på slugen; alla andra får "Game not found".
 11. **Invarianten** larmar också för runs som stått på `running` i 30 minuter utan stegaktivitet (död kö-worker), utöver specens kontroller.
 12. **Coolify-adoption kräver egen markör.** Specen säger "annars matcha exakt namn `spel-<slug>`". Planen adopterar bara om runnen själv har sparat `create_requested_at` före `POST`; en handskapad app med samma namn ger `failed`, så att den aldrig hamnar i listan som Coolify-spärren och `archive_game` litar på. Task 14.
+13. **Byggguide i stället för mallrepo (Eriks beslut 2026-10-13).** Specen är omskriven. Planen lägger guiden i `resources/byggguide/v1` (Task 8A), verifierar den lokalt (Task 8B) och exponerar den via MCP och publik REST (Task 17A). `repo`-steget skapar ett tomt repo med `POST /orgs/{org}/repos` och skriver README och `CLAUDE.md` (Task 9, 13).
+14. **`CLAUDE.md` skrivs i repot av `create_game`**, inte bara av spelets Claude. Utan den vet en ny session inte att steg 1 är `get_build_guide`. Filen är byte för byte samma som guidens, så steg 1 skriver samma innehåll igen.
+15. **Grundkoden innehåller exempelspelet (klickrace).** Specen säger "klientfilerna"; planen tar med hela 2b-koden (utom README) så att alla 83 tester, inklusive integrationstestet i jsdom, körs i varje spelrepo och Demo bevisar hela kedjan direkt efter första pushen. `CLAUDE.md` säger att exemplet ersätts.
+16. **REST-vägen heter `/api/v1/build-guide`** (engelska som resten av API:t), är publik och har `throttle:build-guide` 30/min per IP. Den behövs för `package-lock.json` (cirka 300 KB, över MCP-gränsen). Task 17A.
+17. **Inget deploy-steg, och `succeeded` betyder "redo för kod".** `get_provisioning_status` visar i stället `demo.state`, och invarianten har 7 dagars karenstid för spel utan bygge (Task 19, 21).
+18. **Publicerade guideversioner är låsta** med `BuildGuide::FROZEN` (sha256 av `manifest.json`), så att det spelets Claude hämtar alltid är det som verifierades. En ändring blir en ny version.

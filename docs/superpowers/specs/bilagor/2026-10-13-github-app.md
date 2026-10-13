@@ -5,6 +5,8 @@ UNCONFIRMED = docs do not state it; verify empirically (read-only) or with GitHu
 
 ## 1. Create repo from template
 
+> **Ersatt 2026-10-13** (Eriks beslut: inget mallrepo). Provisioneringen använder §6. Avsnittet står kvar som historik.
+
 `POST /repos/{template_owner}/{template_repo}/generate` (API version header `X-GitHub-Api-Version: 2022-11-28`)
 Source: https://docs.github.com/en/rest/repos/repos#create-a-repository-using-a-template
 
@@ -90,3 +92,13 @@ https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
 - Docs fetched do **not** explicitly say that "All repositories" includes repos created later. Pages checked: reviewing-and-modifying-installed-github-apps, installing-a-github-app-from-a-third-party, installing-your-own-github-app. They only state the "Only select repositories" rule: an App gets access to repos *it itself* creates.
 - **UNCONFIRMED** (docs): whether a repo created by our App is automatically covered by another App's "All repositories" installation. The name and the `repository_selection: "all"` model strongly suggest yes (access is evaluated against the whole account rather than a list), but this is not stated verbatim. Verify by creating a test repo and checking `GET /repos/{owner}/{repo}/installation` for the other App, or checking the other App's installation settings in the org UI.
 - If the other App is on "Only select repositories", new repos are **not** added automatically (the auto-grant applies only to the creating App); an org owner or repo admin must add them.
+
+## 6. Create an empty org repo (används sedan 2026-10-13)
+
+Read 2026-10-13 on docs.github.com.
+
+- `POST /orgs/{org}/repos` (https://docs.github.com/en/rest/repos/repos#create-an-organization-repository). Body used: `name` (required), `description`, `private` (boolean, default `false`, so always sent as `true`), `auto_init` (boolean, default `false`; "Pass true to create an initial commit with empty README"). Responses: 201 Created, 403 Forbidden, 422 "Validation failed, or the endpoint has been spammed.", 451.
+- Permissions page (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps): `POST /orgs/{org}/repos` is listed under "Repository permissions for "Administration"" (write, UAT/IAT, additional permissions ✓) and under "Repository permissions for "Repository creation"" (write, UAT/IAT, additional permissions ✓). The page does not say how they combine. **UNCONFIRMED:** whether Administration: write alone is enough; spike S8 tries it, and on 403 Erik decides whether to add "Repository creation".
+- Contents (same page): `GET /repos/{owner}/{repo}/contents/{path}` needs Contents: read; `PUT /repos/{owner}/{repo}/contents/{path}` needs Contents: write (also listed under Workflows: write, which only matters for files under `.github/workflows/`; we never write there).
+- Access to created repos: "If the app creates any repositories, the app will automatically be granted access to those repositories as well." (https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). The same page does not say whether "Only select repositories" requires at least one selected repository. **UNCONFIRMED.**
+- `auto_init` README content and how fast it is readable via the Contents API: not documented; spike S11 measures it. The step polls a 404 for up to 3 minutes.
