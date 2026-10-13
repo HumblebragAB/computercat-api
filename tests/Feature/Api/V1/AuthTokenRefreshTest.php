@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api\V1;
 
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\PersonalAccessToken;
@@ -135,14 +136,69 @@ class AuthTokenRefreshTest extends TestCase
         $this->assertSame($before, PersonalAccessToken::count());
     }
 
-    public function test_refresh_is_throttled_by_auth_limiter(): void
+    public function test_session_login_cannot_refresh(): void
     {
-        $token = $this->anonymousToken(); // 1 av 10 per minut och IP
+        $user = User::factory()->create();
+        $before = PersonalAccessToken::count();
 
-        for ($i = 0; $i < 9; $i++) {
+        // Sanctum släpper in webbsessionen med ett TransientToken.
+        $this->actingAs($user, 'web')->postJson('/api/v1/auth/refresh')->assertUnauthorized();
+
+        $this->assertSame($before, PersonalAccessToken::count());
+    }
+
+    // Token utfärdade före den här ändringen saknar expires_at.
+    public function test_legacy_token_without_expires_at_is_clamped_on_refresh(): void
+    {
+        $user = User::factory()->create();
+        $legacy = $user->createToken('anonymous')->plainTextToken;
+        $this->assertNull(PersonalAccessToken::findToken($legacy)->expires_at);
+
+        Carbon::setTestNow(now()->addDays(30)->startOfSecond());
+        $this->refresh($legacy)->assertOk();
+
+        $this->assertTrue(PersonalAccessToken::findToken($legacy)->expires_at->equalTo(now()->addMinutes(10)));
+    }
+
+    public function test_legacy_token_without_expires_at_expires_after_90_days(): void
+    {
+        $user = User::factory()->create();
+        $legacy = $user->createToken('anonymous')->plainTextToken;
+
+        $this->travel(89)->days();
+        $this->getMe($legacy)->assertOk();
+
+        $this->travel(1)->days();
+        $this->travel(1)->minutes();
+        $this->getMe($legacy)->assertUnauthorized();
+    }
+
+    // Egen gräns per användare, så att anonyma konton som skapas från samma
+    // IP (en skolklass bakom en NAT) inte stoppar förnyelsen.
+    public function test_refresh_is_throttled_per_user(): void
+    {
+        $token = $this->anonymousToken();
+
+        for ($i = 0; $i < 30; $i++) {
             $this->refresh($token)->assertOk();
         }
 
         $this->refresh($token)->assertStatus(429);
+
+        // En annan användare från samma IP påverkas inte.
+        $other = User::factory()->create()->createToken('anonymous')->plainTextToken;
+        $this->refresh($other)->assertOk();
+    }
+
+    public function test_exhausted_auth_limit_does_not_block_refresh(): void
+    {
+        $token = $this->anonymousToken();
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->postJson('/api/v1/auth/anonymous');
+        }
+        $this->postJson('/api/v1/auth/anonymous')->assertStatus(429);
+
+        $this->refresh($token)->assertOk();
     }
 }

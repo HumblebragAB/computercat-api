@@ -38,6 +38,19 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(10)->by($request->ip());
         });
 
+        // Tokenförnyelse har egna gränser, skilda från auth (anonymous/login)
+        // så att en skolklass som skapar konton bakom samma IP inte stoppar
+        // förnyelsen. Den lätta IP-gränsen ligger före auth:sanctum, gränsen
+        // per användare efter.
+        RateLimiter::for('auth-refresh-ip', function (Request $request) {
+            return Limit::perMinute(120)->by('ip:'.$request->ip());
+        });
+        RateLimiter::for('auth-refresh', function (Request $request) {
+            $user = $request->user();
+
+            return Limit::perMinute(30)->by($user ? 'user:'.$user->getAuthIdentifier() : 'ip:'.$request->ip());
+        });
+
         // Sanctum-guarden släpper aldrig in en bannad användare, även om ett
         // token överlevt (raderingen i User sker bara via modellhändelser).
         // Gäller bara Sanctum; MCP/Passport (StaffUser) har EnsureStaff.

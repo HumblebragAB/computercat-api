@@ -29,9 +29,9 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
         Route::post('/auth/login', [AuthController::class, 'login']);
     });
 
-    // Förnyelse av token. Samma gräns som övriga auth-anrop; throttle före
-    // auth så att även anrop med ogiltig token räknas.
-    Route::middleware(['throttle:auth', 'auth:sanctum', TrackLastSeen::class])->group(function () {
+    // Förnyelse av token. IP-gränsen före auth räknar även anrop med ogiltig
+    // token; gränsen per användare efter auth (se AppServiceProvider).
+    Route::middleware(['throttle:auth-refresh-ip', 'auth:sanctum', 'throttle:auth-refresh', TrackLastSeen::class])->group(function () {
         Route::post('/auth/refresh', [AuthController::class, 'refresh']);
     });
 
