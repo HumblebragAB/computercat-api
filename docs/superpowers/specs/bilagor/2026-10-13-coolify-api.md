@@ -84,3 +84,14 @@ Spike A (2026-10-14): engångsappen `ccspike-v2a` (raderad på sitt uuid) och en
 - S13: byggkatalogen `/app` har ingen `.git/config` (Dockerfile `COPY . /app/.` utan `.git`); Coolifys GitHub-token kan inte läsas där.
 - Loggar: för lyckade byggen är byggstegets utdata dolda (`hidden: true`) och syns bara för misslyckade byggen. Raderna har prefixet `#<steg> <sekunder> ` (t.ex. `#13 6.885 `). Mönster mot loggen måste vara oankrade och läsa även dolda poster (de dolda kan innehålla klonkommandot med token och ska redigeras).
 - Webhook-race: ett repo som pushas sekunder innan appen skapas kan ändå bygga (webhooken kom efter appen), som S25.
+
+Spike B (2026-10-14): engångsappen `ccspike-v2b` med den olåsta v2-katalogen och en kopia av det riktiga `cc-gate.mjs` under `.ccspike/` (prod serverar inte en olåst version), raderad på sitt uuid; engångsrepot HumblebragAB/ccspike-v2b arkiverat.
+
+- S1: specens byggkommando (193 tecken med spikens `cp`) fungerar i nixpacks static-läge; `out/` publiceras. Byggtid 83 s (16:49:07–16:50:30), RAM-topp 1770 MB använt av 3936 MB, minst 2166 MB tillgängligt (swap 638 MB använt, oförändrat av bygget); timeouten (S9) är 3600 s. De dolda raderna visar `check-security: OK (23 filer, 3 HTML-sidor med rätt CSP)` och `cc-audit: OK (inga high eller critical i produktionsberoenden)`, alltså nådde `NPM_CONFIG_PRODUCTION` inte npm (S8).
+- S3: exemplet laddar och skickar en tid till topplistan utan CSP-meddelanden (headless Chrome via CDP med konsol, `Log` och `Audits`; lokalt API på 127.0.0.1:8123, `connect-src` från `NEXT_PUBLIC_COMPUTERCAT_URL`; en rad i topplistan). Demo serverar metataggen. Sidosynpunkt: från `http://localhost:3000` gav POST 419 (CSRF), även mot prod, eftersom Sanctums standardlista räknade den adressen som inloggad webbapp; rättat i `config/sanctum.php` (bara API:ts egen värd).
+- S4: en falsk JWT i `public/` ger `failed` med `check-security: out/cc-spike-key.txt: hemlighet (jwt)`; Demo serverar förra bygget (startsidan 200, nyckelfilen 404). Den globala gitleaks-hooken stoppade committen först; spiken använde `--no-verify` för just den (Eriks beslut). GitHubs push protection stoppade inte pushen.
+- S5: säkerhetsdelen i `cc-gate.mjs` ger noll träffar på hemligheter, source maps, symboliska länkar och dolda filer i `out/` från v1-exemplet och Kattsvep (bara de väntade tre `CSP saknas`).
+- S6: ett repo utan `scripts/cc-gate.mjs` och med `check` ändrat till ett eko fäller ändå med samma rad (kommandot använder inte repots `scripts/` eller `check`).
+- S7: `npm run check` med `NODE_ENV=production` i miljön är grön (exit 0).
+- S11: ingen `Content-Security-Policy`-header från Coolify, Traefik eller nginx; bara metataggen gäller.
+- S12: `next dev` fungerar (HMR ansluten, rundan skickas) utan CSP-tagg i DOM:en, utan CSP-meddelanden och utan taggen i serverns HTML (kontrollerat med cache avstängd; en första körning visade cachad produktions-HTML).
