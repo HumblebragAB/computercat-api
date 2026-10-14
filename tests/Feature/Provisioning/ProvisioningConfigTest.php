@@ -74,4 +74,12 @@ class ProvisioningConfigTest extends TestCase
         $this->assertContains('spel', config('provisioning.reserved_slugs'));
         $this->assertNotContains('', config('provisioning.reserved_slugs'));
     }
+
+    public function test_slack_webhook_must_be_https(): void
+    {
+        ProvisioningFakes::configure();
+        config(['provisioning.slack_webhook_url' => 'http://hooks.slack.test/services/T000/B000/x']);
+
+        $this->assertContains('SLACK_ALERT_WEBHOOK_URL (must start with https://)', ProvisioningConfig::missing());
+    }
 }

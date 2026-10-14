@@ -187,10 +187,10 @@ final class ProvisioningFakes
         return ['id' => $id, 'site_id' => $siteId, 'name' => 'Demo', 'type' => $type, 'url' => $url, 'is_monitored' => $monitored, 'has_basic_auth' => $basicAuth];
     }
 
-    /** POST /sites med environment, 201. */
+    /** POST /sites med environment, 201. Sagan skapar miljön utan övervakning (is_monitored: false). */
     public static function siteopsCreated(int $id, string $url = 'https://kattsvep.apps.humblebrag.se', int $environmentId = 7): array
     {
-        return ['data' => self::siteopsSiteData($id, $url) + ['environment' => self::siteopsEnvironment($id, $url, $environmentId)]];
+        return ['data' => self::siteopsSiteData($id, $url) + ['environment' => self::siteopsEnvironment($id, $url, $environmentId, monitored: false)]];
     }
 
     /** POST /sites, 409 när adressen redan finns i teamet. */

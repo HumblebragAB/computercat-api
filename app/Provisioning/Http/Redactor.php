@@ -2,6 +2,8 @@
 
 namespace App\Provisioning\Http;
 
+use Illuminate\Support\Facades\Log;
+
 // Allt som lämnar klienterna som text (loggar, last_error, Slack) går hit.
 // Specen 2c: Authorization, private_key, password, token, value och Coolifys
 // logs tas bort; max 4 KB.
@@ -53,11 +55,22 @@ final class Redactor
 
         // GitHub-tokens, JWT (appens RS256-JWT bär inget hemligt men ger en
         // installationstoken i 10 min) och PEM-nycklar (appens privata nyckel).
-        return preg_replace([
+        $scrubbed = preg_replace([
             '/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/',
             '/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/',
             '/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(-----END [A-Z ]*PRIVATE KEY-----|\z)/s',
-        ], self::MASK, $text) ?? $text;
+        ], self::MASK, $text);
+
+        // Fail closed: vid PCRE-fel (t.ex. backtrack-gränsen på en stor body)
+        // kan texten innehålla en nyckel, så hela texten ersätts. Loggen får
+        // bara felkoden, aldrig innehållet.
+        if ($scrubbed === null) {
+            Log::warning('Redactor: PCRE-fel vid redigering, hela texten maskerades', ['error' => preg_last_error_msg(), 'bytes' => strlen($text)]);
+
+            return self::MASK;
+        }
+
+        return $scrubbed;
     }
 
     public static function limit(string $text, int $max = self::MAX_BYTES): string
@@ -84,7 +97,7 @@ final class Redactor
     {
         $key = strtolower($key);
 
-        return in_array($key, ['value', 'logs'], true)
-            || preg_match('/authorization|private_key|password|token|api_key|api-key/', $key) === 1;
+        return in_array($key, ['value', 'real_value', 'logs'], true)
+            || preg_match('/authorization|private_key|password|secret|token|api_key|api-key/', $key) === 1;
     }
 }

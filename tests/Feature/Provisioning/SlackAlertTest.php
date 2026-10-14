@@ -67,4 +67,31 @@ class SlackAlertTest extends ProvisioningTestCase
     {
         $this->assertSame('&lt;!channel&gt; &amp; x', SlackAlert::escape('<!channel> & x'));
     }
+
+    public function test_text_posted_to_slack_is_scrubbed(): void
+    {
+        Http::fake([ProvisioningFakes::SLACK => Http::response('ok')]);
+
+        app(SlackAlert::class)->send('k1', 'fel: '.ProvisioningFakes::COOLIFY_TOKEN);
+
+        Http::assertSent(fn ($r) => $r->data() === ['text' => 'fel: [REDACTED]']);
+    }
+
+    public function test_logged_text_and_response_body_are_scrubbed(): void
+    {
+        $logged = [];
+        Log::listen(function ($m) use (&$logged) {
+            $logged[] = $m;
+        });
+        Http::fake([ProvisioningFakes::SLACK => Http::response('nope '.ProvisioningFakes::SITEOPS_KEY, 500)]);
+
+        $this->assertSame(SlackAlert::FAILED, app(SlackAlert::class)->send('k1', 'A'));
+        config(['provisioning.slack_webhook_url' => '']);
+        $this->assertSame(SlackAlert::NOT_CONFIGURED, app(SlackAlert::class)->send('k2', 'fel: '.ProvisioningFakes::COOLIFY_TOKEN));
+
+        $flat = json_encode(array_map(fn ($m) => [$m->message, $m->context], $logged));
+        $this->assertCount(2, $logged);
+        $this->assertStringNotContainsString(ProvisioningFakes::SITEOPS_KEY, $flat);
+        $this->assertStringNotContainsString(ProvisioningFakes::COOLIFY_TOKEN, $flat);
+    }
 }

@@ -3,6 +3,8 @@
 namespace Tests\Unit\Provisioning;
 
 use App\Provisioning\Http\Redactor;
+use Illuminate\Support\Facades\Log;
+use PHPUnit\Framework\Attributes\Depends;
 use Tests\Support\ProvisioningFakes;
 use Tests\TestCase;
 
@@ -77,5 +79,62 @@ class RedactorTest extends TestCase
         $this->assertLessThanOrEqual(Redactor::MAX_BYTES, strlen($long));
         $this->assertTrue(mb_check_encoding($long, 'UTF-8'));
         $this->assertStringEndsWith('…', $long);
+    }
+
+    // Ett PCRE-fel (t.ex. backtrack-gränsen på PEM-mönstret) får aldrig ge
+    // tillbaka oredigerad text; loggen säger bara att det hände.
+    public function test_pcre_error_fails_closed_and_logs_without_content(): void
+    {
+        ProvisioningFakes::configure();
+        $logged = [];
+        Log::listen(function ($m) use (&$logged) {
+            $logged[] = $m;
+        });
+        $jit = ini_get('pcre.jit');
+        $limit = ini_get('pcre.backtrack_limit');
+        ini_set('pcre.jit', '0');
+        ini_set('pcre.backtrack_limit', '100');
+
+        try {
+            $text = Redactor::scrubSecrets("-----BEGIN RSA PRIVATE KEY-----\n".str_repeat('HEMLIGNYCKEL', 2000));
+        } finally {
+            ini_set('pcre.jit', $jit);
+            ini_set('pcre.backtrack_limit', $limit);
+        }
+
+        $this->assertSame('[REDACTED]', $text);
+        $this->assertCount(1, $logged);
+        $this->assertSame('warning', $logged[0]->level);
+        $this->assertStringNotContainsString('HEMLIGNYCKEL', json_encode([$logged[0]->message, $logged[0]->context]));
+    }
+
+    public function test_secret_and_real_value_keys_are_redacted(): void
+    {
+        $out = Redactor::redact([
+            'manual_webhook_secret_github' => 'y1',
+            'client_secret' => 'y2',
+            'real_value' => 'y3',
+            'key' => 'NEXT_PUBLIC_COMPUTERCAT_GAME',
+        ]);
+
+        $flat = json_encode($out);
+        foreach (['y1', 'y2', 'y3'] as $secret) {
+            $this->assertStringNotContainsString("\"{$secret}", $flat, $secret);
+        }
+        $this->assertSame('NEXT_PUBLIC_COMPUTERCAT_GAME', $out['key']);
+    }
+
+    public function test_runtime_secret_is_registered(): void
+    {
+        Redactor::registerSecret('lackage-test-hemlighet-1');
+
+        $this->assertSame('a [REDACTED]', Redactor::scrubSecrets('a lackage-test-hemlighet-1'));
+    }
+
+    // Statiskt tillstånd får inte följa med till nästa test.
+    #[Depends('test_runtime_secret_is_registered')]
+    public function test_runtime_secrets_do_not_leak_between_tests(): void
+    {
+        $this->assertSame('a lackage-test-hemlighet-1', Redactor::scrubSecrets('a lackage-test-hemlighet-1'));
     }
 }

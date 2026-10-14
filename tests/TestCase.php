@@ -2,6 +2,7 @@
 
 namespace Tests;
 
+use App\Provisioning\Http\Redactor;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Illuminate\Support\Facades\Http;
 use Psr\Http\Message\RequestInterface;
@@ -37,6 +38,10 @@ abstract class TestCase extends BaseTestCase
     protected function tearDown(): void
     {
         $deletes = self::$githubDeletes;
+
+        // Utfärdade tokens registreras statiskt i Redactor; nollställs så att
+        // inget test ärver ett annat tests hemligheter.
+        (new \ReflectionProperty(Redactor::class, 'runtimeSecrets'))->setValue(null, []);
 
         parent::tearDown();
 

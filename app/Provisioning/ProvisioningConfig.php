@@ -40,8 +40,9 @@ final class ProvisioningConfig
             $missing[] = self::KEY_FILE_PROBLEM;
         }
 
-        // Token och API-nyckel skickas som headers: aldrig över http://.
-        foreach (['COOLIFY_URL' => 'provisioning.coolify.url', 'SITEOPS_URL' => 'provisioning.siteops.url'] as $env => $key) {
+        // Token och API-nyckel skickas som headers, och webhook-URL:en är själv en
+        // hemlighet: aldrig över http://.
+        foreach (['COOLIFY_URL' => 'provisioning.coolify.url', 'SITEOPS_URL' => 'provisioning.siteops.url', 'SLACK_ALERT_WEBHOOK_URL' => 'provisioning.slack_webhook_url'] as $env => $key) {
             if (! in_array($env, $missing, true) && parse_url((string) config($key), PHP_URL_SCHEME) !== 'https') {
                 $missing[] = "{$env} (must start with https://)";
             }

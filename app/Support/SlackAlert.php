@@ -24,22 +24,22 @@ class SlackAlert
     {
         $url = config('provisioning.slack_webhook_url');
         if (! is_string($url) || $url === '') {
-            Log::warning('SlackAlert: SLACK_ALERT_WEBHOOK_URL saknas, larmet skickades inte', ['key' => $dedupeKey, 'text' => Redactor::limit($text)]);
+            Log::warning('SlackAlert: SLACK_ALERT_WEBHOOK_URL saknas, larmet skickades inte', ['key' => $dedupeKey, 'text' => Redactor::limit(Redactor::scrubSecrets($text))]);
 
             return self::NOT_CONFIGURED;
         }
 
         $cacheKey = 'slack-alert:'.now()->toDateString().':'.sha1($dedupeKey);
-        if (! Cache::add($cacheKey, true, now()->endOfDay())) {
+        if (! Cache::add($cacheKey, true, 86400)) {
             return self::DUPLICATE;
         }
 
         try {
-            $response = Http::timeout(5)->connectTimeout(5)->asJson()->post($url, ['text' => $text]);
+            $response = Http::timeout(5)->connectTimeout(5)->asJson()->post($url, ['text' => Redactor::scrubSecrets($text)]);
             if ($response->successful()) {
                 return self::SENT;
             }
-            Log::warning('SlackAlert: webhooken svarade '.$response->status(), ['key' => $dedupeKey, 'body' => Redactor::limit($response->body(), 500)]);
+            Log::warning('SlackAlert: webhooken svarade '.$response->status(), ['key' => $dedupeKey, 'body' => Redactor::limit(Redactor::scrubSecrets($response->body()), 500)]);
         } catch (\Throwable $e) {
             Log::warning('SlackAlert: anropet misslyckades', ['key' => $dedupeKey, 'error' => get_class($e)]);
         }
