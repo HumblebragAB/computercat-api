@@ -16,6 +16,9 @@ use App\Models\LeaderboardType;
  *   require_proof    — If true, submissions without proof are rejected
  *   proof_algorithm  — Signature algorithm: "fnv1a" (default) or "none"
  *   min_moves        — Minimum move count required in proof (default: 1)
+ *   score_unit       — "ms" or "seconds" for time scores; proof t is always milliseconds
+ *   proof_time_tolerance — Max difference between proof time and score, in the score's
+ *                      unit (default: 1000); 0 turns the comparison off (points)
  */
 class AntiCheatService
 {
@@ -87,9 +90,12 @@ class AntiCheatService
             }
         }
 
-        // Time in proof should roughly match submitted score (if score is time-based)
+        // Time in proof should roughly match submitted score (if score is time-based).
+        // t är alltid millisekunder (createProof i byggguiden); toleransen anges i poängens
+        // enhet. Poäng som inte är tid har tolerans 0 i förvalen och kontrolleras inte här.
         $timeTolerance = $config['proof_time_tolerance'] ?? 1000;
-        if ($timeTolerance > 0 && abs($t - $score) > $timeTolerance) {
+        $proofTime = ($config['score_unit'] ?? null) === 'seconds' ? $t / 1000 : $t;
+        if ($timeTolerance > 0 && abs($proofTime - $score) > $timeTolerance) {
             return ['passed' => false, 'reason' => 'Proof time does not match score.'];
         }
 
@@ -119,7 +125,7 @@ class AntiCheatService
     private function fnv1aSignature(string $pid, int $mc, string $gh, int $t): string
     {
         $payload = "{$pid}|{$mc}|{$gh}|{$t}";
-        $h = 0x811c9dc5;
+        $h = 0x811C9DC5;
 
         for ($i = 0; $i < strlen($payload); $i++) {
             $h ^= ord($payload[$i]);

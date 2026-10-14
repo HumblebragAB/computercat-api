@@ -265,8 +265,16 @@ class IntegrationGuide
                     $lines[] = '| `pid` | Round/puzzle identifier |';
                     $lines[] = "| `mc` | Move/action count (min: {$minMoves}) |";
                     $lines[] = '| `gh` | Hash of final game state |';
-                    $lines[] = '| `t` | Elapsed time |';
+                    $lines[] = '| `t` | Elapsed time in milliseconds (integer) |';
                     $lines[] = '| `sig` | Signature over `pid\\|mc\\|gh\\|t` |';
+                    $lines[] = '';
+                    // Samma regel som AntiCheatService::validateProof: t jämförs med poängen bara när toleransen > 0.
+                    $tolerance = $acConfig['proof_time_tolerance'] ?? 1000;
+                    $tolerance = is_int($tolerance) ? $tolerance : 1000;
+                    $unit = ($acConfig['score_unit'] ?? null) === 'seconds' ? 'seconds' : 'ms';
+                    $lines[] = $tolerance > 0
+                        ? "- `t` must match the score within `{$tolerance}` {$unit}".($unit === 'seconds' ? ' (the server divides `t` by 1000)' : '').'.'
+                        : '- `t` is not compared with the score (the score is not a time).';
                     $lines[] = '';
                     if ($proofAlgo === 'fnv1a') {
                         $lines[] = '**Signature algorithm: FNV-1a**';

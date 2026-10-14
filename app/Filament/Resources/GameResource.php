@@ -5,13 +5,17 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\GameResource\Pages;
 use App\Filament\Resources\GameResource\RelationManagers;
 use App\Models\Game;
+use App\Rules\GameOrigin;
+use App\Rules\GameSlug;
 use App\Services\Glosis\GlosisSettings;
+use App\Services\Glosis\GooglePurchaseVerifier;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Validation\Rule;
 
 class GameResource extends Resource
@@ -74,6 +78,8 @@ class GameResource extends Resource
             'config' => [
                 'min_score' => 0,
                 'max_score' => 1000000,
+                // Poäng är ingen tid: bevisets t jämförs inte med poängen.
+                'proof_time_tolerance' => 0,
             ],
         ],
         'points_with_proof' => [
@@ -82,12 +88,24 @@ class GameResource extends Resource
             'config' => [
                 'min_score' => 0,
                 'max_score' => 1000000,
+                // Poäng är ingen tid: bevisets t jämförs inte med poängen.
+                'proof_time_tolerance' => 0,
                 'require_proof' => true,
                 'proof_algorithm' => 'fnv1a',
                 'min_moves' => 1,
             ],
         ],
     ];
+
+    // Varje nyckel som något förval sätter, med förvalets värde eller null. Byte av förval
+    // får inte lämna dolda nycklar (score_unit, proof_time_tolerance) från det förra kvar.
+    public static function presetSettings(string $preset): array
+    {
+        $keys = collect(self::ANTI_CHEAT_PRESETS)->flatMap(fn (array $p) => array_keys($p['config']))->unique();
+        $config = self::ANTI_CHEAT_PRESETS[$preset]['config'];
+
+        return $keys->mapWithKeys(fn (string $key) => [$key => $config[$key] ?? null])->all();
+    }
 
     public static function form(Form $form): Form
     {
@@ -100,7 +118,7 @@ class GameResource extends Resource
                         ->unique(ignoreRecord: true)
                         // Provisioneringens slugregel gäller bara nya spel; redigering
                         // av ett befintligt spel (tocco, tells, glosis) blockeras aldrig.
-                        ->rule(new \App\Rules\GameSlug, fn (?Game $record) => $record === null)
+                        ->rule(new GameSlug, fn (?Game $record) => $record === null)
                         ->helperText('Nya spel: 3-40 tecken, gemener, siffror och enkla bindestreck (t.ex. "kattsvep"). Blir också reponamn och underdomän.'),
                     Forms\Components\TextInput::make('name')
                         ->required()
@@ -118,7 +136,7 @@ class GameResource extends Resource
                         ->placeholder('https://ordjakt.apps.humblebrag.se')
                         // Samma tak som MCP-verktyget set_allowed_origins.
                         ->rules(['nullable', 'array', 'max:20'])
-                        ->nestedRecursiveRules([new \App\Rules\GameOrigin])
+                        ->nestedRecursiveRules([new GameOrigin])
                         ->helperText('Webbadresser som spelets frontend körs på. https, utan path.'),
                 ]),
 
@@ -134,11 +152,11 @@ class GameResource extends Resource
                         ->rules(['nullable', Rule::in(array_keys(self::ANTI_CHEAT_PRESETS))])
                         ->live()
                         ->afterStateUpdated(function ($state, Forms\Set $set) {
-                            $preset = self::ANTI_CHEAT_PRESETS[$state] ?? null;
-                            if ($preset) {
-                                foreach ($preset['config'] as $key => $value) {
-                                    $set("settings.anti_cheat.{$key}", $value);
-                                }
+                            if (! isset(self::ANTI_CHEAT_PRESETS[$state])) {
+                                return;
+                            }
+                            foreach (self::presetSettings($state) as $key => $value) {
+                                $set("settings.anti_cheat.{$key}", $value);
                             }
                         })
                         ->helperText(fn (Get $get) => self::ANTI_CHEAT_PRESETS[$get('settings.anti_cheat_preset') ?? 'none']['description'] ?? ''),
@@ -193,7 +211,7 @@ class GameResource extends Resource
                         ->formatStateUsing(fn () => null)
                         ->dehydrateStateUsing(function ($state, ?Game $record) {
                             if (filled($state)) {
-                                return \Illuminate\Support\Facades\Crypt::encryptString($state);
+                                return Crypt::encryptString($state);
                             }
 
                             return $record?->settings['app_store_connect']['private_key'] ?? null;
@@ -224,7 +242,7 @@ class GameResource extends Resource
                         // otherwise encrypt the new plaintext secret
                         ->dehydrateStateUsing(function ($state, ?Game $record) {
                             if (filled($state)) {
-                                return \Illuminate\Support\Facades\Crypt::encryptString($state);
+                                return Crypt::encryptString($state);
                             }
 
                             return $record?->settings['revenuecat']['webhook_secret'] ?? null;
@@ -249,7 +267,7 @@ class GameResource extends Resource
                         ->formatStateUsing(fn () => null)
                         ->dehydrateStateUsing(function ($state, ?Game $record) {
                             if (filled($state)) {
-                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                                return Crypt::encryptString(trim($state));
                             }
 
                             return $record?->settings['anthropic']['api_key'] ?? null;
@@ -269,7 +287,7 @@ class GameResource extends Resource
                     Forms\Components\Textarea::make('settings.google_play.service_account_json')
                         ->label('Tjänstekontots JSON-nyckel')
                         ->rows(5)
-                        ->helperText('Klistra in hela JSON-filen från Google Cloud (IAM → Service accounts → Keys). Kontot behöver "'.\App\Services\Glosis\GooglePurchaseVerifier::REQUIRED_PERMISSION.'" för appen i Play Console. Sparas krypterad och visas aldrig. Tomt fält behåller den sparade.')
+                        ->helperText('Klistra in hela JSON-filen från Google Cloud (IAM → Service accounts → Keys). Kontot behöver "'.GooglePurchaseVerifier::REQUIRED_PERMISSION.'" för appen i Play Console. Sparas krypterad och visas aldrig. Tomt fält behåller den sparade.')
                         // Visa aldrig det sparade värdet
                         ->formatStateUsing(fn () => null)
                         ->rule(fn () => function (string $attribute, mixed $value, \Closure $fail) {
@@ -279,7 +297,7 @@ class GameResource extends Resource
                         })
                         ->dehydrateStateUsing(function ($state, ?Game $record) {
                             if (filled($state)) {
-                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                                return Crypt::encryptString(trim($state));
                             }
 
                             return $record?->settings['google_play']['service_account_json'] ?? null;
@@ -364,7 +382,7 @@ class GameResource extends Resource
                         ->formatStateUsing(fn () => null)
                         ->dehydrateStateUsing(function ($state, ?Game $record) {
                             if (filled($state)) {
-                                return \Illuminate\Support\Facades\Crypt::encryptString(trim($state));
+                                return Crypt::encryptString(trim($state));
                             }
 
                             return $record?->settings['elevenlabs']['api_key'] ?? null;
