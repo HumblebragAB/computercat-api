@@ -1,0 +1,361 @@
+{
+    "version": "v1",
+    "source": "spelmall 4a1fecb (2b), importerad till computercat-api",
+    "stack": {
+        "framer-motion": "12.34.3",
+        "next": "16.4.0",
+        "react": "19.2.3",
+        "react-dom": "19.2.3",
+        "zustand": "5.0.11",
+        "@tailwindcss/postcss": "4.2.0",
+        "@testing-library/dom": "10.4.2",
+        "@testing-library/react": "16.3.3",
+        "@testing-library/user-event": "14.6.8",
+        "@types/node": "20.19.33",
+        "@types/react": "19.2.14",
+        "@types/react-dom": "19.2.3",
+        "eslint": "9.39.3",
+        "eslint-config-next": "16.4.0",
+        "jsdom": "30.1.2",
+        "tailwindcss": "4.2.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.11"
+    },
+    "node": "22.x",
+    "overrides": {
+        "vite": "7.3.7"
+    },
+    "output": {
+        "type": "static-export",
+        "directory": "out",
+        "note": "next.config.ts sets output: \"export\"; Coolify serves out/ with nginx"
+    },
+    "env": {
+        "NEXT_PUBLIC_COMPUTERCAT_GAME": "the game slug; set as a build variable on Coolify by create_game, locally in .env.local",
+        "NEXT_PUBLIC_COMPUTERCAT_URL": "optional, default https://api.computercat.co/api/v1"
+    },
+    "commands": {
+        "install": "npm ci",
+        "dev": "npm run dev",
+        "test": "npm test",
+        "build": "npm run build"
+    },
+    "required_checks": [
+        {
+            "name": "check",
+            "command": "npm run check"
+        },
+        {
+            "name": "audit",
+            "command": "npm audit --omit=dev --audit-level=high"
+        },
+        {
+            "name": "static_export",
+            "command": "test -f out/index.html"
+        }
+    ],
+    "steps": [
+        "Write every file in files[] to its path in the repository root: delivery \"mcp\" via get_build_guide_file, delivery \"download\" via curl -fsS <download_url> -o <path>. README.md is not in the list; leave it as it is.",
+        "Verify every file with sha256sum against files[].sha256. Re-fetch on mismatch; never edit a guide file by hand.",
+        "Run commands.install, then every required_checks command in order. All must pass without code changes.",
+        "Commit as \"Grundkod från byggguide v1\" and push directly to main. Coolify builds the Demo on that push.",
+        "Follow up with get_provisioning_status until demo.state is \"live\", then build the game as described in CLAUDE.md."
+    ],
+    "server_templates": {
+        "readme": {
+            "source": "templates/README.md",
+            "sha256": "1e1e922458d5b46df3f1d3d69c5604e77e7e547839f438c77646d6939b492e7e",
+            "bytes": 3777
+        }
+    },
+    "files": [
+        {
+            "path": ".env.example",
+            "source": "files/dot.env.example",
+            "sha256": "d17dfdd8dba21a76e6432f6699102d1077d9936b98780e1de94ae59f1554128d",
+            "bytes": 203
+        },
+        {
+            "path": ".gitignore",
+            "source": "files/dot.gitignore",
+            "sha256": "3bd1c4d464290006e5aa40c8b0c5db311c1da6ee6bc6f90b6eb238db83d91549",
+            "bytes": 144
+        },
+        {
+            "path": "CLAUDE.md",
+            "source": "files/CLAUDE.md",
+            "sha256": "2a3b0d5517404148b468585558cf165fc3e3c776d915f9299d2e511d303f98a1",
+            "bytes": 5394
+        },
+        {
+            "path": "eslint.config.mjs",
+            "source": "files/eslint.config.mjs",
+            "sha256": "913e2689610f513a4036485a296a972ccb76bc213c0c3266cffbca00b8ee9d79",
+            "bytes": 323
+        },
+        {
+            "path": "next.config.ts",
+            "source": "files/next.config.ts",
+            "sha256": "41a58b74b16af15f0d2619480e5dcfbe49a10c4aad30bdfa7b3d193ae6ac58ad",
+            "bytes": 290
+        },
+        {
+            "path": "package-lock.json",
+            "source": "files/package-lock.json",
+            "sha256": "86cde667971cef94ec70b4414f71e93816301b89aa679d8ae55a711e9cab6cae",
+            "bytes": 306512
+        },
+        {
+            "path": "package.json",
+            "source": "files/package.json",
+            "sha256": "15225634b90e90ac5f9296d71f2bfe0bf7bca2b6027f01f46fbb34b3a21c85b2",
+            "bytes": 1061
+        },
+        {
+            "path": "postcss.config.mjs",
+            "source": "files/postcss.config.mjs",
+            "sha256": "9ca55411b62b2c9cc5631a3e6c631d80c8b8171c7b9ea1e19f83400f4100e910",
+            "bytes": 94
+        },
+        {
+            "path": "scripts/check-export.mjs",
+            "source": "files/scripts/check-export.mjs",
+            "sha256": "cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8",
+            "bytes": 1966
+        },
+        {
+            "path": "src/app/globals.css",
+            "source": "files/src/app/globals.css",
+            "sha256": "3f5aac3c03324d34acaaf7d65d32e0dc0007f9b1dbf5e54c2d10584b55ce9c73",
+            "bytes": 445
+        },
+        {
+            "path": "src/app/layout.tsx",
+            "source": "files/src/app/layout.tsx",
+            "sha256": "3d8467191d67fc778fd9e3711bac91aa21ffdffa929d216d1d2c6ec0672989e4",
+            "bytes": 657
+        },
+        {
+            "path": "src/app/page.tsx",
+            "source": "files/src/app/page.tsx",
+            "sha256": "0df8ff807d3460a0142f44986e5011c7833847f05025fe3955be6e54032b962c",
+            "bytes": 908
+        },
+        {
+            "path": "src/components/BackgroundSync.tsx",
+            "source": "files/src/components/BackgroundSync.tsx",
+            "sha256": "5d26fff2311ba204f37304b3484c604bb535a672b9366686ed222d1090c68c72",
+            "bytes": 546
+        },
+        {
+            "path": "src/components/ClickGame.tsx",
+            "source": "files/src/components/ClickGame.tsx",
+            "sha256": "999165d0a97fee0be9b0c560e0af53ffab851646911b9b1cff301a4864158859",
+            "bytes": 3439
+        },
+        {
+            "path": "src/components/ConfigBanner.tsx",
+            "source": "files/src/components/ConfigBanner.tsx",
+            "sha256": "6f13c38d838e8519ef9455d12fb66ac1c50ac449535f57c13e798e4a67a70681",
+            "bytes": 365
+        },
+        {
+            "path": "src/components/Leaderboard.tsx",
+            "source": "files/src/components/Leaderboard.tsx",
+            "sha256": "e4d7baa25a414b024a9499818975b1c03226d999e0a8670e10d32bf3b6d19728",
+            "bytes": 2048
+        },
+        {
+            "path": "src/game/clickStore.test.ts",
+            "source": "files/src/game/clickStore.test.ts",
+            "sha256": "358675c204e146cbcfed8ec51af6f695cdbcae1a10a13872991d2b7f2a6998ba",
+            "bytes": 2236
+        },
+        {
+            "path": "src/game/clickStore.ts",
+            "source": "files/src/game/clickStore.ts",
+            "sha256": "e933a8b5bc952cc77e5d58d2f435e1a6e99b897e9ff58f68704a301704e09909",
+            "bytes": 2133
+        },
+        {
+            "path": "src/game/constants.ts",
+            "source": "files/src/game/constants.ts",
+            "sha256": "d4821bb20959a8da65efb14579651055b33869022decdab19f66019fa6ef3350",
+            "bytes": 228
+        },
+        {
+            "path": "src/game/exampleDocs.test.ts",
+            "source": "files/src/game/exampleDocs.test.ts",
+            "sha256": "b9e6fb33932c3e782fc05e558ca65a3266c3105424edc31fe8c5d07b4e877192",
+            "bytes": 485
+        },
+        {
+            "path": "src/lib/computercat/auth.test.ts",
+            "source": "files/src/lib/computercat/auth.test.ts",
+            "sha256": "39285c516c338a83ee72ba34dd0c8846d63e3c523e662c8c70e260b6b81a8374",
+            "bytes": 6725
+        },
+        {
+            "path": "src/lib/computercat/auth.ts",
+            "source": "files/src/lib/computercat/auth.ts",
+            "sha256": "eaf506c260ef0dbca175510e295fd66ca7dae8bd3566f4b196937998b05cce0a",
+            "bytes": 6303
+        },
+        {
+            "path": "src/lib/computercat/background.test.ts",
+            "source": "files/src/lib/computercat/background.test.ts",
+            "sha256": "343ff89f107d99d6eaa844c26eae5bd6b07267b23d840ee941fe4afddb0ebc8e",
+            "bytes": 837
+        },
+        {
+            "path": "src/lib/computercat/background.ts",
+            "source": "files/src/lib/computercat/background.ts",
+            "sha256": "5c159639f69347bdac75c0e3d5ca21d424f596aa1477498e617b98d900a4ce9c",
+            "bytes": 624
+        },
+        {
+            "path": "src/lib/computercat/config.test.ts",
+            "source": "files/src/lib/computercat/config.test.ts",
+            "sha256": "5989a253c7a566fc0c580eceba21195f23c33ae14d50f352f0d49bb08de66e38",
+            "bytes": 1856
+        },
+        {
+            "path": "src/lib/computercat/config.ts",
+            "source": "files/src/lib/computercat/config.ts",
+            "sha256": "8e0658af3a1feb1c8288e224c5cc0fc0606fab90f65c14138fd27389e5af9546",
+            "bytes": 1642
+        },
+        {
+            "path": "src/lib/computercat/errors.test.ts",
+            "source": "files/src/lib/computercat/errors.test.ts",
+            "sha256": "dda2deff4261e0ef11583ab082697abc44d091db03f88378b177dd3755bb344a",
+            "bytes": 981
+        },
+        {
+            "path": "src/lib/computercat/errors.ts",
+            "source": "files/src/lib/computercat/errors.ts",
+            "sha256": "016fad7cb5d68de80a1e67d62a136c0404631389fa9dca5855d7078e3d9fd499",
+            "bytes": 923
+        },
+        {
+            "path": "src/lib/computercat/http.test.ts",
+            "source": "files/src/lib/computercat/http.test.ts",
+            "sha256": "6db7a41f49a63a1eddb6b98382febdb9cd6e01db764360c05a6cfc57eb077c0b",
+            "bytes": 3463
+        },
+        {
+            "path": "src/lib/computercat/http.ts",
+            "source": "files/src/lib/computercat/http.ts",
+            "sha256": "8269f1e7e16734b1c307c4275b4988f6ab9db2643a4f36a039b10b2ce56d4479",
+            "bytes": 3252
+        },
+        {
+            "path": "src/lib/computercat/index.test.ts",
+            "source": "files/src/lib/computercat/index.test.ts",
+            "sha256": "d15b334097f464b869e7c37cc8d1414cdbc07a86ba24c147b241fca83b53a9e8",
+            "bytes": 2058
+        },
+        {
+            "path": "src/lib/computercat/index.ts",
+            "source": "files/src/lib/computercat/index.ts",
+            "sha256": "ab937307a00f38b54c69bb9ec520c0fb215ae89712331add6f0e5e4803662aab",
+            "bytes": 2834
+        },
+        {
+            "path": "src/lib/computercat/leaderboards.test.ts",
+            "source": "files/src/lib/computercat/leaderboards.test.ts",
+            "sha256": "84bfbb09f358ab0c0c490966f4554de77629ba07663a44d1fda42643f9c63cb6",
+            "bytes": 2513
+        },
+        {
+            "path": "src/lib/computercat/leaderboards.ts",
+            "source": "files/src/lib/computercat/leaderboards.ts",
+            "sha256": "3420b214e634393e6e9059434c06273c9761821ec52539c66b2b53e3704a2edd",
+            "bytes": 2463
+        },
+        {
+            "path": "src/lib/computercat/proof.test.ts",
+            "source": "files/src/lib/computercat/proof.test.ts",
+            "sha256": "e432bb2a3c9e54cfd16bc4fa8a2e6ce7ef24050b2d876dffd230df5637d79fcd",
+            "bytes": 1238
+        },
+        {
+            "path": "src/lib/computercat/proof.ts",
+            "source": "files/src/lib/computercat/proof.ts",
+            "sha256": "b15a8b9aa86ecaa3e97e991bc8ca50d732771774d4e1f41d66061c32fa4d9ee7",
+            "bytes": 1559
+        },
+        {
+            "path": "src/lib/computercat/queue.test.ts",
+            "source": "files/src/lib/computercat/queue.test.ts",
+            "sha256": "2130744b772b52bade2ba8de3ddee74805a9cf1c631e915cce3b09dacabc880e",
+            "bytes": 8411
+        },
+        {
+            "path": "src/lib/computercat/queue.ts",
+            "source": "files/src/lib/computercat/queue.ts",
+            "sha256": "915e81d35ebd8859de55b9e45dcef372ae3c7b2ff2e84889309116d892c18669",
+            "bytes": 5434
+        },
+        {
+            "path": "src/lib/computercat/refresh.test.ts",
+            "source": "files/src/lib/computercat/refresh.test.ts",
+            "sha256": "a7a9a33c4a173a1789c12bf3be633002bcdaeb1082112b45f0999a496aff8c7c",
+            "bytes": 5776
+        },
+        {
+            "path": "src/lib/computercat/saves.test.ts",
+            "source": "files/src/lib/computercat/saves.test.ts",
+            "sha256": "3bf9962fa46d2c907036c9dee9cf65cd5aaca8a8c660b1352d8b4a4062df9f81",
+            "bytes": 4261
+        },
+        {
+            "path": "src/lib/computercat/saves.ts",
+            "source": "files/src/lib/computercat/saves.ts",
+            "sha256": "a92d5f8dcc579e205462a0eea5a4839db9b085979bb5b5ce97e2bb8a230051df",
+            "bytes": 2907
+        },
+        {
+            "path": "src/lib/computercat/storage.test.ts",
+            "source": "files/src/lib/computercat/storage.test.ts",
+            "sha256": "231be5bd136e2cc3954b8a84b6f8a211ae6103773f507ea863ac85d03eceeb53",
+            "bytes": 1438
+        },
+        {
+            "path": "src/lib/computercat/storage.ts",
+            "source": "files/src/lib/computercat/storage.ts",
+            "sha256": "c9600d20863545bfebafbdbd8d61d32d6b5843d771babdad62084bf8b43137b7",
+            "bytes": 1842
+        },
+        {
+            "path": "test/docs.test.ts",
+            "source": "files/test/docs.test.ts",
+            "sha256": "c67776fe369b55874d4fe80cbef8a22a71409e5f4fe9b97fc661fbbbb3da8c4b",
+            "bytes": 1975
+        },
+        {
+            "path": "test/fakeFetch.ts",
+            "source": "files/test/fakeFetch.ts",
+            "sha256": "e1468c77e62308bf4927b440badeab16521d739ae6aa1121063286fbf65fcb6a",
+            "bytes": 2352
+        },
+        {
+            "path": "test/integration.test.tsx",
+            "source": "files/test/integration.test.tsx",
+            "sha256": "509b5a76c60ef5ede61fd46e81df2df44e8c022ba038ceb766680f5bd6bd5a6f",
+            "bytes": 6500
+        },
+        {
+            "path": "tsconfig.json",
+            "source": "files/tsconfig.json",
+            "sha256": "c2a321d4d2b64c9f72af480325d7d193829f69c20e6a12e8fe2165b416152fb7",
+            "bytes": 624
+        },
+        {
+            "path": "vitest.config.ts",
+            "source": "files/vitest.config.ts",
+            "sha256": "232a9e8d5914a93c9cf2ae00f9a9c41053dff96cbff833d603a45a1e03eda6d2",
+            "bytes": 294
+        }
+    ]
+}
