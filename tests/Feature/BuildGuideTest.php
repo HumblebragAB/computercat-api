@@ -372,6 +372,33 @@ class BuildGuideTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/[|;><$`\'"\\\\\n]/', $command);
     }
 
+    public function test_build_command_refuses_a_local_host(): void
+    {
+        foreach (['http://localhost', 'https://127.0.0.1:8000', 'http://[::1]', 'https://computercat-api.test', 'https://api.localhost'] as $url) {
+            config(['app.url' => $url]);
+            try {
+                BuildGuide::coolifyBuildCommand('v2');
+                $this->fail("{$url} borde ha nekats");
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('Coolify-servern når bara en publik värd', $e->getMessage(), $url);
+            }
+        }
+    }
+
+    // Stänger slingan: adressen i kommandot serverar exakt den låsta filen.
+    public function test_build_command_url_serves_the_frozen_gate_script(): void
+    {
+        config(['app.url' => 'https://api.computercat.co']);
+        preg_match('#curl -fsS (\S+) -o#', (string) BuildGuide::coolifyBuildCommand('v2'), $m);
+        $this->assertNotEmpty($m[1] ?? null);
+
+        $response = $this->get((string) parse_url($m[1], PHP_URL_PATH));
+
+        $response->assertOk();
+        $file = collect(BuildGuide::manifest('v2')['files'])->firstWhere('path', BuildGuide::GATE_SCRIPT);
+        $this->assertSame($file['sha256'], hash('sha256', $response->getContent()));
+    }
+
     public function test_too_long_command_is_refused_before_coolify(): void
     {
         config(['app.url' => 'https://'.str_repeat('a', 200).'.example']);

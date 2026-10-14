@@ -165,7 +165,14 @@ final class BuildGuide
             return null;
         }
 
-        $command = 'npm run build && curl -fsS '.self::downloadUrl($version, self::GATE_SCRIPT).' -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs';
+        $url = self::downloadUrl($version, self::GATE_SCRIPT);
+        // Värden bakas in i appen i Coolify för gott och repareras aldrig. En lokal
+        // APP_URL (http://localhost blir https://localhost) skulle fälla varje bygge.
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        if (in_array($host, ['localhost', '127.0.0.1', '[::1]', '::1'], true) || preg_match('/\.(test|localhost)$/', $host) === 1) {
+            throw new \RuntimeException("Coolifys byggkommando kan inte hämta från {$host}; Coolify-servern når bara en publik värd. Kontrollera APP_URL.");
+        }
+        $command = 'npm run build && curl -fsS '.$url.' -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs';
         // Fail loud här i stället för 500 och ingen app i Coolify.
         if (strlen($command) > self::COOLIFY_COMMAND_MAX) {
             throw new \RuntimeException('Coolifys byggkommando blir '.strlen($command).' tecken; Coolify sparar högst '.self::COOLIFY_COMMAND_MAX.'. Kontrollera APP_URL.');
