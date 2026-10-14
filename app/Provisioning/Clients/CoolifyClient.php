@@ -69,7 +69,8 @@ class CoolifyClient
             'server_uuid' => (string) config('provisioning.coolify.server_uuid'),
             'environment_name' => (string) config('provisioning.coolify.environment_name'),
             'github_app_uuid' => (string) config('provisioning.coolify.github_app_uuid'),
-            // OBEKRÄFTAT – verifieras i spike S1 (formatet owner/repo) och S2 (ports_exposes '80').
+            // Verifierat i spike 2026-10-14: S1 (git_repository som owner/repo) och S2 (ports_exposes '80').
+            // publish_directory måste börja med snedstreck (Coolify 4.4.6 DIRECTORY_PATH_PATTERN).
             'git_repository' => ProvisioningConfig::repoFullName($slug),
             'git_branch' => 'main',
             'build_pack' => 'nixpacks',
@@ -78,7 +79,7 @@ class CoolifyClient
             'ports_exposes' => '80',
             'is_static' => true,
             'static_image' => 'nginx:alpine',
-            'publish_directory' => 'out',
+            'publish_directory' => '/out',
             // Bilaga A S:793. Samma installation som byggguiden (BuildGuideTest och
             // CoolifyClientTest vaktar): installationsskript körs aldrig i Demo-bygget.
             'install_command' => 'npm ci --ignore-scripts',

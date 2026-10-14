@@ -39,7 +39,7 @@ class CoolifyClientTest extends ProvisioningTestCase
                 'ports_exposes' => '80',
                 'is_static' => true,
                 'static_image' => 'nginx:alpine',
-                'publish_directory' => 'out',
+                'publish_directory' => '/out',
                 // Bilaga A S:793. Demo-bygget kör inga installationsskript (byggguide v1).
                 'install_command' => 'npm ci --ignore-scripts',
                 'is_auto_deploy_enabled' => true,
