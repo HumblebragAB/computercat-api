@@ -3565,7 +3565,7 @@ class BackfillLiveRequestsTest extends TestCase
 
     private function newGame(string $slug, array $extra = []): Game
     {
-        return Game::create(['slug' => $slug, 'name' => ucfirst($slug), 'is_active' => true, 'settings' => []] + $extra);
+        return Game::create(array_merge(['slug' => $slug, 'name' => ucfirst($slug), 'is_active' => true, 'settings' => []], $extra));
     }
 
     public function test_only_games_with_an_ok_live_request_get_web_and_an_open_address_step(): void
@@ -4135,7 +4135,9 @@ class GameReleases extends Page
     public function disableAllGames(): void
     {
         $this->admin();
-        Game::query()->update(['releases_enabled' => false]);
+        $count = Game::query()->update(['releases_enabled' => false]);
+        // Nödbromsen ska gå att spåra i efterhand.
+        Log::notice('Släpp avstängda för alla spel', ['user_id' => auth()->id(), 'games' => $count]);
         Notification::make()->success()->title('Släpp är avstängda för alla spel.')->send();
     }
 
