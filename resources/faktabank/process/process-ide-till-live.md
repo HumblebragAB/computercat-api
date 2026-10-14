@@ -20,7 +20,7 @@ Demo är skyddad med basic auth och syns inte för allmänheten. Live är ett be
 
 ## Så gör du
 
-- `demo.state` betyder: `awaiting_code` (ingen kod pushad än), `building`, `live`, `deploy_failed` (bygget föll; kör `npm run check` lokalt), `deployed_not_answering` och `unknown` (Coolify kunde inte läsas; försök igen och fråga en människa om det består).
+- Vad varje `demo.state` betyder och vad du gör i varje läge står i `process-provisioning-status`.
 - Ett spel som inte ska finnas kvar arkiveras med `archive_game` (repot arkiveras och raderas aldrig, men Demo-sajten tas bort, övervakningen stängs av och spelet inaktiveras).
 - Fråga en människa när något faller två gånger på samma sätt, i stället för att försöka igen i oändlighet.
 
