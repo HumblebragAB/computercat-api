@@ -160,6 +160,11 @@ class GameResource extends Resource
                             }
                         })
                         ->helperText(fn (Get $get) => self::ANTI_CHEAT_PRESETS[$get('settings.anti_cheat_preset') ?? 'none']['description'] ?? ''),
+                    // Förvalets nycklar utan eget fält. Utan dem sparar formuläret aldrig
+                    // nycklarna och raderar dem vid omsparning (settings.anti_cheat ersätts helt).
+                    Forms\Components\Hidden::make('settings.anti_cheat.score_unit'),
+                    Forms\Components\Hidden::make('settings.anti_cheat.proof_algorithm'),
+                    Forms\Components\Hidden::make('settings.anti_cheat.proof_time_tolerance'),
                     Forms\Components\TextInput::make('settings.anti_cheat.min_score')
                         ->label('Minimum score')
                         ->numeric()

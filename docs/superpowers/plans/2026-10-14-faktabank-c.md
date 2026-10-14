@@ -17,7 +17,7 @@ Spec: `docs/superpowers/specs/2026-10-14-faktabank-design.md` (rad C i "Etapper"
 
 `tests/Feature/FactBankContentTest::test_seed_articles_apply_to_every_build_guide_version` gäller alla artiklar och fäller v2-artiklar. Begränsa det till de åtta fröartiklarnas id (lista i testet), så att etapp A:s löfte står kvar och etapp C kan ha `build_guide: [v2]`.
 
-## Artiklar (13 nya, en ändrad)
+## Artiklar (14 nya, en ändrad)
 
 | id | topic | build_guide | Kärna | Källor (minst) |
 |---|---|---|---|---|
