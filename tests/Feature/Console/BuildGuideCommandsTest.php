@@ -41,7 +41,7 @@ class BuildGuideCommandsTest extends TestCase
         $this->artisan('computercat:byggguide:verify v1')->expectsOutputToContain('Byggguide v1: OK')->assertExitCode(0);
 
         $m = BuildGuide::manifest('v1');
-        $this->assertSame([$m['commands']['install'], ...array_column($m['required_checks'], 'command')], array_column($ran, 'command'));
+        $this->assertSame([$m['commands']['install'].' --ignore-scripts', ...array_column($m['required_checks'], 'command')], array_column($ran, 'command'));
         $this->assertCount(1, array_unique(array_column($ran, 'path')));
         $this->assertSame([VerifyBuildGuide::SLUG], array_values(array_unique(array_column($ran, 'game'))));
         $this->assertTrue($checkedFiles);
@@ -60,7 +60,7 @@ class BuildGuideCommandsTest extends TestCase
 
         $this->artisan('computercat:byggguide:verify')->expectsOutputToContain('npm run check misslyckades')->assertExitCode(1);
 
-        $this->assertSame(['npm ci', 'npm run check'], $ran);
+        $this->assertSame(['npm ci --ignore-scripts', 'npm run check'], $ran);
     }
 
     public function test_verify_rejects_unknown_version(): void
@@ -70,5 +70,48 @@ class BuildGuideCommandsTest extends TestCase
         $this->artisan('computercat:byggguide:verify v9')->assertExitCode(1);
 
         Process::assertNothingRan();
+    }
+
+    // npm ci kör installationsskript från hundratals paket. De får aldrig se
+    // computercat-api:s hemligheter (APP_KEY, Forge-, Coolify-, GitHub-tokens).
+    public function test_verify_runs_npm_with_a_minimal_environment(): void
+    {
+        $forgeBefore = getenv('FORGE_API_TOKEN');
+        $_ENV['GUIDE_TEST_SECRET_TOKEN'] = $_SERVER['GUIDE_TEST_SECRET_TOKEN'] = 'hemligt-varde-1';
+        // Värdet byggs vid körning (ingen tokenliknande literal i repot, gitleaks).
+        putenv('FORGE_API_TOKEN='.str_repeat('x', 12));
+        $environments = [];
+        $commands = [];
+        Process::fake(function (PendingProcess $process) use (&$environments, &$commands) {
+            $environments[] = $process->environment;
+            $commands[] = $process->command;
+
+            return Process::result();
+        });
+
+        try {
+            $this->artisan('computercat:byggguide:verify v1')->assertExitCode(0);
+        } finally {
+            unset($_ENV['GUIDE_TEST_SECRET_TOKEN'], $_SERVER['GUIDE_TEST_SECRET_TOKEN']);
+            putenv($forgeBefore === false ? 'FORGE_API_TOKEN' : "FORGE_API_TOKEN={$forgeBefore}");
+        }
+
+        $this->assertNotEmpty($environments);
+        $allowed = [...VerifyBuildGuide::INHERITED_ENV, 'NEXT_TELEMETRY_DISABLED', 'NEXT_PUBLIC_COMPUTERCAT_GAME'];
+        foreach ($environments as $env) {
+            $kept = array_keys(array_filter($env, fn ($value) => $value !== false));
+            $this->assertSame([], array_values(array_diff($kept, $allowed)), 'ärvda variabler som inte är tillåtna');
+            foreach ($kept as $key) {
+                $this->assertDoesNotMatchRegularExpression('/KEY|TOKEN|SECRET|PASSWORD/i', $key);
+            }
+            // Ärvda hemligheter tas bort uttryckligen (false), annars ärver processen dem.
+            $this->assertFalse($env['GUIDE_TEST_SECRET_TOKEN']);
+            $this->assertFalse($env['FORGE_API_TOKEN']);
+            if (array_key_exists('APP_KEY', $_ENV) || getenv('APP_KEY') !== false) {
+                $this->assertFalse($env['APP_KEY']);
+            }
+        }
+        // Installationsskript körs inte under verifieringen.
+        $this->assertSame('npm ci --ignore-scripts', $commands[0]);
     }
 }

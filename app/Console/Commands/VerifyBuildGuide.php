@@ -16,6 +16,10 @@ class VerifyBuildGuide extends Command
 {
     public const SLUG = 'byggguide-verify';
 
+    // Det enda som ärvs från computercat-api:s miljö. npm ci kör kod från
+    // hundratals paket; APP_KEY, Forge-, Coolify- och GitHub-tokens får de aldrig se.
+    public const INHERITED_ENV = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'npm_config_cache', 'NPM_CONFIG_CACHE'];
+
     protected $signature = 'computercat:byggguide:verify {version? : Standard: senaste versionen} {--keep : Behåll den tillfälliga katalogen}';
 
     protected $description = 'Skriver ut byggguiden i en tillfällig katalog och kör npm ci och de obligatoriska kontrollerna (bara lokalt)';
@@ -56,8 +60,11 @@ class VerifyBuildGuide extends Command
             }
             file_put_contents($dir.'/README.md', BuildGuide::readme($version, 'Byggguide-verifiering'));
 
-            $env = ['NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG];
-            foreach ([$manifest['commands']['install'], ...array_column($manifest['required_checks'], 'command')] as $command) {
+            $env = self::environment(['NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG]);
+            // Installationsskript körs inte här: bygget behöver dem inte (prebyggda
+            // binärer via optionalDependencies), och de är koden som kör vid installation.
+            $install = $manifest['commands']['install'] === 'npm ci' ? 'npm ci --ignore-scripts' : $manifest['commands']['install'];
+            foreach ([$install, ...array_column($manifest['required_checks'], 'command')] as $command) {
                 $this->line("> {$command}");
                 $result = Process::path($dir)->env($env)->timeout(900)->run($command, fn (string $type, string $output) => $this->output->write($output));
                 if ($result->failed()) {
@@ -78,5 +85,31 @@ class VerifyBuildGuide extends Command
                 File::deleteDirectory($dir);
             }
         }
+    }
+
+    /**
+     * Minimal miljö för npm: allt ärvt sätts till false (Symfony Process tar då
+     * bort det), utom INHERITED_ENV. Utan false ärver processen hela miljön.
+     *
+     * @param  array<string, string>  $set
+     * @return array<string, string|false>
+     */
+    public static function environment(array $set): array
+    {
+        $inherited = array_unique(array_merge(
+            array_keys(getenv()),
+            array_keys($_ENV),
+            array_keys(array_filter($_SERVER, 'is_string')),
+        ));
+
+        $env = array_fill_keys(array_values(array_diff($inherited, self::INHERITED_ENV)), false);
+        foreach (self::INHERITED_ENV as $key) {
+            $value = getenv($key);
+            if (is_string($value)) {
+                $env[$key] = $value;
+            }
+        }
+
+        return array_merge($env, $set);
     }
 }
