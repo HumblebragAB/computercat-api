@@ -4021,6 +4021,7 @@ use App\Releases\SetupSteps;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
+use Illuminate\Support\Facades\Log;
 
 // Godkännande av första produktionssläppet och avbockning av engångssteg (R10: bara platform admin).
 // Godkännande sker bara här, aldrig via MCP. Varje Livewire-metod kontrollerar behörigheten själv,
