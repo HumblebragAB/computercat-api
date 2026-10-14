@@ -22,6 +22,8 @@ final class FactBank
 
     private const GAME_PREFIXES = ['src/', 'scripts/', 'test/'];
 
+    private const WEIGHTS = ['title' => 5, 'tags' => 3, 'summary' => 2, 'markdown' => 1];
+
     private string $root;
 
     /** @var list<array>|null */
@@ -48,6 +50,67 @@ final class FactBank
         }
 
         return null;
+    }
+
+    /** @return list<string> */
+    public static function tokens(string $text): array
+    {
+        if (! mb_check_encoding($text, 'UTF-8')) {
+            throw new \InvalidArgumentException('Texten är inte giltig UTF-8.');
+        }
+        $parts = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($text), -1, PREG_SPLIT_NO_EMPTY);
+        if ($parts === false) {
+            throw new \InvalidArgumentException('Texten kunde inte delas i ord.');
+        }
+
+        return array_values(array_unique(array_filter($parts, fn (string $t) => mb_strlen($t) >= 2)));
+    }
+
+    /** @return list<array> */
+    public function search(string $query, ?string $topic = null, ?string $buildGuide = null): array
+    {
+        $terms = self::tokens($query);
+        if ($terms === []) {
+            return [];
+        }
+
+        $results = [];
+        foreach ($this->all($topic, $buildGuide) as $fact) {
+            $fields = [
+                'title' => self::tokens($fact['title']),
+                'tags' => self::tokens(implode(' ', $fact['tags'])),
+                'summary' => self::tokens($fact['summary']),
+                'markdown' => self::tokens($fact['markdown']),
+            ];
+            $score = 0;
+            foreach ($terms as $term) {
+                foreach (self::WEIGHTS as $field => $weight) {
+                    if (self::matches($term, $fields[$field])) {
+                        $score += $weight;
+                    }
+                }
+            }
+            if ($score > 0) {
+                $results[] = $fact + ['score' => $score];
+            }
+        }
+
+        usort($results, fn (array $a, array $b) => [$b['score'], $a['id']] <=> [$a['score'], $b['id']]);
+
+        return array_slice($results, 0, 10);
+    }
+
+    /** @param list<string> $tokens */
+    private static function matches(string $term, array $tokens): bool
+    {
+        foreach ($tokens as $token) {
+            if ($token === $term || (mb_strlen($term) >= 4 && mb_strlen($token) >= 4
+                && (str_starts_with($token, $term) || str_starts_with($term, $token)))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return list<array> */
