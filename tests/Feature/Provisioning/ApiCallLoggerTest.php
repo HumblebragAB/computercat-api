@@ -4,7 +4,6 @@ namespace Tests\Feature\Provisioning;
 
 use App\Provisioning\Http\ApiCallLogger;
 use App\Provisioning\Http\ExternalApiException;
-use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Tests\Support\ProvisioningFakes;
