@@ -62,3 +62,12 @@ Körd från Forge-servern med prodtoken (read+write, utan deploy). Engångsapp `
 - S23: `instant_deploy: false` mot repo med bara README startar inget bygge (`count: 0` efter 2+ min).
 - S24: första pushen till `main` startade ett bygge inom 1 s via auto-deploy, utan `POST /deploy`. En push från en molnsession (S6) startade nästa bygge på samma sätt.
 - S25 (acceptans Kattsvep 2026-10-14): webhook-race. `repo`-steget skrev CLAUDE.md 08:43:08 och appen skapades 08:43:10; GitHubs push-webhook kom fram efter appen och auto-deploy byggde repot utan kod (`is_webhook = t`, status `failed`). Rättat: `repo`-stegets commits har `[skip ci]`, och Coolify hoppar över en push där varje commit har `[skip ci]` eller `[skip cd]` (`DetectsSkipDeployCommits::shouldSkipDeploy`, v4.4.6).
+
+## Spikresultat etapp 1a (2026-10-14, Coolify v4.4.6)
+
+Läsning från Forge-servern med prodtoken (read+write) och SELECT i Coolifys databas. Inget startades.
+
+- S26: `commit` i `GET /deployments/applications/{uuid}` är ett fullständigt 40-tecken-SHA i gemener för alla 38 lyckade (`finished`) byggen i databasen. Avvikelser finns bara bland misslyckade byggen: ett med `HEAD` (2026-10-06) och ett med en kort hash på 7 tecken (2026-10-12).
+- S27: `take=20`, `take=100` och `take=1000` ger alla 200 med `count: 3` och 3 poster för Kattsvep (appen har bara 3 byggen). Någon övre gräns för `take` syntes inte; med `take=20` får man alltså alla byggen upp till 20.
+- S28: fälten i en post är: id, application_id, deployment_uuid, pull_request_id, force_rebuild, commit, status, is_webhook, created_at, updated_at, current_process_id, restart_only, git_type, server_id, application_name, server_name, deployment_url, destination_id, only_this_server, rollback, commit_message, is_api, build_server_id, horizon_job_id, horizon_job_worker, finished_at, docker_registry_image_tag, configuration_hash, parent_deployment_uuid (inget `logs`). Status som förekommer: `finished`, `failed` (i API-listan och i databasen).
+- S29: äldsta bygget i databasen är från 2026-09-04 (40 dagar), totalt 47 rader för alla appar; ingen gallring syns.
