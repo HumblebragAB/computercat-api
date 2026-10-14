@@ -28,8 +28,9 @@ class MembersRelationManager extends RelationManager
             ])
             ->headerActions([
                 Tables\Actions\AttachAction::make()
-                    // Bara staff kan vara medlemmar; spelare finns i samma tabell.
-                    ->recordSelectOptionsQuery(fn (Builder $q) => $q->where('is_staff', true)->where('is_banned', false))
+                    // Bara staff kan vara medlemmar; spelare finns i samma tabell. Parametern måste
+                    // heta $query: Filament injicerar på namn, annars fås en tom Builder.
+                    ->recordSelectOptionsQuery(fn (Builder $query) => $query->where('is_staff', true)->where('is_banned', false))
                     ->form(fn (Tables\Actions\AttachAction $action) => [
                         $action->getRecordSelect()->rules([
                             // Servern avgör, inte dropdownen: ett id utanför listan avvisas.
