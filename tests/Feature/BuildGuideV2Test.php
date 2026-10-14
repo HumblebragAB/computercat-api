@@ -1,0 +1,64 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Services\BuildGuide;
+use Tests\TestCase;
+
+// Byggguide v2 (spec delprojekt 3, del 3, "Innehåll i v2 jämfört med v1"). Läser katalogen
+// även innan v2 är låst; BuildGuide::manifest kräver ingen låsning.
+class BuildGuideV2Test extends TestCase
+{
+    // En hänvisning till v1 i v2:s texter (adresser som /api/v1 är inte versionen).
+    private const V1_REFERENCE = '/byggguide v1|\*\*v1\*\*|"v1"/i';
+
+    private function package(): array
+    {
+        return json_decode(BuildGuide::file('v2', 'package.json')['content'], true, 32, JSON_THROW_ON_ERROR);
+    }
+
+    public function test_claude_md_is_v2_throughout_and_has_the_fact_bank_section(): void
+    {
+        $md = BuildGuide::claudeMd('v2');
+
+        foreach (['Byggguide: **v2**', '{"version": "v2"}', '`Grundkod från byggguide v2`', '## Faktabanken', '`search_facts`', '`get_fact`', '`list_facts`', '"build_guide": "v2"', 'går före din egen bedömning', 'fråga en människa', '## Säkerhetsspärren i Coolify', '`scripts/cc-gate.mjs`', 'npm-registret svarade inte', 'inte avsiktligt skadlig spelkod', 'bara i utvecklingsberoenden'] as $text) {
+            $this->assertStringContainsString($text, $md);
+        }
+        $this->assertDoesNotMatchRegularExpression(self::V1_REFERENCE, $md);
+    }
+
+    public function test_readme_template_names_v2(): void
+    {
+        $readme = BuildGuide::readme('v2', 'Spel');
+
+        $this->assertStringContainsString('enligt Computercats byggguide v2', $readme);
+        $this->assertStringContainsString('scripts/cc-gate.mjs', $readme);
+        $this->assertStringContainsString('inte avsiktligt skadlig spelkod', $readme);
+        $this->assertStringContainsString('bara i utvecklingsberoenden', $readme);
+        $this->assertDoesNotMatchRegularExpression(self::V1_REFERENCE, $readme);
+    }
+
+    public function test_manifest_is_v2_and_commits_as_v2(): void
+    {
+        $m = BuildGuide::manifest('v2');
+
+        $this->assertSame('v2', $m['version']);
+        $this->assertStringContainsString('Grundkod från byggguide v2', implode("\n", $m['steps']));
+        $this->assertDoesNotMatchRegularExpression(self::V1_REFERENCE, json_encode($m['steps'], JSON_UNESCAPED_UNICODE));
+    }
+
+    // Spec punkt 4: testerna körs aldrig med React i produktionsläge.
+    public function test_tests_run_with_node_env_test(): void
+    {
+        $this->assertSame('NODE_ENV=test vitest run', $this->package()['scripts']['test']);
+    }
+
+    public function test_docs_test_guards_the_fact_bank_and_the_security_scripts(): void
+    {
+        $docs = BuildGuide::file('v2', 'test/docs.test.ts')['content'];
+
+        foreach (["'search_facts'", "'get_fact'", "'list_facts'", "'\"build_guide\": \"v2\"'", "'scripts/cc-gate.mjs'"] as $text) {
+            $this->assertStringContainsString($text, $docs);
+        }
+    }
+}
