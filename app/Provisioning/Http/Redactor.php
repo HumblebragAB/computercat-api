@@ -59,6 +59,9 @@ final class Redactor
             '/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/',
             '/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/',
             '/-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(-----END [A-Z ]*PRIVATE KEY-----|\z)/s',
+            '/\b[sr]k_live_[A-Za-z0-9]{20,}\b/',
+            '/\bAKIA[0-9A-Z]{16}\b/',
+            '/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/',
         ], self::MASK, $text);
 
         // Fail closed: vid PCRE-fel (t.ex. backtrack-gränsen på en stor body)

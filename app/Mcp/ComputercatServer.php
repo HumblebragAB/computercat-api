@@ -3,6 +3,7 @@
 namespace App\Mcp;
 
 use Laravel\Mcp\Server;
+use Laravel\Mcp\Server\Tool;
 
 class ComputercatServer extends Server
 {
@@ -24,6 +25,9 @@ class ComputercatServer extends Server
         Tools\ArchiveGameTool::class,
         Tools\GetBuildGuideTool::class,
         Tools\GetBuildGuideFileTool::class,
+        Tools\ListFactsTool::class,
+        Tools\SearchFactsTool::class,
+        Tools\GetFactTool::class,
         Tools\GetGameTool::class,
         Tools\GetIntegrationGuideTool::class,
         Tools\SetAllowedOriginsTool::class,
@@ -36,7 +40,7 @@ class ComputercatServer extends Server
 
     // Verktygslistan utan att starta servern. Invarianttesterna går igenom
     // den, så att varje nytt verktyg automatiskt omfattas.
-    /** @return list<class-string<\Laravel\Mcp\Server\Tool>> */
+    /** @return list<class-string<Tool>> */
     public static function toolClasses(): array
     {
         return (new \ReflectionClass(static::class))->getDefaultProperties()['tools'];
