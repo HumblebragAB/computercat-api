@@ -57,6 +57,27 @@ class RequestLiveToolTest extends McpTestCase
         Http::assertNothingSent();
     }
 
+    public function test_non_string_domain_is_a_validation_error_without_slack(): void
+    {
+        Http::fake();
+
+        $result = $this->callTool($this->owner, 'request_live', ['game' => 'kattsvep', 'domain' => ['x.se']]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('Validation failed', $result['text']);
+        Http::assertNothingSent();
+    }
+
+    public function test_different_domains_same_day_send_one_slack_post(): void
+    {
+        Http::fake([ProvisioningFakes::SLACK => Http::response('ok')]);
+
+        $this->callTool($this->owner, 'request_live', ['game' => 'kattsvep', 'domain' => 'a.se']);
+        $this->callTool($this->owner, 'request_live', ['game' => 'kattsvep', 'domain' => 'b.se']);
+
+        Http::assertSentCount(1);
+    }
+
     public function test_non_owner_and_game_without_demo_are_refused(): void
     {
         Http::fake();

@@ -101,6 +101,17 @@ class CheckProvisioningTest extends ProvisioningTestCase
         Http::assertNotSent(fn ($r) => $r->url() === ProvisioningFakes::SLACK);
     }
 
+    public function test_failed_runs_older_than_a_day_are_reported(): void
+    {
+        $this->fakeHealthy();
+        $old = $this->provisioningRun(['slug' => 'havererad', 'status' => ProvisioningRun::FAILED]);
+        $this->travel(25)->hours();
+
+        $this->artisan('computercat:check-provisioning --dry-run')
+            ->expectsOutputToContain("run:{$old->uuid}:failed")
+            ->assertExitCode(1);
+    }
+
     public function test_api_errors_become_deviations_not_crashes(): void
     {
         $this->fakeHealthy([

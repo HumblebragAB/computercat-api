@@ -44,7 +44,7 @@ class RequestLiveTool extends GameTool
             $args['domain'] = null;
         }
 
-        $validator = Validator::make($args, ['domain' => ['nullable', 'string', 'max:253', function (string $attribute, mixed $value, \Closure $fail) {
+        $validator = Validator::make($args, ['domain' => ['bail', 'nullable', 'string', 'max:253', function (string $attribute, mixed $value, \Closure $fail) {
             // isValid tål avslutande snedstreck och port; en domän får ingetdera.
             if (preg_match('/[\/:\s]/', $value) === 1 || ! GameOrigin::isValid('https://'.$value)) {
                 $fail('The domain must be a plain host name such as kattsvep.se.');
@@ -63,7 +63,7 @@ class RequestLiveTool extends GameTool
         $text = 'Live-förfrågan för `'.SlackAlert::escape($game->slug).'` ('.SlackAlert::escape($game->name).') från '.SlackAlert::escape((string) ($user->email ?? $user->name))
             .". Demo: {$run->demo_url}. Önskad domän: ".($domain === null ? 'ingen angiven' : SlackAlert::escape($domain)).'.';
 
-        return match (app(SlackAlert::class)->send("request_live:{$game->slug}:".($domain ?? '-'), $text)) {
+        return match (app(SlackAlert::class)->send("request_live:{$game->slug}", $text)) {
             SlackAlert::SENT => $this->json(['requested' => true, 'message' => 'Erik has been notified. Nothing was changed.']),
             SlackAlert::DUPLICATE => $this->json(['requested' => true, 'message' => 'Erik was already notified about this today. Nothing was changed.']),
             default => Response::error('Could not notify Erik. Nothing was changed; try again later.'),

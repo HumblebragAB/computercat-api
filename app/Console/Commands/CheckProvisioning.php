@@ -208,6 +208,11 @@ class CheckProvisioning extends Command
                 $this->deviations["run:{$run->uuid}:stuck"] = "Runnen för {$run->slug} ({$run->kind}) har stått still sedan {$last}. Kör kö-workern?";
             }
         }
+
+        // En run som står failed utan retry blir annars aldrig sedd.
+        foreach (ProvisioningRun::where('status', ProvisioningRun::FAILED)->where('updated_at', '<', now()->subDay())->get() as $run) {
+            $this->deviations["run:{$run->uuid}:failed"] = "Runnen för {$run->slug} ({$run->kind}) har stått som failed sedan {$run->updated_at} utan retry_provisioning.";
+        }
     }
 
     /** @param \Closure(): ?string $check returnerar en avvikelse eller null */
