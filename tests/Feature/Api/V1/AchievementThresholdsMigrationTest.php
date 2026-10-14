@@ -5,6 +5,7 @@ namespace Tests\Feature\Api\V1;
 use App\Models\Game;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class AchievementThresholdsMigrationTest extends TestCase
@@ -86,5 +87,20 @@ class AchievementThresholdsMigrationTest extends TestCase
         $this->migration()->down();
 
         $this->assertSame(['y' => 'z'], $tocco->fresh()->settings);
+    }
+
+    public function test_unreadable_settings_stop_the_migration_and_change_nothing(): void
+    {
+        $tocco = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true, 'settings' => []]);
+        DB::table('games')->where('id', $tocco->id)->update(['settings' => json_encode('"dubbelkodad"')]);
+
+        try {
+            $this->migration()->up();
+            $this->fail('migrationen skulle ha stannat');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('inget ändrat', $e->getMessage());
+        }
+
+        $this->assertSame(json_encode('"dubbelkodad"'), DB::table('games')->where('id', $tocco->id)->value('settings'));
     }
 }

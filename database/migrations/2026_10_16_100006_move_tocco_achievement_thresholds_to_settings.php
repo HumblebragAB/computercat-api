@@ -51,8 +51,11 @@ return new class extends Migration
         if ($game === null) {
             return;
         }
-        $settings = json_decode((string) $game->settings, true);
-        $settings = is_array($settings) ? $settings : [];
+        $settings = $game->settings === null || $game->settings === '' ? [] : json_decode((string) $game->settings, true);
+        // Går settings inte att läsa som ett objekt skrivs ingenting: annars skulle hemligheterna i det försvinna.
+        if (! is_array($settings)) {
+            throw new RuntimeException('Toccos settings går inte att läsa som JSON-objekt; inget ändrat.');
+        }
         $current = $settings['achievement_thresholds'] ?? [];
         $settings['achievement_thresholds'] = $fn(is_array($current) ? $current : []);
         if ($settings['achievement_thresholds'] === []) {

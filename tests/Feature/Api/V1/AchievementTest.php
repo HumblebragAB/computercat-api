@@ -472,4 +472,29 @@ class AchievementTest extends TestCase
             ->assertJsonPath('unknown', ['retired', 'typo'])
             ->assertJsonPath('rejected', ['solve_100']);
     }
+
+    public function test_an_owned_achievement_is_already_unlocked_whatever_the_threshold(): void
+    {
+        Sanctum::actingAs($this->user);
+        $owned = $this->define('solve_100');
+        $this->thresholds(['solve_100' => 100]);
+        $this->saveWithResults([1]);
+        UserAchievement::create(['user_id' => $this->user->id, 'achievement_definition_id' => $owned->id, 'unlocked_at' => now(), 'created_at' => now()]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['solve_100']])
+            ->assertStatus(201)
+            ->assertJsonPath('already_unlocked', 1)
+            ->assertJsonPath('rejected', []);
+    }
+
+    public function test_slugs_match_without_case_like_the_database(): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('first-win');
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['FIRST-WIN']])
+            ->assertStatus(201)
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('unknown', []);
+    }
 }
