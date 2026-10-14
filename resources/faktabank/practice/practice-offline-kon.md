@@ -9,7 +9,7 @@ updated: "2026-10-14"
 
 ## Regel
 
-Skicka resultat med `recordScore(typ, score, metadata?)` och visa för spelaren vad som hände med dem. Visa `flushed`-resultatet, dölj aldrig ett fel och visa aldrig påhittad topplistedata. `recordScore` kastar när resultatet inte kan sparas lokalt; fånga det och visa det.
+Skicka resultat med `recordScore(typ, score, metadata?)` och visa för spelaren vad som hände med dem. Visa `flushed`-resultatet, dölj aldrig ett fel och visa aldrig påhittad topplistedata. `recordScore` kastar när resultatet inte kan sparas lokalt och `RangeError` när poängen inte är ett heltal ≥ 0; fånga det och visa det.
 
 ## Varför
 
@@ -36,6 +36,7 @@ Resultatet sparas först i en kö i webbläsarens lagring (`computercat:<spel>:s
 - src/lib/computercat/queue.ts
 - src/lib/computercat/index.ts
 - src/lib/computercat/errors.ts
+- src/lib/computercat/leaderboards.ts
 - src/lib/computercat/background.ts
 - src/components/BackgroundSync.tsx
 - src/components/ClickGame.tsx

@@ -19,7 +19,7 @@ Med `require_proof` avvisar servern ett resultat utan bevis ("Proof of play is r
 
 1. Testa spelets kod som bygger beviset: `createProof({ pid, moves, stateHash, elapsedMs })` ger `{ pid, mc, gh, t, sig }`.
    - `pid` och `stateHash` får inte vara `""` eller `"0"`, och `moves` och `elapsedMs` måste vara heltal; annars kastar `createProof` `RangeError`. Testa att spelet aldrig skickar sådana värden, till exempel att en uppmätt tid avrundas till heltal.
-   - `elapsedMs` är alltid millisekunder. Är score en tid: testa att `elapsedMs` stämmer med score (i millisekunder, eller score gånger 1000 när poängen är sekunder) inom toleransen i `get_integration_guide`. Är score poäng jämförs tiden inte; se `security-anti-cheat`.
+   - `elapsedMs` är alltid millisekunder. Är score en tid: testa att `elapsedMs` stämmer med score (i millisekunder, eller score gånger 1000 när poängen är sekunder) inom toleransen i `get_integration_guide`. Med förvalen `points` och `points_with_proof` jämförs tiden inte; utan förval eller med `none` jämförs den som millisekunder, se `security-anti-cheat`.
    - Testa att en runda ger minst så många drag som `min_moves`.
 2. Testa att beviset skickas. Med `test/fakeFetch.ts` (se `testing-fakefetch`): låt rundan skicka sitt resultat och kontrollera kroppen i `f.calls`.
 

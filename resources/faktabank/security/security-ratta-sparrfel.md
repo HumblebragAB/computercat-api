@@ -18,7 +18,7 @@ Rätta orsaken i spelets källa (inte i `out/`) och kör `npm run check` igen ti
 
 ## Så gör du
 
-Visar `get_provisioning_status` `deploy_failed`: kör `npm run check` lokalt och leta upp felraden nedan.
+Visar `get_provisioning_status` `deploy_failed`: titta först på `latest_deployment.status` (`cancelled-by-user` är ett avbrutet bygge, inget fel i koden; se `process-provisioning-status`). Annars: kör `npm run check` lokalt och leta upp felraden nedan.
 
 ### Säkerhetsdelen (`check-security: <fil>: …`)
 

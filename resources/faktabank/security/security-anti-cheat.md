@@ -13,19 +13,18 @@ Lita aldrig på att klienten skyddar en topplista; det är servern som godkänne
 
 ## Varför
 
-Varje resultat till en topplista prövas av `AntiCheatService` mot `games.settings.anti_cheat`. Ett avvisat resultat ger 422 med orsaken som `message`. Prövningen i ordning:
+Varje resultat till en topplista prövas av `AntiCheatService` mot `games.settings.anti_cheat`. En poäng som inte är ett heltal ≥ 0 stoppas redan av valideringen (422 med `errors`). Därefter ger ett avvisat resultat 422 med orsaken som `message`. Prövningen i ordning:
 
-1. Negativ poäng: `Score cannot be negative.`
-2. Under `min_score` (standard 0): `Score is implausibly low.`
-3. Över `max_score` (standard 86400): `Score exceeds maximum allowed value.`
-4. `require_proof` satt och inget bevis: `Proof of play is required.`
-5. Finns ett bevis prövas det även när det inte krävs:
+1. Under `min_score` (standard 0): `Score is implausibly low.`
+2. Över `max_score` (standard 86400): `Score exceeds maximum allowed value.`
+3. `require_proof` satt och inget bevis: `Proof of play is required.`
+4. Finns ett bevis prövas det även när det inte krävs:
    - Fälten `pid`, `mc` (heltal), `gh`, `t` (heltal) och `sig` måste finnas: annars `Invalid proof format.`
    - Signaturen (`proof_algorithm`, standard `fnv1a`): `Proof signature mismatch.`
    - Bevisets tid `t` (millisekunder) jämförs med poängen: skillnaden får vara högst `proof_time_tolerance` (standard 1000) i poängens enhet. Med `score_unit` `seconds` delas `t` med 1000 först. 0 stänger av kontrollen. Annars: `Proof time does not match score.`
    - `mc` minst `min_moves` (standard 1): `Too few moves.`
 
-Standardvärdena gäller även ett spel utan inställningar, så ett poängspel med resultat över 86400 avvisas tills `max_score` höjs.
+Standardvärdena gäller för ett spel utan inställningar och för förvalet `none`: ett poängspel med resultat över 86400 avvisas tills `max_score` höjs, och ett bevis som skickas jämförs med poängen som en tid i millisekunder (tolerans 1000). Ett poängspel som skickar bevis ska därför ha `points` eller `points_with_proof`.
 
 I panelen (Games, sektionen Anti-Cheat) väljer en människa ett förval och kan ändra `min_score`, `max_score`, `require_proof` och `min_moves`. Förvalen:
 
@@ -37,9 +36,9 @@ I panelen (Games, sektionen Anti-Cheat) väljer en människa ett förval och kan
 | `points` | `min_score` 0, `max_score` 1000000, `proof_time_tolerance` 0 |
 | `points_with_proof` | `min_score` 0, `max_score` 1000000, `proof_time_tolerance` 0, `require_proof`, `fnv1a`, `min_moves` 1 |
 
-`score_unit` och `proof_time_tolerance` har inga egna fält i panelen och sätts bara av förvalen. Byte av förval skriver om alla förvalsnycklar, så inget ligger kvar från det förra.
+`score_unit`, `proof_algorithm` och `proof_time_tolerance` har inga egna fält i panelen och sätts bara av förvalen. Byte av förval skriver om alla förvalsnycklar, så inget ligger kvar från det förra.
 
-Connectorns verktyg ändrar inte inställningarna, och `get_game` visar aldrig spelets settings. `get_integration_guide` visar förvalet, poängintervallet, om bevis krävs och hur `t` jämförs, när förvalet inte är `none`.
+Connectorns verktyg ändrar inte inställningarna, och `get_game` visar aldrig spelets settings. `get_integration_guide` visar förvalet och poängintervallet när förvalet inte är `none`, och dessutom om bevis krävs och hur `t` jämförs när förvalet har bevis (`time_ms`, `time_seconds`, `points_with_proof`).
 
 ## Så gör du
 
