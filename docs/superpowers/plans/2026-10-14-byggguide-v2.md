@@ -28,6 +28,7 @@
 **v1 och v2**
 - **v1 ändras inte.** Ingen fil under `resources/byggguide/v1` ändras och `BuildGuide::FROZEN['v1']` står kvar. Kattsvep och andra v1-spel bygger som förut, utan nytt byggkommando. Kattsvep flyttas inte till v2 (specens "Utanför scope"). Task 11 kontrollerar att `git diff main...HEAD --stat -- resources/byggguide/v1` är tom.
 - **`BuildGuide::LATEST` byts från `'v1'` till `'v2'` i samma commit som `FROZEN['v2']` fylls i (Task 8), aldrig tidigare.** `versions()` returnerar bara låsta versioner; en katalog utan `FROZEN`-post syns inte och serveras inte i verktyg och REST (R3).
+- **En publicerad version tas aldrig bort ur `resources/byggguide`** så länge appar byggda från den finns: varje v2-apps byggkommando hämtar skripten från `/api/v1/build-guide/v2/files/…`, och utan katalogen faller alla deras byggen. Det gäller v1 på samma sätt (spelens Claude läser den).
 - Behöver v2 rättas efter låsningen men före deploy: töm `FROZEN['v2']` och sätt `LATEST` till `'v1'` i samma commit, rätta, hasha, lås igen (`FROZEN['v2']` och `LATEST = 'v2'` i samma commit) och skriv varför i commit-meddelandet. Efter deploy blir varje ändring v3.
 
 **Spec-värden (ordagrant)**
@@ -42,21 +43,23 @@
 
 **Rulings i denna plan (Erik ska känna till dem)**
 - **R1: spiken delas i två.** Specens S1–S7 kräver de riktiga v2-filerna, men Coolify-fakta som koden bygger på (byggkommandot via API, skal, verktyg, nätverk, timeout) ska avgöras innan någon kod skrivs. Task 1 (spike A) kör plattformsfrågorna med v1-grundkoden och två ställföreträdande skript; Task 7 (spike B) kör S1, S3–S7 med de riktiga skripten mot den olåsta v2-katalogen. Båda kräver Eriks OK och städas på sparade id:n.
-- **R2: i spikarna hämtas skripten från en hemlig gist**, inte från Computercat: prod serverar inte en olåst v2 (R3), och v2 är inte deployad. Allt annat i kommandot är specens. Att REST serverar exakt filen vaktas av `BuildGuideApiTest`; prod-vägen kontrolleras i Task 12 efter deploy. Gisten raderas på sitt sparade id.
+- **R2: i spikarna ligger skripten i engångsrepot under `.ccspike/`**, och spikens byggkommando kopierar dem till `/tmp` (`cp .ccspike/<fil> /tmp/<fil>`) och kontrollerar sha256 med `sha256sum -c` som specens kommando. Prod serverar inte en olåst v2 (R3) och v2 är inte deployad, så hämtningen från Computercat kan inte provas före deploy. Båda spikarna hämtar ändå v1:s `scripts/check-export.mjs` från `api.computercat.co` med `curl -fsS` och kontrollerar sha256, vilket visar att byggmiljön når Computercat. Att REST serverar exakt filen vaktas av `BuildGuideApiTest`; prod-vägen för v2 kontrolleras i Task 12 efter deploy. Ingen gist eller annan extern lagring används.
 - **R3: olåsta versioner döljs också vid läsning.** Specens "syns inte i verktyg och REST" tolkas så att `get_build_guide`, `get_build_guide_file` och REST svarar "okänd version"/404 för en version som inte är låst, inte bara att den saknas i listan. `computercat:byggguide:hash` och `computercat:byggguide:verify` läser olåsta versioner som förut.
 - **R4: byggkommandot styrs av manifestet.** En låst version vars manifest har både `scripts/check-security.mjs` och `scripts/cc-audit.mjs` får kommandot; v1 har dem inte och får inget. Bara ett av skripten är ett fel. Webbadressen byggs med `BuildGuide::downloadUrl()` (APP_URL, alltid https), som i prod ger exakt specens adress.
-- **R5: `cc-audit.mjs` skickar `--json` och `--registry=https://registry.npmjs.org/` utöver specens flaggor.** JSON behövs för att skilja fynd från registerfel; registerflaggan hindrar att spelrepots `.npmrc` pekar audit mot ett annat register. Formen på svaret verifierades vid planeringen (2026-10-14, npm 10.9.3): en rapport har `auditReportVersion`, `metadata` och `vulnerabilities`; ett registerfel (ECONNREFUSED, ENOTFOUND) ger bara `{message, error: {summary, detail}}` och exitkod 1. Fail closed: high eller critical i rapporten fäller även om npm avslutar med 0.
-- **R6: CSP-kontrollen** läser `NEXT_PUBLIC_COMPUTERCAT_URL` ur miljön och sedan ur `.env.production.local`, `.env.local`, `.env.production`, `.env` (samma ordning som `check-export.mjs`), och avkodar HTML-entiteter i attributet (React skriver `'` som `&#x27;`). Policyn sätts i `src/lib/computercat/csp.ts`; `test/security.test.ts` visar att skriptet godkänner exakt den.
+- **R5: `cc-audit.mjs` skickar `--json` och `--registry=https://registry.npmjs.org/` utöver specens flaggor.** JSON behövs för att skilja fynd från registerfel; registerflaggan hindrar att spelrepots `.npmrc` pekar audit mot ett annat register. Formen på svaret verifierades vid planeringen (2026-10-14, npm 10.9.3): en rapport har `auditReportVersion`, `metadata` och `vulnerabilities`; ett registerfel ger `{message, error: {summary, detail}}` och exitkod 1, där orsaken står i `message` (`… reason: getaddrinfo ENOTFOUND registry.npmjs.org`). Felkoden läses ur `error.code` om den finns, annars ur `message`. Bara nätverkskoder (`ENOTFOUND`, `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`) och 5xx (`503`, `E503`) räknas som registerfel och ger ett omförsök efter 10 s; andra koder och utdata som inte är JSON fäller direkt med koden utskriven. Fail closed: high eller critical i rapporten fäller även om npm avslutar med 0.
+- **R6: CSP-kontrollen** läser `NEXT_PUBLIC_COMPUTERCAT_URL` ur miljön och sedan ur `.env.production.local`, `.env.local`, `.env.production`, `.env` (samma ordning som `check-export.mjs`), och avkodar HTML-entiteter i attributet (React skriver `'` som `&#x27;`). Policyn sätts i `src/lib/computercat/csp.ts`; `test/security.test.ts` visar att skriptet godkänner exakt den. Metataggen renderas bara när `process.env.NODE_ENV === 'production'` (Eriks beslut 2026-10-14): `next build` sätter alltid det värdet, så `out/` och kontrollen påverkas inte, medan `npm run dev` slipper policyn.
 - **R7: `next`-texten vid `deploy_failed` är svenska ordagrant ur specen**, som `next`-texterna i släppflödet (1a, R5). Övriga svar från verktyget är engelska som förut.
-- **R8: braces.** Vid planeringen (2026-10-14) fanns ingen rättad version: senaste publicerade braces är 3.0.3 och GHSA-vfj7-8cjw-p6xm gäller `<=3.0.3`; `npm audit` föreslår bara att nedgradera `eslint-config-next` till 14.2.35. Sårbarheten finns bara i dev-beroenden (`npm audit --omit=dev` är ren). Task 6 kör kommandot som avgör versionen; finns ingen rättad version stannar planen och frågar Erik.
+- **R8: braces accepteras utan override (Eriks beslut 2026-10-14).** Det finns ingen rättad version: senaste publicerade braces är 3.0.3 och GHSA-vfj7-8cjw-p6xm gäller `<=3.0.3`; `npm audit` föreslår bara att nedgradera `eslint-config-next` till 14.2.35. Fyndet finns bara i dev-beroenden (eslint-kedjan). Produktionsgranskningen (`npm audit --omit=dev --audit-level=high`) är ren, och det är den som spärren kör. v2:s `CLAUDE.md` och README säger det på en rad; `overrides` i v2 är oförändrad (`{"vite": "7.3.7"}`).
 - **R9: `CoolifyAppStep` fäller med `StepFailed` om repo-steget saknar guideversion.** Alla runs sedan delprojekt 2 har värdet; ett saknat värde är ett fel, ingen gissning.
 - **R10: spikapparna heter `ccspike-v2a` och `ccspike-v2b`** (utan prefixet `spel-`), så att nattkontrollen (`CheckProvisioning`, som larmar för `spel-*`-appar utan run) inte larmar medan de finns.
 - **R11: den planterade hemligheten i spike B är en falsk JWT som skapas vid körning.** Stoppar en commit-hook (gitleaks) eller GitHubs push protection den: stanna och fråga; `--no-verify` används aldrig på eget initiativ.
+- **R12: ärlig gräns för spärren.** Att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön). Samma mening står i v2:s `CLAUDE.md`, README, hotmodellen (Task 4), granskningen (Task 11) och specens "Säkerhet". Spike A frågar dessutom ja/nej om Coolifys GitHub-token går att läsa från bygget (`.git/config` med `x-access-token`); ja är ett fynd som Erik avgör.
+- **R13: `CoolifyAppStep` räknar fram byggkommandot innan markören `create_requested_at` sparas**, och ett fel där (olåst version, trasig guide) blir `StepFailed` utan att något skapas i Coolify.
 
 **Värden**
 - Prod-artisan (Coolify-API:t är IP-låst till Forge-servern): `~/.claude/bin/ssh-claude --via-home forge@46.246.48.182`, katalog `/home/computercat/api.computercat.co/current`, `sudo -n -u computercat php8.4 artisan …`. Coolify-databasen (bara `SELECT`): `~/.claude/bin/ssh-claude --via-home erik@apps.humblebrag.se` + `sudo -n docker exec coolify-db psql -U coolify -d coolify`.
 - v1:s `scripts/check-export.mjs` har sha256 `cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8` (låst manifest); spike A hämtar den från prod-REST för att visa att byggmiljön når Computercat.
-- Spikarna: repo `HumblebragAB/ccspike-v2a` / `ccspike-v2b` (privata, arkiveras efteråt, raderas aldrig), Coolify-app med samma namn i Demo-projektet (raderas på sitt uuid), Demo `https://ccspike-v2a.apps.humblebrag.se` / `https://ccspike-v2b.apps.humblebrag.se` (basic auth `demo`/`demo`), hemlig gist per spike (raderas på sitt id).
+- Spikarna: repo `HumblebragAB/ccspike-v2a` / `ccspike-v2b` (privata, arkiveras efteråt, raderas aldrig), Coolify-app med samma namn i Demo-projektet (raderas på sitt uuid), Demo `https://ccspike-v2a.apps.humblebrag.se` / `https://ccspike-v2b.apps.humblebrag.se` (basic auth `demo`/`demo`). Spikskripten ligger i repot under `.ccspike/` (R2).
 
 ---
 
@@ -67,7 +70,7 @@ De fem fel som specen innebär men som lätt passerar oupptäckta. Varje rad har
 1. **En olåst version läcker ut.** En v2-katalog som ligger i repot men inte är låst får inte synas i `get_build_guide`, serveras av REST eller bakas in i ett Coolify-kommando (vars skript då inte går att hämta i prod och fäller varje bygge). Test: `BuildGuideApiTest::test_unpublished_version_is_not_listed_or_served`, `BuildGuideToolsTest::test_unpublished_version_is_unknown` (Task 2), `BuildGuideTest::test_build_command_requires_a_published_version` (Task 9).
 2. **Byggkommandot förvanskas av citattecken.** Coolify skickar kommandon till nixpacks inom enkla citattecken (bilaga S20b); ett `'`, `$`, backtick eller backslash i adressen eller kommandot skulle ändra vad som körs. Test: `BuildGuideTest::test_build_command_has_no_shell_quoting_hazards` (Task 9), och spike A (S10) visar att kommandot når nixpacks oförändrat.
 3. **Säkerhetsskriptet larmar fel eller läcker.** Ordgränser (`xsk_live_…` är ingen träff), CSP som React skrivit med `&#x27;`, URL ur `.env.local`, två CSP-taggar, och att värdet aldrig skrivs ut. Test: `test/security.test.ts` i guiden (Task 4), körd via `computercat:byggguide:verify v2`.
-4. **Registerfel tolkas som ren audit, eller fynd som registerfel.** Ett npm som inte når registret får aldrig släppa igenom bygget, och ett high-fynd får aldrig få texten "npm-registret svarade inte". Test: `test/ccAudit.test.ts` (Task 5): registret nere två gånger, nere och sedan uppe, high med exitkod 0, rapport utan JSON.
+4. **Registerfel tolkas som ren audit, eller fynd som registerfel.** Ett npm som inte når registret får aldrig släppa igenom bygget, ett high-fynd får aldrig få texten "npm-registret svarade inte", och ett annat npm-fel (till exempel `E401`) ska fälla direkt med sin kod i stället för att vänta. Test: `test/ccAudit.test.ts` (Task 5): registret nere två gånger, nere och sedan uppe, 5xx, annan felkod, high med exitkod 0, utdata utan JSON.
 5. **Gamla runs får v2-beteende.** En run som frös v1 (eller saknar värdet) får inget byggkommando och ingen ny statustext, även efter att `LATEST` blivit v2. Test: `CoolifyStepsTest::test_v1_run_creates_app_without_build_command`, `test_missing_build_guide_version_fails_before_any_create` (Task 9), `ProvisioningStatusToolTest::test_failed_v1_build_keeps_todays_answer` och `test_failed_build_without_recorded_version_keeps_todays_answer` (Task 10).
 
 ---
@@ -97,7 +100,7 @@ De fem fel som specen innebär men som lätt passerar oupptäckta. Varje rad har
 
 ## Spikverktyg (Task 1 och Task 7)
 
-Definieras i skalet före spikstegen. Inga hemligheter passerar transkriptet: Coolify-token läses av Computercat i prod (`config('provisioning.coolify.token')`), och skripten skriver bara status, uuid, tider och utvalda fält.
+Definieras i skalet före spikstegen. Ingen gist eller annan extern lagring används (R2). Inga hemligheter passerar transkriptet: Coolify-token läses av Computercat i prod (`config('provisioning.coolify.token')`), och skripten skriver bara status, uuid, tider och utvalda fält.
 
 ```bash
 export WT SCRATCH
@@ -194,12 +197,12 @@ buildlog() {   # $1 = deployment_uuid, $2 = grep-mönster
 
 **Files:**
 - Modify: `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` (nytt avsnitt "Spikresultat delprojekt 3 etapp B")
-- Create (scratch, committas inte): `$SCRATCH/spike-a/gist/cc-security.mjs`, `$SCRATCH/spike-a/gist/cc-audit.mjs`, `$SCRATCH/spike-a/ids.env`, `$SCRATCH/tinker/*.php`
+- Create (scratch, committas inte): `$SCRATCH/spike-a/ids.env`, `$SCRATCH/tinker/*.php`; i engångsrepot: `.ccspike/cc-security.mjs`, `.ccspike/cc-audit.mjs`
 
 **Interfaces:**
-- Produces: verifierade fakta som Task 4, 5 och 9 bygger på: S2 (nätverk till npm-registret och `api.computercat.co`, `curl` och `sha256sum` i nixpacks-bilden, `NODE_ENV` i byggsteget), S4a (ett steg i byggkommandot som fäller ger `failed`, och Demo visar förra bygget), S8 (npm-version i bygget; formen på `npm audit --json` jämförs med R5), S9 (Coolifys timeout för en deployment), S10 (`build_command` via `POST /applications/private-github-app` sparas och når nixpacks oförändrat, körs av ett skal som förstår `&&` och `|`, och `install_command` körs fortfarande).
+- Produces: verifierade fakta som Task 4, 5 och 9 bygger på: S2 (nätverk till npm-registret och `api.computercat.co`, `curl` och `sha256sum` i nixpacks-bilden, `NODE_ENV` i byggsteget), S4a (ett steg i byggkommandot som fäller ger `failed`, och Demo visar förra bygget), S8 (npm-version i bygget; formen på `npm audit --json` jämförs med R5), S9 (Coolifys timeout för en deployment), S10 (`build_command` via `POST /applications/private-github-app` sparas och når nixpacks oförändrat, körs av ett skal som förstår `&&` och `|`, och `install_command` körs fortfarande), S13 (går Coolifys GitHub-token att läsa från bygget: finns `.git/config` i byggkatalogen och innehåller den `x-access-token`; bara ja/nej skrivs ut).
 
-Specens S1, S3–S7 kräver de riktiga v2-skripten och körs i Task 7 (R1). Här används v1-grundkoden och två ställföreträdande skript som bara skriver miljöfakta. **Faller en punkt: stanna och fråga Erik.**
+Specens S1, S3–S7 kräver de riktiga v2-skripten och körs i Task 7 (R1). Här används v1-grundkoden och två ställföreträdande skript som bara skriver miljöfakta; de ligger i engångsrepot under `.ccspike/` (R2). **Faller en punkt: stanna och fråga Erik.**
 
 - [ ] **Steg 1: Worktree och förutsättningar (bara läsning).**
 
@@ -207,7 +210,7 @@ Specens S1, S3–S7 kräver de riktiga v2-skripten och körs i Task 7 (R1). Här
 ~/.claude/bin/wt-start /Users/erik/Web/computercat-api feat/byggguide-v2 --db
 ```
 
-Spara sista raden som `$WT`. Sätt `SCRATCH=<sessionens scratchpad>/byggguide-v2` och `mkdir -p $SCRATCH/spike-a/gist $SCRATCH/spike $SCRATCH/tinker`. Definiera spikverktygen (avsnittet ovan) och skriv tinker-mallarna. Kontrollera:
+Spara sista raden som `$WT`. Sätt `SCRATCH=<sessionens scratchpad>/byggguide-v2` och `mkdir -p $SCRATCH/spike-a $SCRATCH/spike $SCRATCH/tinker`. Definiera spikverktygen (avsnittet ovan) och skriv tinker-mallarna. Kontrollera:
 
 ```bash
 cd $WT && php artisan migrate:status | tail -3          # egen databas migrerad; annars: php artisan migrate
@@ -217,15 +220,26 @@ gh api repos/HumblebragAB/ccspike-v2a --silent; echo "exit=$?"   # förväntat: 
 
 Finns repot redan, eller når `gh` inte organisationen: stanna och fråga.
 
-- [ ] **Steg 2: Fråga Erik (AskUserQuestion) innan något skapas.** Texten: "Spike A för byggguide v2 skapar på riktigt: en hemlig gist med två ställföreträdande skript (raderas efteråt på sitt id), det privata repot HumblebragAB/ccspike-v2a med v1-grundkoden (arkiveras efteråt), och Coolify-appen ccspike-v2a i Demo-projektet (via Computercats token från Forge-servern, raderas på sitt uuid). Appen får ett eget build_command som hämtar skripten, kontrollerar sha256 och kör dem; två byggen körs (ett lyckat, ett som fäller med avsikt). Jag läser byggloggen och Coolifys timeout-inställning med SELECT i Coolify-databasen. Inget rör Kattsvep eller andra appar. OK?" Utan OK: stanna.
+- [ ] **Steg 2: Fråga Erik (AskUserQuestion) innan något skapas.** Texten: "Spike A för byggguide v2 skapar på riktigt: det privata repot HumblebragAB/ccspike-v2a med v1-grundkoden och två ställföreträdande skript under .ccspike/ (arkiveras efteråt), och Coolify-appen ccspike-v2a i Demo-projektet (via Computercats token från Forge-servern, raderas på sitt uuid). Appen får ett eget build_command som hämtar v1:s check-export.mjs från api.computercat.co, kopierar skripten till /tmp, kontrollerar sha256 och kör dem; två byggen körs (ett lyckat, ett som fäller med avsikt). Skriptet svarar också ja/nej på om .git/config i bygget innehåller Coolifys GitHub-token (aldrig värdet). Jag läser byggloggen och Coolifys timeout-inställning med SELECT i Coolify-databasen. Inget rör Kattsvep eller andra appar. OK?" Utan OK: stanna.
 
-- [ ] **Steg 3: Ställföreträdande skript.** `$SCRATCH/spike-a/gist/cc-security.mjs`:
+- [ ] **Steg 3: Repot med v1-grundkoden och spikskripten.** Grundkoden skrivs ut av verify (filerna ur det låsta manifestet plus README ur mallen):
+
+```bash
+cd $WT && php artisan computercat:byggguide:verify v1 --keep | tee $SCRATCH/spike-a/verify.log | tail -2
+KEEP=$(sed -n 's/^Katalogen behålls: //p' $SCRATCH/spike-a/verify.log); echo "KEEP=$KEEP" >> $SCRATCH/spike-a/ids.env
+mkdir -p "$KEEP/.ccspike" "$KEEP/public" && echo 0 > "$KEEP/public/spike-version.txt"
+```
+
+`$KEEP/.ccspike/cc-security.mjs`:
 
 ```js
-// Spike A, byggguide v2: ställföreträdare för check-security.mjs. Skriver bara miljöfakta.
-import { existsSync } from 'node:fs';
+// Spike A, byggguide v2: ställföreträdare för check-security.mjs. Skriver bara miljöfakta, aldrig värden.
+import { existsSync, readFileSync } from 'node:fs';
 
+const gitConfig = existsSync('.git/config');
+const token = gitConfig && readFileSync('.git/config', 'utf8').includes('x-access-token');
 console.log(`spike-security: cwd=${process.cwd()} node=${process.version} NODE_ENV=${process.env.NODE_ENV ?? '(osatt)'} GAME=${process.env.NEXT_PUBLIC_COMPUTERCAT_GAME ?? '(osatt)'}`);
+console.log(`spike-security: git-config=${gitConfig ? 'ja' : 'nej'} x-access-token=${token ? 'ja' : 'nej'}`);
 if (!existsSync('out/index.html')) {
   console.error('spike-security: out/index.html saknas');
   process.exit(1);
@@ -237,7 +251,7 @@ if (existsSync('out/cc-spike-fail.txt')) {
 console.log('spike-security: OK');
 ```
 
-`$SCRATCH/spike-a/gist/cc-audit.mjs`:
+`$KEEP/.ccspike/cc-audit.mjs`:
 
 ```js
 // Spike A, byggguide v2: kör npm audit som cc-audit.mjs kommer att göra och skriver bara formen.
@@ -259,36 +273,11 @@ console.log(`spike-audit: status=${r.status} keys=${keys} vulnerabilities=${coun
 process.exit(r.status ?? 1);
 ```
 
-Skapa gisten (hemlig är standard) och spara id och de versionslåsta råadresserna:
+Committa och skapa repot:
 
 ```bash
-cd $SCRATCH/spike-a/gist && GIST_URL=$(gh gist create --desc "ccspike-v2a: engångsskript, raderas efter spiken" cc-security.mjs cc-audit.mjs)
-GIST_ID=${GIST_URL##*/}
-echo "GIST_ID=$GIST_ID" >> $SCRATCH/spike-a/ids.env
-RAW_S=$(gh api gists/$GIST_ID --jq '.files["cc-security.mjs"].raw_url')
-RAW_A=$(gh api gists/$GIST_ID --jq '.files["cc-audit.mjs"].raw_url')
-S=$(shasum -a 256 cc-security.mjs | cut -c1-64); A=$(shasum -a 256 cc-audit.mjs | cut -c1-64)
-curl -fsS "$RAW_S" | shasum -a 256 | cut -c1-64    # förväntat: samma som $S
-curl -fsS "$RAW_A" | shasum -a 256 | cut -c1-64    # förväntat: samma som $A
-```
-
-Råadressen innehåller gistens revision, så innehållet kan inte ändras under spiken.
-
-- [ ] **Steg 4: Byggkommandot.** Specens form, med en diagnostisk början (S2) och hämtning av v1:s `check-export.mjs` från prod-REST (visar att byggmiljön når Computercat). Inga enkla citattecken, inget `$`:
-
-```bash
-CMD="node --version && npm --version && command -v curl && command -v sha256sum && npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v1/files/scripts/check-export.mjs -o /tmp/cc-v1-check-export.mjs && echo \"cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8  /tmp/cc-v1-check-export.mjs\" | sha256sum -c - && curl -fsS $RAW_S -o /tmp/cc-security.mjs && curl -fsS $RAW_A -o /tmp/cc-audit.mjs && echo \"$S  /tmp/cc-security.mjs\" | sha256sum -c - && echo \"$A  /tmp/cc-audit.mjs\" | sha256sum -c - && node /tmp/cc-security.mjs && node /tmp/cc-audit.mjs"
-printf '%s' "$CMD" | grep -c "'" ; printf '%s' "$CMD" | grep -c '\$'   # förväntat: 0 och 0
-CMD_B64=$(printf '%s' "$CMD" | base64 | tr -d '\n')
-```
-
-- [ ] **Steg 5: Repot med v1-grundkoden.** Grundkoden skrivs ut av verify (filerna ur det låsta manifestet plus README ur mallen):
-
-```bash
-cd $WT && php artisan computercat:byggguide:verify v1 --keep | tee $SCRATCH/spike-a/verify.log | tail -2
-KEEP=$(sed -n 's/^Katalogen behålls: //p' $SCRATCH/spike-a/verify.log); echo "KEEP=$KEEP" >> $SCRATCH/spike-a/ids.env
-cd "$KEEP" && mkdir -p public && echo 0 > public/spike-version.txt
-git init -q -b main && git add -A && git -c user.name=Spike -c user.email=spike@invalid commit -qm "Spike: grundkod från byggguide v1"
+cd "$KEEP" && S=$(shasum -a 256 .ccspike/cc-security.mjs | cut -c1-64) && A=$(shasum -a 256 .ccspike/cc-audit.mjs | cut -c1-64)
+git init -q -b main && git add -A && git -c user.name=Spike -c user.email=spike@invalid commit -qm "Spike: grundkod från byggguide v1 och spikskript"
 git ls-files | grep -cE '^(node_modules|out|\.next)/'    # förväntat: 0 (guidens .gitignore)
 gh repo create HumblebragAB/ccspike-v2a --private --description "Engångsrepo för spike byggguide v2 (arkiveras)" --source=. --remote=origin --push
 gh api repos/HumblebragAB/ccspike-v2a --jq '"REPO_ID=\(.id) private=\(.private)"'
@@ -296,7 +285,15 @@ gh api repos/HumblebragAB/ccspike-v2a --jq '"REPO_ID=\(.id) private=\(.private)"
 
 Förväntat: `Byggguide v1: OK` sist i verify, och `private=true`. Skriv `REPO_ID=…` till `ids.env` direkt. **Är `private` false: stanna omedelbart.** Ingen app finns ännu, så pushen bygger inget.
 
-- [ ] **Steg 6: Skapa appen (S10).**
+- [ ] **Steg 4: Byggkommandot.** Specens form, med en diagnostisk början (S2), hämtning av v1:s `check-export.mjs` från prod-REST (byggmiljön når Computercat) och spikskripten ur `.ccspike/` i stället för REST (R2). Inga enkla citattecken, inget `$`:
+
+```bash
+CMD="node --version && npm --version && command -v curl && command -v sha256sum && npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v1/files/scripts/check-export.mjs -o /tmp/cc-v1-check-export.mjs && echo \"cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8  /tmp/cc-v1-check-export.mjs\" | sha256sum -c - && cp .ccspike/cc-security.mjs /tmp/cc-security.mjs && cp .ccspike/cc-audit.mjs /tmp/cc-audit.mjs && echo \"$S  /tmp/cc-security.mjs\" | sha256sum -c - && echo \"$A  /tmp/cc-audit.mjs\" | sha256sum -c - && node /tmp/cc-security.mjs && node /tmp/cc-audit.mjs"
+printf '%s' "$CMD" | grep -c "'" ; printf '%s' "$CMD" | grep -c '\$'   # förväntat: 0 och 0
+CMD_B64=$(printf '%s' "$CMD" | base64 | tr -d '\n')
+```
+
+- [ ] **Steg 5: Skapa appen (S10).**
 
 ```bash
 NAME=ccspike-v2a
@@ -311,30 +308,30 @@ UUID=$APP_UUID; sed -e "s/__UUID__/$UUID/g" -e "s|__CMD_B64__|$CMD_B64|g" $SCRAT
 
 Notera `has_build_command`, `build_command_same` (förväntat `true`) och `install_command`. Är `build_command_same` false: stanna och fråga (Coolify ändrar kommandot).
 
-- [ ] **Steg 7: Bygge 1, lyckat (S2, S8, S10).** Starta bygget med en push (auto-deploy, bilaga S24):
+- [ ] **Steg 6: Bygge 1, lyckat (S2, S8, S10, S13).** Starta bygget med en push (auto-deploy, bilaga S24):
 
 ```bash
 cd "$KEEP" && echo 1 > public/spike-version.txt && git commit -qam "Spike: bygge 1" && git push -q origin main
 ```
 
-Poll `deployments.php` (fyll i `__UUID__`) var 30:e sekund (Monitor eller bakgrundsloop) tills senaste posten är `finished` eller `failed`, högst 20 minuter. Spara `DEP1=<deployment_uuid>` i `ids.env`. Läs sedan loggen:
+Poll `deployments.php` (fyll i `__UUID__`) var 30:e sekund (Monitor eller bakgrundsloop) tills senaste posten är `finished` eller `failed`, högst 20 minuter. Spara `DEP1=<deployment_uuid>` i `ids.env`. Läs först en enda synlig loggrad oförändrad, för att se vilket prefix (tid, steg) Coolify sätter före utdata: `buildlog "$DEP1" 'spike-security: cwd' | head -1`. Mönstren nedan är därför oankrade. Läs sedan:
 
 ```bash
-buildlog "$DEP1" 'spike-|^v[0-9]+\.|^[0-9]+\.[0-9]+\.[0-9]+$|/usr/.*/(curl|sha256sum)$|/tmp/cc-.*: OK|build-cmd|install-cmd'
+buildlog "$DEP1" 'spike-|v22\.|[0-9]+\.[0-9]+\.[0-9]+|/(curl|sha256sum)|/tmp/cc-.*: OK|build-cmd|install-cmd'
 curl -s -u "$DEMO_AUTH" https://ccspike-v2a.apps.humblebrag.se/spike-version.txt     # förväntat: 1
 ```
 
-Förväntat: `finished`; `node` v22.x; en npm-version (S8); sökvägar till `curl` och `sha256sum` (S2); tre rader `/tmp/cc-…: OK` (v1-filen från `api.computercat.co` och båda gist-skripten, S2); `spike-security: … NODE_ENV=<värde>` (notera värdet, S2); `spike-audit: npm=… status=0 keys=auditReportVersion,metadata,vulnerabilities …` (S8, samma form som R5); `--build-cmd`-raden med kommandot oförändrat och `--install-cmd 'npm ci --ignore-scripts'` (S10, jämför med bilaga S20b). Syns inte `--build-cmd` i den synliga loggen men alla markörer kom i rätt ordning: notera det. `failed`, saknade markörer eller en annan JSON-form: stanna och fråga.
+Förväntat: `finished`; `node` v22.x; en npm-version (S8); sökvägar till `curl` och `sha256sum` (S2); tre rader `/tmp/cc-…: OK` (v1-filen från `api.computercat.co` och båda spikskripten, S2); `spike-security: … NODE_ENV=<värde>` (notera värdet, S2); `spike-security: git-config=<ja|nej> x-access-token=<ja|nej>` (S13); `spike-audit: npm=… status=0 keys=auditReportVersion,metadata,vulnerabilities …` (S8, samma form som R5); `--build-cmd`-raden med kommandot oförändrat och `--install-cmd 'npm ci --ignore-scripts'` (S10, jämför med bilaga S20b). Syns inte `--build-cmd` i den synliga loggen men alla markörer kom i rätt ordning: notera det. **`x-access-token=ja`: stanna och fråga Erik** (Coolifys GitHub-token kan läsas av spelkod i bygget; det påverkar säkerhetsgränsen R12). `failed`, saknade markörer eller en annan JSON-form: stanna och fråga.
 
-- [ ] **Steg 8: Bygge 2, fäller med avsikt (S4a).**
+- [ ] **Steg 7: Bygge 2, fäller med avsikt (S4a).**
 
 ```bash
 cd "$KEEP" && echo 2 > public/spike-version.txt && echo fall > public/cc-spike-fail.txt && git add -A && git commit -qm "Spike: bygge 2 ska falla" && git push -q origin main
 ```
 
-Poll som i steg 7; spara `DEP2`. Förväntat: `failed`, `buildlog "$DEP2" 'spike-'` visar `spike-security: out/cc-spike-fail.txt finns, fäller med avsikt`, och `curl -s -u "$DEMO_AUTH" https://ccspike-v2a.apps.humblebrag.se/spike-version.txt` ger fortfarande `1` (förra bygget serveras). Visar Demo `2` eller svarar inte 200: stanna och fråga.
+Poll som i steg 6; spara `DEP2`. Förväntat: `failed`, `buildlog "$DEP2" 'spike-'` visar `spike-security: out/cc-spike-fail.txt finns, fäller med avsikt`, och `curl -s -u "$DEMO_AUTH" https://ccspike-v2a.apps.humblebrag.se/spike-version.txt` ger fortfarande `1` (förra bygget serveras). Visar Demo `2` eller svarar inte 200: stanna och fråga.
 
-- [ ] **Steg 9: Timeout för en deployment (S9).** Bara läsning:
+- [ ] **Steg 8: Timeout för en deployment (S9).** Bara läsning:
 
 ```bash
 coolifydb "select table_name, column_name from information_schema.columns where table_schema = 'public' and column_name ilike '%timeout%' order by 1, 2"
@@ -342,38 +339,38 @@ coolifydb "select table_name, column_name from information_schema.columns where 
 
 Läs värdet för de kolumner som gäller byggen (för servern `localhost` och för appen `ccspike-v2a`), till exempel `coolifydb "select <kolumn> from <tabell> where …"` med kolumnen ur listan. Skriv bara kolumnnamn och värde. Hittas ingen kolumn som rör byggen: fråga Erik (AskUserQuestion) var timeouten står i Coolify-UI:t och vilket värde den har.
 
-- [ ] **Steg 10: Städning på sparade id:n.** Läs `ids.env`.
+- [ ] **Steg 9: Städning på sparade id:n.** Läs `ids.env`.
 
 ```bash
 NAME=ccspike-v2a; UUID=$APP_UUID
 sed -e "s/__NAME__/$NAME/g" -e "s/__UUID__/$UUID/g" $SCRATCH/tinker/delete-app.php > $SCRATCH/tinker/run.php && prodtinker $SCRATCH/tinker/run.php
 [ "$(gh api repos/HumblebragAB/ccspike-v2a --jq .id)" = "$REPO_ID" ] && gh api -X PATCH repos/HumblebragAB/ccspike-v2a -F archived=true --jq .archived
-gh api -X DELETE gists/$GIST_ID && echo "gist raderad"
-rm -rf "$KEEP"     # katalogen som verify skapade i steg 5, och bara den
+rm -rf "$KEEP"     # katalogen som verify skapade i steg 3, och bara den
 ```
 
-Förväntat: `delete status=200`, `true`, `gist raderad`. Poll `deployments.php` eller projektlistan tills appen är borta (bilaga S17: inom 30 s). `STOPP:` från delete-skriptet eller fel id på repot: stanna och fråga; inget raderas på något annat id.
+Förväntat: `delete status=200` och `true`. Poll `deployments.php` eller projektlistan tills appen är borta (bilaga S17: inom 30 s). `STOPP:` från delete-skriptet eller fel id på repot: stanna och fråga; inget raderas på något annat id.
 
-- [ ] **Steg 11: Skriv resultaten i bilagan.** Lägg till sist i `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md`:
+- [ ] **Steg 10: Skriv resultaten i bilagan.** Lägg till sist i `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md`:
 
 ```markdown
 ## Spikresultat delprojekt 3 etapp B (Coolify v4.4.6)
 
-Spike A (<datum>): engångsappen `ccspike-v2a` med v1-grundkoden och ställföreträdande skript från en hemlig gist, skapad med Computercats token från Forge-servern och raderad på sitt uuid. S-numren nedan är faktabank-specens (S1–S7) och planens (S8–S12), inte avsnitten ovan.
+Spike A (<datum>): engångsappen `ccspike-v2a` med v1-grundkoden och ställföreträdande skript i repot under `.ccspike/`, skapad med Computercats token från Forge-servern och raderad på sitt uuid. S-numren nedan är faktabank-specens (S1–S7) och planens (S8–S13), inte avsnitten ovan.
 
 - S2: byggsteget når `registry.npmjs.org` och `api.computercat.co`; `curl` finns i <sökväg>, `sha256sum` i <sökväg>; `NODE_ENV` i byggsteget är <värde>.
 - S4a: ett steg i `build_command` som avslutar med fel ger status `failed`, och Demo serverar förra bygget (<vad som kontrollerades>).
 - S8: npm i byggsteget är <version>; `npm audit --omit=dev --audit-level=high --json` ger nycklarna <nycklar> och exitkod <kod> på v1-grundkoden.
 - S9: Coolifys timeout för en deployment är <kolumn = värde, eller var i UI:t>.
-- S10: `build_command` i `POST /applications/private-github-app` ger 201 och sparas oförändrat (<has_build_command/build_command_same>); nixpacks får det som <hur det syns i loggen>; `&&` och `|` tolkas av ett skal; `install_command` körs fortfarande.
+- S10: `build_command` i `POST /applications/private-github-app` ger 201 och sparas oförändrat (<has_build_command, build_command_same>); nixpacks får det som <hur det syns i loggen>; `&&` och `|` tolkas av ett skal; `install_command` körs fortfarande. Loggraderna har prefixet <format>.
+- S13: `.git/config` i byggkatalogen: <ja|nej>; innehåller `x-access-token`: <ja|nej>.
 ```
 
 Ersätt varje `<…>` med uppmätt värde och kontrollera: `sed -n '/^## Spikresultat delprojekt 3 etapp B/,$p' $WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md | grep -c '<'` ska ge `0`.
 
-- [ ] **Steg 12: Stäm av och committa.** Avviker något från planens antaganden (kommandot ändras eller avvisas, inget skal tolkar `&&`/`|`, `sha256sum` eller `curl` saknas, byggsteget når inte nätet, npm-JSON har annan form än R5, ett fällt steg ger inte `failed` eller Demo byter ändå): stanna, fråga Erik och uppdatera berörda tasks (4, 5, 9) innan Task 2 påbörjas.
+- [ ] **Steg 11: Stäm av och committa.** Avviker något från planens antaganden (kommandot ändras eller avvisas, inget skal tolkar `&&`/`|`, `sha256sum` eller `curl` saknas, byggsteget når inte nätet, npm-JSON har annan form än R5, ett fällt steg ger inte `failed` eller Demo byter ändå, token läsbar enligt S13): stanna, fråga Erik och uppdatera berörda tasks (4, 5, 9) innan Task 2 påbörjas.
 
 ```bash
-cd $WT && git add docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md && git commit -m "Spike A: Coolify kör eget byggkommando (etapp B, S2, S4a, S8-S10)"
+cd $WT && git add docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md && git commit -m "Spike A: Coolify kör eget byggkommando (etapp B, S2, S4a, S8-S10, S13)"
 ```
 
 ---
@@ -943,7 +940,7 @@ class BuildGuideV2Test extends TestCase
     {
         $md = BuildGuide::claudeMd('v2');
 
-        foreach (['Byggguide: **v2**', '{"version": "v2"}', '`Grundkod från byggguide v2`', '## Faktabanken', '`search_facts`', '`get_fact`', '`list_facts`', '"build_guide": "v2"', 'går före din egen bedömning', 'fråga en människa', '## Säkerhetsspärren i Coolify', '`scripts/check-security.mjs`', '`scripts/cc-audit.mjs`', 'npm-registret svarade inte'] as $text) {
+        foreach (['Byggguide: **v2**', '{"version": "v2"}', '`Grundkod från byggguide v2`', '## Faktabanken', '`search_facts`', '`get_fact`', '`list_facts`', '"build_guide": "v2"', 'går före din egen bedömning', 'fråga en människa', '## Säkerhetsspärren i Coolify', '`scripts/check-security.mjs`', '`scripts/cc-audit.mjs`', 'npm-registret svarade inte', 'inte avsiktligt skadlig spelkod', 'bara i utvecklingsberoenden'] as $text) {
             $this->assertStringContainsString($text, $md);
         }
         $this->assertDoesNotMatchRegularExpression(self::V1_REFERENCE, $md);
@@ -955,6 +952,8 @@ class BuildGuideV2Test extends TestCase
 
         $this->assertStringContainsString('enligt Computercats byggguide v2', $readme);
         $this->assertStringContainsString('scripts/check-security.mjs', $readme);
+        $this->assertStringContainsString('inte avsiktligt skadlig spelkod', $readme);
+        $this->assertStringContainsString('bara i utvecklingsberoenden', $readme);
         $this->assertDoesNotMatchRegularExpression(self::V1_REFERENCE, $readme);
     }
 
@@ -1053,13 +1052,13 @@ npm test                       # enhetstester, inget nätverk
 npm run check                  # typkontroll, lint, test, bygge, kontroll av out/ och säkerhetskontrollen
 ```
 
-**Före varje push till `main`:** (1) `npm run check` grön, (2) `npm audit --omit=dev --audit-level=high` utan träff (avslutar med fel vid high eller critical i produktionsberoenden; åtgärda med `npm audit fix` eller uppdatera paketet, tysta aldrig). Bygget är en statisk export (`output: 'export'`): inga API-routes, inga serverkomponenter som hämtar data, ingen `next/font/google` (bygget ska klara sig utan nätverk).
+**Före varje push till `main`:** (1) `npm run check` grön, (2) `npm audit --omit=dev --audit-level=high` utan träff (avslutar med fel vid high eller critical i produktionsberoenden; åtgärda med `npm audit fix` eller uppdatera paketet, tysta aldrig). Bygget är en statisk export (`output: 'export'`): inga API-routes, inga serverkomponenter som hämtar data, ingen `next/font/google` (bygget ska klara sig utan nätverk). `npm audit` utan `--omit=dev` visar en high i braces via eslint; den finns bara i utvecklingsberoenden, ingen rättad version finns och fyndet är accepterat. Produktionsgranskningen (`npm audit --omit=dev --audit-level=high`) är ren, och det är den som spärren kör.
 
 ## Säkerhetsspärren i Coolify
 
-Coolify bygger Demo med ett byggkommando som Computercat äger: `npm run build`, sedan hämtas `scripts/check-security.mjs` och `scripts/cc-audit.mjs` från Computercat, kontrolleras mot sha256 och körs. Faller en kontroll deployas inget, och Demo visar förra bygget. Ändringar i spelrepot (i skripten, i `package.json` eller någon annanstans) stänger inte av spärren.
+Coolify bygger Demo med ett byggkommando som Computercat äger: `npm run build`, sedan hämtas `scripts/check-security.mjs` och `scripts/cc-audit.mjs` från Computercat, kontrolleras mot sha256 och körs. Faller en kontroll deployas inget, och Demo visar förra bygget. Att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön).
 
-- `scripts/check-security.mjs` fäller på hemligheter i `out/` (privata nycklar, GitHub-, Slack-, Stripe- och AWS-nycklar, JWT), på source maps (`*.map`) och på HTML-sidor utan byggguidens Content-Security-Policy. Policyn sätts i `src/app/layout.tsx` med `src/lib/computercat/csp.ts`; ändra den inte. Felet anger fil och mönstrets namn, aldrig värdet.
+- `scripts/check-security.mjs` fäller på hemligheter i `out/` (privata nycklar, GitHub-, Slack-, Stripe- och AWS-nycklar, JWT), på source maps (`*.map`), på dolda filer (`.env*`, `.git` med flera) och på HTML-sidor utan byggguidens Content-Security-Policy. Policyn sätts i `src/app/layout.tsx` med `src/lib/computercat/csp.ts` (bara i produktionsbygget, så `npm run dev` påverkas inte); ändra den inte. Felet anger fil och mönstrets namn, aldrig värdet.
 - `scripts/cc-audit.mjs` kör `npm audit --omit=dev --audit-level=high` och fäller med paketnamn och allvarlighetsgrad vid high eller critical i produktionsberoenden. Svarar inte npm-registret försöker den en gång till efter 10 sekunder och fäller sedan med "npm-registret svarade inte": vänta och pusha igen.
 - `npm run check` kör samma `check-security.mjs`, så du får samma fel lokalt som Coolify.
 - Visar `get_provisioning_status` `deploy_failed`: kör `npm run check` lokalt, slå upp felet med `search_facts` och pusha igen.
@@ -1090,7 +1089,7 @@ Låt de två raderna `computercat:idea` i `README.md` vara kvar; `test/docs.test
 Allt i `NEXT_PUBLIC_*` hamnar i den publika koden. Lägg aldrig nycklar eller lösenord där eller i repot.
 ````
 
-- [ ] **Steg 4: README-mallen.** I `resources/byggguide/v2/templates/README.md`, tre ändringar:
+- [ ] **Steg 4: README-mallen.** I `resources/byggguide/v2/templates/README.md`, fyra ändringar:
 
 1. Ersätt `enligt Computercats byggguide v1.` med `enligt Computercats byggguide v2.`
 2. Ersätt raden `npm run check   # typkontroll, lint, test, bygge och kontroll av out/` med `npm run check   # typkontroll, lint, test, bygge, kontroll av out/ och säkerhetskontrollen`
@@ -1098,7 +1097,14 @@ Allt i `NEXT_PUBLIC_*` hamnar i den publika koden. Lägg aldrig nycklar eller l�
 
 ```markdown
 
-Coolify bygger med Computercats eget byggkommando: `npm run build`, sedan säkerhetskontrollen `scripts/check-security.mjs` (hemligheter, source maps och Content-Security-Policy i varje HTML-sida) och `scripts/cc-audit.mjs` (`npm audit` för produktionsberoenden). Båda hämtas från Computercat och kontrolleras mot sha256, så ändringar i repot stänger inte av dem. Faller en kontroll deployas inget och Demo visar förra bygget.
+Coolify bygger med Computercats eget byggkommando: `npm run build`, sedan säkerhetskontrollen `scripts/check-security.mjs` (hemligheter, source maps och Content-Security-Policy i varje HTML-sida) och `scripts/cc-audit.mjs` (`npm audit` för produktionsberoenden). Båda hämtas från Computercat och kontrolleras mot sha256. Faller en kontroll deployas inget och Demo visar förra bygget. Att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön).
+```
+
+4. Under `## Beroenden: `overrides` för vite`, efter stycket som slutar med `när vitest har ett vite-intervall som installeras rent.`, lägg till ett nytt stycke:
+
+```markdown
+
+`npm audit` utan `--omit=dev` visar en high i braces via eslint; den finns bara i utvecklingsberoenden, ingen rättad version finns och fyndet är accepterat. Produktionsgranskningen (`npm audit --omit=dev --audit-level=high`) är ren, och det är den som spärren kör.
 ```
 
 - [ ] **Steg 5: `test/docs.test.ts` och `package.json`.** I `resources/byggguide/v2/files/test/docs.test.ts`, i listan i testet "CLAUDE.md innehåller specens regler och verktyg", ersätt raden
@@ -1150,7 +1156,7 @@ cd $WT && git add resources/byggguide/v2 tests/Feature/BuildGuideV2Test.php && g
 
 ### Task 4: CSP i layouten och `check-security.mjs`
 
-Först: invokera `security-first-mindset` och skriv hotmodellen för skriptet och byggkommandot (vad som skyddas: att en hemlighet, source map eller sida utan CSP publiceras på Demo; vem som kan påverka: spelets kod och spelets Claude, inte Computercat; gränsen enligt specen: spärren hittar misstag och kända mönster, inte avsiktligt skadlig spelkod).
+Först: invokera `security-first-mindset` och skriv hotmodellen för skriptet och byggkommandot (vad som skyddas: att en hemlighet, source map eller sida utan CSP publiceras på Demo; vem som kan påverka: spelets kod och spelets Claude, inte Computercat; gränsen (R12): Att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön). Ta också med S13 från spike A: kan spelkod i bygget läsa Coolifys GitHub-token?)
 
 **Files:**
 - Create (i v2): `files/src/lib/computercat/csp.ts`, `files/src/lib/computercat/csp.test.ts`, `files/scripts/check-security.mjs`, `files/test/security.test.ts`
@@ -1158,7 +1164,7 @@ Först: invokera `security-first-mindset` och skriv hotmodellen för skriptet oc
 - Modify: `tests/Feature/BuildGuideV2Test.php`
 
 **Interfaces:**
-- Produces: `contentSecurityPolicy(apiUrl: string | undefined): string` i `@/lib/computercat/csp` (kastar på en ogiltig adress). `node scripts/check-security.mjs` (cwd = repots rot): exitkod 0 och `check-security: OK (N filer, M HTML-sidor med rätt CSP)`, annars exitkod 1 och en rad per fynd på formen `check-security: out/<sökväg>: <fynd>` där `<fynd>` är `hemlighet (<namn>)`, `source map (*.map publiceras inte)`, `CSP saknas (<meta http-equiv="Content-Security-Policy">)`, `mer än en CSP-tagg`, `CSP avviker från byggguidens policy` eller `symbolisk länk (tillåts inte i out/)`; saknad `out/` ger `check-security: out/ saknas. Kör npm run build först.` Task 7 och 9 använder filen och dess sha256.
+- Produces: `contentSecurityPolicy(apiUrl: string | undefined): string` i `@/lib/computercat/csp` (kastar på en ogiltig adress). `node scripts/check-security.mjs` (cwd = repots rot): exitkod 0 och `check-security: OK (N filer, M HTML-sidor med rätt CSP)`, annars exitkod 1 och en rad per fynd på formen `check-security: out/<sökväg>: <fynd>` där `<fynd>` är `hemlighet (<namn>)`, `source map (*.map publiceras inte)`, `CSP saknas (<meta http-equiv="Content-Security-Policy">)`, `mer än en CSP-tagg`, `CSP avviker från byggguidens policy`, `symbolisk länk (tillåts inte i out/)` eller `dold fil (.env, .git m.fl. publiceras inte)` (varje namn som börjar med punkt, utom katalogen `.well-known`); saknad `out/` ger `check-security: out/ saknas. Kör npm run build först.` Task 7 och 9 använder filen och dess sha256.
 
 - [ ] **Steg 1: Fallerande tester.** `resources/byggguide/v2/files/src/lib/computercat/csp.test.ts`:
 
@@ -1265,6 +1271,14 @@ describe('check-security.mjs', () => {
     expect(res.output).toContain('check-security: out/_next/static/a.js.map: source map (*.map publiceras inte)');
   });
 
+  it('fäller på dolda filer som .env och .git men släpper igenom .well-known', () => {
+    const res = run(project({ 'out/index.html': okPage, 'out/.env.local': 'X=1', 'out/.git/config': '[core]', 'out/.well-known/security.txt': 'Contact: x' }));
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('check-security: out/.env.local: dold fil');
+    expect(res.output).toContain('check-security: out/.git: dold fil');
+    expect(res.output).not.toContain('.well-known');
+  });
+
   it('fäller på en HTML-sida utan CSP', () => {
     const res = run(project({ 'out/index.html': okPage, 'out/sub/index.html': page() }));
     expect(res.status).toBe(1);
@@ -1319,7 +1333,9 @@ Lägg till i `tests/Feature/BuildGuideV2Test.php`:
             'npm run typecheck && npm run lint && npm test && NEXT_TELEMETRY_DISABLED=1 npm run build && node scripts/check-export.mjs && node scripts/check-security.mjs',
             $this->package()['scripts']['check'],
         );
-        $this->assertStringContainsString('contentSecurityPolicy(process.env.NEXT_PUBLIC_COMPUTERCAT_URL)', BuildGuide::file('v2', 'src/app/layout.tsx')['content']);
+        $layout = BuildGuide::file('v2', 'src/app/layout.tsx')['content'];
+        $this->assertStringContainsString('contentSecurityPolicy(process.env.NEXT_PUBLIC_COMPUTERCAT_URL)', $layout);
+        $this->assertStringContainsString("process.env.NODE_ENV === 'production'", $layout);
     }
 ```
 
@@ -1374,14 +1390,15 @@ export const viewport: Viewport = {
 };
 
 // Byggguide v2: policyn kontrolleras i varje out/**/*.html av scripts/check-security.mjs.
+// Bara i produktionsbygget: next build sätter alltid NODE_ENV=production, så out/ och
+// kontrollen påverkas inte, medan npm run dev slipper policyn (Eriks beslut 2026-10-14).
 const CSP = contentSecurityPolicy(process.env.NEXT_PUBLIC_COMPUTERCAT_URL);
+const IS_PRODUCTION_BUILD = process.env.NODE_ENV === 'production';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="sv" className="h-full">
-      <head>
-        <meta httpEquiv="Content-Security-Policy" content={CSP} />
-      </head>
+      <head>{IS_PRODUCTION_BUILD && <meta httpEquiv="Content-Security-Policy" content={CSP} />}</head>
       <body className="h-full antialiased">
         {children}
         <BackgroundSync />
@@ -1459,6 +1476,11 @@ function walk(dir) {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
     const stat = lstatSync(path);
+    // .env*, .git och andra dolda filer ska aldrig publiceras; .well-known är en standardkatalog.
+    if (name.startsWith('.') && !(name === '.well-known' && stat.isDirectory())) {
+      report(path, 'dold fil (.env, .git m.fl. publiceras inte)');
+      return [];
+    }
     if (stat.isSymbolicLink()) {
       report(path, 'symbolisk länk (tillåts inte i out/)');
       return [];
@@ -1536,7 +1558,7 @@ cd $WT && php artisan computercat:byggguide:hash v2 && php artisan test --filter
 cd $WT && php artisan computercat:byggguide:verify v2
 ```
 
-Förväntat: `52 filer i v2.`, PASS, och i verify: vitest grön (bland annat `csp.test.ts` 3 och `security.test.ts` 16 tester), `check-export: OK …`, `check-security: OK (<N> filer, <M> HTML-sidor med rätt CSP)` med `M` ≥ 2 (`index.html` och `404.html`) och sista raden `Byggguide v2: OK (52 filer, check, audit, static_export).` Säger `check-security` "CSP saknas" eller "CSP avviker" på den riktiga exporten (Next placerar eller skriver metataggen annorlunda än testerna förutsätter): stanna och fråga, med utdraget ur `out/index.html` (`grep -o '<meta[^>]*Content-Security[^>]*>' out/index.html`, kör `verify v2 --keep` för att få katalogen). Ett skript-fel i lint (till exempel en regel i eslint-config-next som träffar skriptet): läs regeln, rätta skriptet utan att stänga av regeln.
+Förväntat: `52 filer i v2.`, PASS, och i verify: vitest grön (bland annat `csp.test.ts` 3 och `security.test.ts` 17 tester), `check-export: OK …`, `check-security: OK (<N> filer, <M> HTML-sidor med rätt CSP)` med `M` ≥ 2 (`index.html` och `404.html`) och sista raden `Byggguide v2: OK (52 filer, check, audit, static_export).` Säger `check-security` "CSP saknas" eller "CSP avviker" på den riktiga exporten (Next placerar eller skriver metataggen annorlunda än testerna förutsätter): stanna och fråga, med utdraget ur `out/index.html` (`grep -o '<meta[^>]*Content-Security[^>]*>' out/index.html`, kör `verify v2 --keep` för att få katalogen). Ett skript-fel i lint (till exempel en regel i eslint-config-next som träffar skriptet): läs regeln, rätta skriptet utan att stänga av regeln.
 
 - [ ] **Steg 7: Commit.**
 
@@ -1553,7 +1575,7 @@ cd $WT && git add resources/byggguide/v2 tests/Feature/BuildGuideV2Test.php && g
 
 **Interfaces:**
 - Consumes: formen på `npm audit --json` (R5, bekräftad i bygget av Task 1 S8).
-- Produces: `node scripts/cc-audit.mjs` (cwd = repots rot): exitkod 0 och `cc-audit: OK (inga high eller critical i produktionsberoenden)`; vid fynd exitkod 1 och en rad `cc-audit: <paket> (<high|critical>)` per paket; vid registerfel två försök med 10 s emellan och sedan exitkod 1 och `cc-audit: npm-registret svarade inte (två försök). Vänta och pusha igen.` Miljövariabeln `CC_AUDIT_RETRY_DELAY_MS` kan bara korta väntan (0–10000 ms; används av testerna). Task 7 och 9 använder filen och dess sha256.
+- Produces: `node scripts/cc-audit.mjs` (cwd = repots rot): exitkod 0 och `cc-audit: OK (inga high eller critical i produktionsberoenden)`; vid fynd exitkod 1 och en rad `cc-audit: <paket> (<high|critical>)` per paket; vid registerfel (nätverkskod eller 5xx, R5) två försök med 10 s emellan och sedan exitkod 1 och `cc-audit: npm-registret svarade inte (två försök). Vänta och pusha igen.`; vid annan npm-felkod eller utdata som inte är JSON direkt exitkod 1 med `cc-audit: npm audit misslyckades (<kod>) …` Miljövariabeln `CC_AUDIT_RETRY_DELAY_MS` kan bara korta väntan (0–10000 ms; används av testerna). Task 7 och 9 använder filen och dess sha256.
 
 - [ ] **Steg 1: Fallerande tester.** `resources/byggguide/v2/files/test/ccAudit.test.ts`:
 
@@ -1566,7 +1588,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 // scripts/cc-audit.mjs (byggguide v2) mot en falsk npm först i PATH. Svarens form är
 // npm 10:s (verifierad 2026-10-14): en rapport har auditReportVersion, metadata och
-// vulnerabilities; ett registerfel har bara message och error.
+// vulnerabilities; ett fel har message och error, och orsaken står i message.
 const SCRIPT = resolve(process.cwd(), 'scripts/cc-audit.mjs');
 const dirs: string[] = [];
 
@@ -1665,10 +1687,25 @@ describe('cc-audit.mjs', () => {
     expect(res.calls).toBe(2);
   });
 
-  it('behandlar utdata som inte är en rapport som registerfel, aldrig som ren', () => {
+  it('räknar 5xx från registret som registerfel', () => {
+    const res = run([{ status: 1, stdout: JSON.stringify({ message: 'audit endpoint returned an error', error: { code: 'E503', summary: '', detail: '' } }) }, CLEAN]);
+    expect(res.status).toBe(0);
+    expect(res.calls).toBe(2);
+  });
+
+  it('fäller direkt med koden vid ett annat npm-fel, utan omförsök', () => {
+    const res = run([{ status: 1, stdout: JSON.stringify({ message: 'Unable to authenticate', error: { code: 'E401', summary: '', detail: '' } }) }]);
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('npm audit misslyckades (E401)');
+    expect(res.output).not.toContain('npm-registret svarade inte');
+    expect(res.calls).toBe(1);
+  });
+
+  it('fäller direkt när utdata inte är JSON, aldrig som ren', () => {
     const res = run([{ status: 0, stdout: 'inte json' }]);
     expect(res.status).toBe(1);
-    expect(res.output).toContain('npm-registret svarade inte');
+    expect(res.output).toContain('npm audit misslyckades (ingen JSON)');
+    expect(res.calls).toBe(1);
   });
 
   it('fäller när npm avslutar med fel utan high eller critical i rapporten', () => {
@@ -1701,34 +1738,47 @@ Expected: FAIL i `test_audit_script_is_in_the_guide` (`Build guide file not foun
 // Byggguide v2: npm audit för produktionsberoenden (spec delprojekt 3, del 3). Coolify kör
 // den efter bygget, hämtad från Computercat och kontrollerad mot sha256.
 // - Fynd (high eller critical) fäller med paketnamn och allvarlighetsgrad.
-// - Ger npm ingen rapport (registret svarar inte) görs ett nytt försök efter 10 s; sedan
-//   fäller skriptet med "npm-registret svarade inte".
+// - Fel mot registret (nätverkskod eller 5xx) ger ett nytt försök efter 10 s; sedan fäller
+//   skriptet med "npm-registret svarade inte".
+// - Andra fel (annan kod, utdata som inte är JSON) fäller direkt med koden.
 // Formen på `npm audit --json` (npm 10, verifierad 2026-10-14): en rapport har
-// auditReportVersion, metadata och vulnerabilities; ett registerfel har bara message och error.
+// auditReportVersion, metadata och vulnerabilities; ett fel har message och error, och
+// orsaken står i message ("… reason: getaddrinfo ENOTFOUND registry.npmjs.org").
 // --registry gör att spelrepots .npmrc inte kan peka granskningen mot ett annat register.
 import { spawnSync } from 'node:child_process';
 
 const ARGS = ['audit', '--omit=dev', '--audit-level=high', '--json', '--registry=https://registry.npmjs.org/'];
 const SERIOUS = new Set(['high', 'critical']);
+const NETWORK = /^(ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|E?5\d\d)$/;
 // Bara testerna kortar väntan; den kan aldrig bli längre än 10 s.
 const RETRY_DELAY_MS = Math.min(10_000, Math.max(0, Number(process.env.CC_AUDIT_RETRY_DELAY_MS ?? 10_000) || 0));
 
+// error.code om npm skickar den, annars koden ur message (E-kod eller HTTP-status).
+function errorCode(json) {
+  if (typeof json?.error?.code === 'string' && json.error.code !== '') return json.error.code;
+  const message = typeof json?.message === 'string' ? json.message : '';
+  return message.match(/\b(E[A-Z][A-Z0-9_]+)\b/)?.[1] ?? message.match(/\b(5\d\d)\b/)?.[1] ?? 'okänd kod';
+}
+
 function audit() {
   const r = spawnSync('npm', ARGS, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) return { kind: 'no-report' };
+  if (r.error) return { kind: 'failed', code: r.error.code ?? 'npm startade inte' };
 
-  let report = null;
+  let json = null;
   try {
-    report = JSON.parse(r.stdout);
+    json = JSON.parse(r.stdout);
   } catch {
-    report = null;
+    return { kind: 'failed', code: 'ingen JSON' };
   }
   const isReport =
-    report !== null && typeof report === 'object' && 'auditReportVersion' in report && typeof report.vulnerabilities === 'object' && report.vulnerabilities !== null;
-  if (!isReport) return { kind: 'no-report' };
+    json !== null && typeof json === 'object' && 'auditReportVersion' in json && typeof json.vulnerabilities === 'object' && json.vulnerabilities !== null;
+  if (!isReport) {
+    const code = errorCode(json);
+    return NETWORK.test(code) ? { kind: 'registry', code } : { kind: 'failed', code };
+  }
 
   // Fail closed: high eller critical fäller även om npm avslutade med 0.
-  const serious = Object.values(report.vulnerabilities)
+  const serious = Object.values(json.vulnerabilities)
     .filter((v) => v && SERIOUS.has(v.severity))
     .map((v) => `${v.name} (${v.severity})`)
     .sort();
@@ -1738,8 +1788,8 @@ function audit() {
 }
 
 let result = audit();
-if (result.kind === 'no-report') {
-  console.error(`cc-audit: npm audit gav ingen rapport; nytt försök om ${RETRY_DELAY_MS / 1000} s.`);
+if (result.kind === 'registry') {
+  console.error(`cc-audit: npm-registret svarade inte (${result.code}); nytt försök om ${RETRY_DELAY_MS / 1000} s.`);
   await new Promise((done) => setTimeout(done, RETRY_DELAY_MS));
   result = audit();
 }
@@ -1752,6 +1802,9 @@ if (result.kind === 'ok') {
   process.exit(1);
 } else if (result.kind === 'unexpected') {
   console.error(`cc-audit: npm audit avslutade med kod ${result.status} utan high eller critical i rapporten.`);
+  process.exit(1);
+} else if (result.kind === 'failed') {
+  console.error(`cc-audit: npm audit misslyckades (${result.code}). Kör npm audit --omit=dev lokalt och läs felet.`);
   process.exit(1);
 } else {
   console.error('cc-audit: npm-registret svarade inte (två försök). Vänta och pusha igen.');
@@ -1766,7 +1819,7 @@ cd $WT && php artisan computercat:byggguide:hash v2 && php artisan test --filter
 cd $WT && php artisan computercat:byggguide:verify v2
 ```
 
-Förväntat: `54 filer i v2.`, PASS, och i verify `ccAudit.test.ts` med 8 gröna tester och `Byggguide v2: OK (54 filer, check, audit, static_export).` Kör sedan skriptet mot den riktiga guiden en gång (nätverk mot registret):
+Förväntat: `54 filer i v2.`, PASS, och i verify `ccAudit.test.ts` med 10 gröna tester och `Byggguide v2: OK (54 filer, check, audit, static_export).` Kör sedan skriptet mot den riktiga guiden en gång (nätverk mot registret):
 
 ```bash
 cd $WT && KEEP=$(php artisan computercat:byggguide:verify v2 --keep | sed -n 's/^Katalogen behålls: //p') && echo "$KEEP"
@@ -1784,15 +1837,15 @@ cd $WT && git add resources/byggguide/v2 tests/Feature/BuildGuideV2Test.php && g
 
 ---
 
-### Task 6: eslint-reglerna och braces
+### Task 6: eslint-reglerna och braces (accepterad, ingen override)
 
 **Files:**
-- Modify (i v2): `files/eslint.config.mjs`, `files/package.json` och `files/package-lock.json` (bara om braces får en override), `manifest.json` (`overrides`), `templates/README.md` (avsnittet om `overrides`)
+- Modify (i v2): `files/eslint.config.mjs` (`package.json`, `package-lock.json` och `manifest.overrides` ändras inte: braces får ingen override, R8)
 - Create (i v2): `files/test/eslintRules.test.ts`
 - Modify: `tests/Feature/BuildGuideV2Test.php`
 
 **Interfaces:**
-- Produces: `npm run lint` fäller på specens fem mönster (regel-id `no-restricted-syntax`, `no-eval`, `no-new-func`, `no-implied-eval`). `manifest.overrides` = `package.json`s `overrides` (vaktas av `BuildGuideTest::test_stack_matches_package_json` efter låsningen). Task 8 skriver v2:s `overrides` i `BuildGuideTest::EXPECTED`.
+- Produces: `npm run lint` fäller på specens fem mönster (regel-id `no-restricted-syntax`, `no-eval`, `no-new-func`, `no-implied-eval`). v2:s `overrides` är `{"vite": "7.3.7"}` som i v1 (Task 8 skriver det i `BuildGuideTest::EXPECTED`).
 
 - [ ] **Steg 1: Fallerande test.** `resources/byggguide/v2/files/test/eslintRules.test.ts`:
 
@@ -1814,6 +1867,7 @@ async function rulesFor(code: string): Promise<string[]> {
 describe('säkerhetsreglerna i eslint', () => {
   it.each([
     ['dangerouslySetInnerHTML', 'export function A({ h }: { h: string }) {\n  return <div dangerouslySetInnerHTML={{ __html: h }} />;\n}\n', 'no-restricted-syntax'],
+    ['dangerouslySetInnerHTML som objektnyckel', "import { createElement } from 'react';\nexport const a = (h: string) => createElement('div', { dangerouslySetInnerHTML: { __html: h } });\n", 'no-restricted-syntax'],
     ['eval', 'export const a = (s: string) => eval(s);\n', 'no-eval'],
     ['new Function', "export const f = new Function('return 1');\n", 'no-new-func'],
     ['setTimeout med sträng', "setTimeout('alert(1)', 10);\n", 'no-implied-eval'],
@@ -1853,7 +1907,7 @@ Lägg till i `tests/Feature/BuildGuideV2Test.php`:
     {
         $config = BuildGuide::file('v2', 'eslint.config.mjs')['content'];
 
-        foreach (["'no-eval': 'error'", "'no-implied-eval': 'error'", "'no-new-func': 'error'", 'dangerouslySetInnerHTML', 'NEXT_PUBLIC_COMPUTERCAT_(GAME|URL)'] as $text) {
+        foreach (["'no-eval': 'error'", "'no-implied-eval': 'error'", "'no-new-func': 'error'", "Property[key.name='dangerouslySetInnerHTML']", 'NEXT_PUBLIC_COMPUTERCAT_(GAME|URL)'] as $text) {
             $this->assertStringContainsString($text, $config);
         }
         $this->assertContains('test/eslintRules.test.ts', array_column(BuildGuide::manifest('v2')['files'], 'path'));
@@ -1878,8 +1932,9 @@ import nextTs from 'eslint-config-next/typescript';
 
 // Byggguide v2: säkerhetsregler (spec delprojekt 3, del 3, punkt 3). Stäng aldrig av dem i spelet.
 // NEXT_PUBLIC_* bakas in i den publika koden vid bygget; bara spelets slug och API-adressen får läsas.
+// Både JSX-attributet och nyckeln i ett props-objekt (createElement, spridda props).
 const DANGEROUS_HTML = {
-  selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+  selector: "JSXAttribute[name.name='dangerouslySetInnerHTML'], Property[key.name='dangerouslySetInnerHTML']",
   message: 'dangerouslySetInnerHTML är förbjudet (byggguide v2). Rendera texten som text.',
 };
 const OTHER_PUBLIC_ENV = {
@@ -1915,7 +1970,7 @@ export default defineConfig([
 ]);
 ```
 
-Testets fil (`src/components/ConfigBanner.tsx`) ligger under `src/`, så alla sju fallen gäller där.
+Testets fil (`src/components/ConfigBanner.tsx`) ligger under `src/`, så alla åtta fallen gäller där.
 
 - [ ] **Steg 3: Hasha, PHP-testerna och guiden.**
 
@@ -1924,85 +1979,57 @@ cd $WT && php artisan computercat:byggguide:hash v2 && php artisan test --filter
 cd $WT && php artisan computercat:byggguide:verify v2
 ```
 
-Förväntat: `55 filer i v2.`, PASS, och i verify `eslintRules.test.ts` med 8 gröna tester, `npm run lint` utan fel på grundkoden och `Byggguide v2: OK (55 filer, check, audit, static_export).` Faller ett fall med `parse:` (konfigurationen kan inte tolka TSX i den sökvägen) eller ger en regel ett annat id än testet väntar: stanna och fråga med utskriften; ändra inte testet för att få det grönt.
+Förväntat: `55 filer i v2.`, PASS, och i verify `eslintRules.test.ts` med 9 gröna tester, `npm run lint` utan fel på grundkoden och `Byggguide v2: OK (55 filer, check, audit, static_export).` Faller ett fall med `parse:` (konfigurationen kan inte tolka TSX i den sökvägen) eller ger en regel ett annat id än testet väntar: stanna och fråga med utskriften; ändra inte testet för att få det grönt.
 
-- [ ] **Steg 4: braces, versionen avgörs av npm audit.** Bakgrund (R8): vid planeringen fanns ingen rättad version. Kör i en utskriven kopia av guiden:
+- [ ] **Steg 4: braces utan override (R8, Eriks beslut 2026-10-14).** Ingen ändring i `overrides` eller låsfilen. Kontrollera att utfallet är det beslutet bygger på, i en utskriven kopia av guiden:
 
 ```bash
 cd $WT && KEEP=$(php artisan computercat:byggguide:verify v2 --keep | sed -n 's/^Katalogen behålls: //p') && echo "$KEEP"
-cd "$KEEP" && RANGE=$(npm audit --json | jq -r '[.vulnerabilities.braces.via[]? | objects | .range] | first // empty') && echo "advisory-intervall: ${RANGE:-(braces har inget fynd)}"
-cd "$KEEP" && [ -n "$RANGE" ] && node -e '
-const semver = require("semver");
-const { execSync } = require("node:child_process");
-const range = process.argv[1];
-const fixed = JSON.parse(execSync("npm view braces versions --json", { encoding: "utf8" }))
-  .filter((v) => !semver.prerelease(v) && !semver.satisfies(v, range))
-  .sort(semver.compare);
-const sameMajor = fixed.filter((v) => semver.major(v) === 3);
-console.log(sameMajor.length ? `RÄTTAD=${sameMajor[sameMajor.length - 1]}` : fixed.length ? `BARA_NY_MAJOR=${fixed[fixed.length - 1]}` : "INGEN");
-' "$RANGE"
+cd "$KEEP" && npm audit --omit=dev --audit-level=high; echo "prod-exit=$?"
+cd "$KEEP" && npm audit --json | jq -c '{high: .metadata.vulnerabilities.high, critical: .metadata.vulnerabilities.critical, paket: (.vulnerabilities | keys)}'
+rm -rf "$KEEP"     # katalogen som verify skapade, och bara den
+jq -c .overrides $WT/resources/byggguide/v2/files/package.json $WT/resources/byggguide/v2/manifest.json
 ```
 
-Utfallen:
-- `braces har inget fynd`: ingen override behövs. Gå till steg 6.
-- `INGEN` eller `BARA_NY_MAJOR=…`: **stanna och fråga Erik** (AskUserQuestion) med alternativen: (a) v2 utan braces-override; sårbarheten finns bara i dev-beroenden via eslint och accepteras som i v1, `npm audit --omit=dev` och spärren påverkas inte; (b) vänta med låsningen av v2 tills en rättad 3.x finns; (c) override till den nya majorversionen (`BARA_NY_MAJOR`) efter att `verify v2` visat att eslint fungerar med den. Gör det Erik väljer; vid (a) gå till steg 6.
-- `RÄTTAD=<version>`: gå till steg 5 med `BRACES=<version>`.
-
-- [ ] **Steg 5: Override och låsfil (bara med en rättad version).**
-
-```bash
-cd $WT/resources/byggguide/v2/files && jq --arg v "$BRACES" '.overrides.braces = $v' package.json > package.tmp && mv package.tmp package.json
-WORK=$(mktemp -d) && cp package.json package-lock.json "$WORK"/ && (cd "$WORK" && npm install --package-lock-only --ignore-scripts && npm audit --json | jq '.metadata.vulnerabilities') && cp "$WORK/package-lock.json" package-lock.json && rm -rf "$WORK"
-cd $WT/resources/byggguide/v2 && jq --slurpfile pkg files/package.json '.overrides = $pkg[0].overrides' manifest.json > manifest.tmp && mv manifest.tmp manifest.json && jq -c .overrides manifest.json
-```
-
-Förväntat: `"high": 0` och `"critical": 0` i hela granskningen (även dev), och `{"vite":"7.3.7","braces":"<version>"}`. I `resources/byggguide/v2/templates/README.md`, ersätt rubriken `## Beroenden: `overrides` för vite` med `## Beroenden: `overrides`` och lägg till efter vite-stycket:
-
-```markdown
-
-`overrides` har också `"braces": "<version>"`: eslint drar in en braces-version med en känd sårbarhet (GHSA-vfj7-8cjw-p6xm). Override tvingar fram den rättade versionen; den tas bort när eslint-config-next själv kräver den.
-```
-
-(med `<version>` = `$BRACES`). Lägg till i `tests/Feature/BuildGuideV2Test.php`:
+Förväntat: `prod-exit=0`; i hela granskningen bara braces-kedjan (`@next/eslint-plugin-next`, `braces`, `eslint-config-next`, `fast-glob`, `micromatch`) och ingen critical; `overrides` `{"vite":"7.3.7"}` i båda filerna. Har det tillkommit något annat (ett nytt fynd i produktionsberoenden, eller något utanför braces-kedjan): stanna och fråga. Raden om braces i v2:s `CLAUDE.md` och README skrevs i Task 3. Lägg till i `tests/Feature/BuildGuideV2Test.php`:
 
 ```php
-    public function test_braces_is_overridden_like_the_manifest_says(): void
+    // R8: braces accepteras som dev-only; ingen override, och texterna säger varför.
+    public function test_braces_is_accepted_without_override(): void
     {
-        $this->assertArrayHasKey('braces', $this->package()['overrides']);
-        $this->assertSame($this->package()['overrides'], BuildGuide::manifest('v2')['overrides']);
+        $this->assertSame(['vite' => '7.3.7'], $this->package()['overrides']);
+        $this->assertSame(['vite' => '7.3.7'], BuildGuide::manifest('v2')['overrides']);
     }
 ```
 
-- [ ] **Steg 6: Städa, hasha, testa, verify.**
+- [ ] **Steg 5: Hasha, testa, verify.**
 
 ```bash
-rm -rf "$KEEP"     # katalogen som verify skapade i steg 4, och bara den
 cd $WT && php artisan computercat:byggguide:hash v2 && php artisan test --filter='BuildGuideV2Test|BuildGuideTest'
 cd $WT && php artisan computercat:byggguide:verify v2
 ```
 
 Förväntat: PASS och `Byggguide v2: OK (55 filer, check, audit, static_export).`
 
-- [ ] **Steg 7: Commit.**
+- [ ] **Steg 6: Commit.**
 
 ```bash
-cd $WT && git add resources/byggguide/v2 tests/Feature/BuildGuideV2Test.php && git commit -m "Byggguide v2: eslint-regler mot dangerouslySetInnerHTML, eval och publika variabler; braces enligt npm audit"
+cd $WT && git add resources/byggguide/v2 tests/Feature/BuildGuideV2Test.php && git commit -m "Byggguide v2: eslint-regler mot dangerouslySetInnerHTML, eval och publika variabler; braces accepterad som dev-only"
 ```
 
-(Utan override: `-m "Byggguide v2: eslint-regler mot dangerouslySetInnerHTML, eval och publika variabler"`.)
-
 ---
+
 ### Task 7: Spike B — de riktiga skripten i Coolify och i webbläsaren (före låsningen)
 
 **Files:**
 - Modify: `$WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` (avsnittet från Task 1 fylls på)
-- Create (scratch, committas inte): `$SCRATCH/spike-b/ids.env`, `$SCRATCH/spike-b/gist/`, `$SCRATCH/s5/`
+- Create (scratch, committas inte): `$SCRATCH/spike-b/ids.env`, `$SCRATCH/s5/`; i engångsrepot: `.ccspike/cc-security.mjs`, `.ccspike/cc-audit.mjs`
 
 **Interfaces:**
 - Consumes: den olåsta, hashade v2 (Task 3–6), `verify v2` grön; spikverktygen; S9 (timeouten) från Task 1.
-- Produces: specens S1, S3, S4, S5, S6, S7 och planens S11 (ingen CSP-header från Coolify, Traefik eller nginx som skär i meta-policyn) och S12 (`npm run dev` fungerar med CSP-taggen). Är något rött rättas v2 (hash, verify, commit i ägartasken) och berörda punkter körs om innan Task 8.
+- Produces: specens S1, S3, S4, S5, S6, S7 och planens S11 (ingen CSP-header från Coolify, Traefik eller nginx som skär i meta-policyn) och S12 (`npm run dev` fungerar; taggen renderas bara i produktionsbygget, R6). Är något rött rättas v2 (hash, verify, commit i ägartasken) och berörda punkter körs om innan Task 8.
 
-Byggkommandot är specens med två skillnader (R2): skripten hämtas från en hemlig gist, och sha256 är de som v2-manifestet anger just nu. **Faller en punkt: stanna och fråga Erik.**
+Byggkommandot är specens med två skillnader (R2): skripten kopieras från `.ccspike/` i engångsrepot i stället för att hämtas från Computercat, och v1:s `check-export.mjs` hämtas från `api.computercat.co` för att visa nätet. sha256 är de som v2-manifestet anger just nu. **Faller en punkt: stanna och fråga Erik.**
 
 - [ ] **Steg 1: Lokala punkter först (S5, S7), utan något mot prod.**
 
@@ -2019,7 +2046,7 @@ S5 (noll hemlighetsträffar på riktiga exporter). v1-exemplet (som saknar CSP, 
 
 ```bash
 cd $WT && KEEP_V1=$(php artisan computercat:byggguide:verify v1 --keep | sed -n 's/^Katalogen behålls: //p') && echo "KEEP_V1=$KEEP_V1" >> $SCRATCH/spike-b/ids.env
-cd "$KEEP_V1" && node $WT/resources/byggguide/v2/files/scripts/check-security.mjs 2>&1 | grep -v 'CSP saknas' | grep -cE 'hemlighet|source map|symbolisk'
+cd "$KEEP_V1" && node $WT/resources/byggguide/v2/files/scripts/check-security.mjs 2>&1 | grep -v 'CSP saknas' | grep -cE 'hemlighet|source map|symbolisk|dold fil'
 ```
 
 Förväntat: `0`. Kattsvep (bara läsning av repot; bygget körs lokalt):
@@ -2027,7 +2054,7 @@ Förväntat: `0`. Kattsvep (bara läsning av repot; bygget körs lokalt):
 ```bash
 mkdir -p $SCRATCH/s5 && gh repo clone HumblebragAB/kattsvep $SCRATCH/s5/kattsvep -- --depth 1
 cd $SCRATCH/s5/kattsvep && npm ci --ignore-scripts && NEXT_TELEMETRY_DISABLED=1 NEXT_PUBLIC_COMPUTERCAT_GAME=kattsvep npm run build
-node $WT/resources/byggguide/v2/files/scripts/check-security.mjs 2>&1 | grep -v 'CSP saknas' | grep -cE 'hemlighet|source map|symbolisk'
+node $WT/resources/byggguide/v2/files/scripts/check-security.mjs 2>&1 | grep -v 'CSP saknas' | grep -cE 'hemlighet|source map|symbolisk|dold fil'
 ```
 
 Förväntat: `0`. En träff: skriv bara raden (fil och mönsternamn; värdet skrivs aldrig ut av skriptet), stanna och fråga om det är en falsk träff (mönstret behöver ändras före låsning) eller en riktig.
@@ -2052,7 +2079,7 @@ python3 -m http.server 3000 --bind 127.0.0.1 --directory out     # run_in_backgr
 cd $WT && php artisan tinker --execute="echo App\Models\LeaderboardEntry::where('leaderboard_type_id', $TYPE_ID)->count().PHP_EOL;"
 ```
 
-Förväntat: inga CSP-meddelanden i konsolen och minst `1` rad (S3). Stoppa `http.server`. S12: i samma katalog `npm run dev` (run_in_background, samma två variabler), öppna `http://localhost:3000/`, ladda om en gång och läs konsolen. Förväntat: sidan fungerar och inga CSP-meddelanden. Blockerar policyn dev-läget (till exempel `eval` i dev-bundlen eller websocket för omladdning): stanna och fråga (alternativet är att sätta taggen bara när `process.env.NODE_ENV === 'production'`, vilket är ett beslut). Stoppa dev-servern och `php artisan serve`.
+Förväntat: inga CSP-meddelanden i konsolen och minst `1` rad (S3). Stoppa `http.server`. S12: i samma katalog `npm run dev` (run_in_background, samma två variabler), öppna `http://localhost:3000/`, ladda om en gång och läs konsolen. Förväntat: sidan fungerar, inga CSP-meddelanden i konsolen och ingen CSP-tagg i sidans `<head>` (taggen renderas bara när `NODE_ENV` är `production`, R6). Syns taggen eller CSP-meddelanden i dev: stanna och fråga. Stoppa dev-servern och `php artisan serve`.
 
 Städa det lokala spelet på sparade id:n (bara läsning först):
 
@@ -2062,33 +2089,30 @@ cd $WT && php artisan tinker --execute="\$g = App\Models\Game::find($GAME_ID); e
 
 (Topplistan och raderna försvinner med spelet genom `cascadeOnDelete`.)
 
-- [ ] **Steg 3: Fråga Erik (AskUserQuestion) innan något skapas i Coolify.** Texten: "Spike B för byggguide v2 skapar på riktigt: en hemlig gist med de riktiga check-security.mjs och cc-audit.mjs ur v2 (raderas efteråt), det privata repot HumblebragAB/ccspike-v2b med v2-grundkoden (arkiveras efteråt) och Coolify-appen ccspike-v2b i Demo-projektet med specens byggkommando (raderas på sitt uuid). Tre byggen: ett lyckat, ett med en falsk JWT i public/ som ska falla, och ett där repot tagit bort check-security.mjs och ändrat package.json men ska falla ändå. Jag mäter byggtid och RAM på Coolify-servern (free -m) och läser byggloggens check-security-rader med SELECT. Om en commit-hook stoppar den falska nyckeln frågar jag dig igen. OK?" Utan OK: stanna.
+- [ ] **Steg 3: Fråga Erik (AskUserQuestion) innan något skapas i Coolify.** Texten: "Spike B för byggguide v2 skapar på riktigt: det privata repot HumblebragAB/ccspike-v2b med v2-grundkoden och kopior av de riktiga check-security.mjs och cc-audit.mjs under .ccspike/ (arkiveras efteråt) och Coolify-appen ccspike-v2b i Demo-projektet med specens byggkommando (raderas på sitt uuid). Tre byggen: ett lyckat, ett med en falsk JWT i public/ som ska falla, och ett där repot tagit bort scripts/check-security.mjs och ändrat check i package.json men ska falla ändå. Jag mäter byggtid och RAM på Coolify-servern (free -m) och läser byggloggens check-security-rader med SELECT. Om en commit-hook stoppar den falska nyckeln frågar jag dig igen. OK?" Utan OK: stanna.
 
-- [ ] **Steg 4: Gist och byggkommando med v2:s sha256.**
-
-```bash
-mkdir -p $SCRATCH/spike-b/gist && cd $SCRATCH/spike-b/gist
-cp $WT/resources/byggguide/v2/files/scripts/check-security.mjs cc-security.mjs && cp $WT/resources/byggguide/v2/files/scripts/cc-audit.mjs cc-audit.mjs
-S=$(jq -r '.files[] | select(.path == "scripts/check-security.mjs") | .sha256' $WT/resources/byggguide/v2/manifest.json)
-A=$(jq -r '.files[] | select(.path == "scripts/cc-audit.mjs") | .sha256' $WT/resources/byggguide/v2/manifest.json)
-[ "$S" = "$(shasum -a 256 cc-security.mjs | cut -c1-64)" ] && [ "$A" = "$(shasum -a 256 cc-audit.mjs | cut -c1-64)" ] && echo "sha256 stämmer med manifestet"
-GIST_URL=$(gh gist create --desc "ccspike-v2b: engångsskript, raderas efter spiken" cc-security.mjs cc-audit.mjs); GIST_ID=${GIST_URL##*/}; echo "GIST_ID=$GIST_ID" >> $SCRATCH/spike-b/ids.env
-RAW_S=$(gh api gists/$GIST_ID --jq '.files["cc-security.mjs"].raw_url'); RAW_A=$(gh api gists/$GIST_ID --jq '.files["cc-audit.mjs"].raw_url')
-CMD="npm run build && curl -fsS $RAW_S -o /tmp/cc-security.mjs && curl -fsS $RAW_A -o /tmp/cc-audit.mjs && echo \"$S  /tmp/cc-security.mjs\" | sha256sum -c - && echo \"$A  /tmp/cc-audit.mjs\" | sha256sum -c - && node /tmp/cc-security.mjs && node /tmp/cc-audit.mjs"
-CMD_B64=$(printf '%s' "$CMD" | base64 | tr -d '\n')
-```
-
-- [ ] **Steg 5: Repot med v2-grundkoden.** Från den rena delen av `$KEEP_V2` (guidens `.gitignore` håller `node_modules`, `out` och `.next` utanför; `.env*` likaså):
+- [ ] **Steg 4: Repot med v2-grundkoden och spikskripten.** Från den rena delen av `$KEEP_V2` (guidens `.gitignore` håller `node_modules`, `out`, `.next` och `.env*` utanför):
 
 ```bash
 cd "$KEEP_V2" && unset NEXT_PUBLIC_COMPUTERCAT_GAME NEXT_PUBLIC_COMPUTERCAT_URL
-git init -q -b main && git add -A && git -c user.name=Spike -c user.email=spike@invalid commit -qm "Spike: grundkod från byggguide v2 (olåst)"
+mkdir -p .ccspike && cp scripts/check-security.mjs .ccspike/cc-security.mjs && cp scripts/cc-audit.mjs .ccspike/cc-audit.mjs
+S=$(jq -r '.files[] | select(.path == "scripts/check-security.mjs") | .sha256' $WT/resources/byggguide/v2/manifest.json)
+A=$(jq -r '.files[] | select(.path == "scripts/cc-audit.mjs") | .sha256' $WT/resources/byggguide/v2/manifest.json)
+[ "$S" = "$(shasum -a 256 .ccspike/cc-security.mjs | cut -c1-64)" ] && [ "$A" = "$(shasum -a 256 .ccspike/cc-audit.mjs | cut -c1-64)" ] && echo "sha256 stämmer med manifestet"
+git init -q -b main && git add -A && git -c user.name=Spike -c user.email=spike@invalid commit -qm "Spike: grundkod från byggguide v2 (olåst) och spikskript"
 git ls-files | grep -cE '^(node_modules|out|\.next)/|^\.env'    # förväntat: 1 (.env.example)
 gh repo create HumblebragAB/ccspike-v2b --private --description "Engångsrepo för spike byggguide v2 (arkiveras)" --source=. --remote=origin --push
 gh api repos/HumblebragAB/ccspike-v2b --jq '"REPO_ID=\(.id) private=\(.private)"'
 ```
 
 Skriv `REPO_ID` i `ids.env`. **`private` false: stanna omedelbart.**
+
+- [ ] **Steg 5: Byggkommandot.** Specens rad med `.ccspike/` i stället för REST (R2) och v1-hämtningen från `api.computercat.co`:
+
+```bash
+CMD="npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v1/files/scripts/check-export.mjs -o /tmp/cc-v1-check-export.mjs && echo \"cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8  /tmp/cc-v1-check-export.mjs\" | sha256sum -c - && cp .ccspike/cc-security.mjs /tmp/cc-security.mjs && cp .ccspike/cc-audit.mjs /tmp/cc-audit.mjs && echo \"$S  /tmp/cc-security.mjs\" | sha256sum -c - && echo \"$A  /tmp/cc-audit.mjs\" | sha256sum -c - && node /tmp/cc-security.mjs && node /tmp/cc-audit.mjs"
+CMD_B64=$(printf '%s' "$CMD" | base64 | tr -d '\n')
+```
 
 - [ ] **Steg 6: Appen och bygge 1 (S1).** Skapa appen med `create-app.php` (`NAME=ccspike-v2b`, `CMD_B64`), spara `APP_UUID`, läs tillbaka med `read-app.php` (`build_command_same=true`). Starta RAM-mätningen i bakgrunden och bygget:
 
@@ -2100,14 +2124,14 @@ cd "$KEEP_V2" && git commit -q --allow-empty -m "Spike: bygge 1" && git push -q 
 Poll `deployments.php` tills `finished` eller `failed` (högst 20 minuter); spara `DEP1`. Byggtiden är `finished_at` minus `created_at` för `DEP1`. Kontrollera:
 
 ```bash
-buildlog "$DEP1" '^check-security:|^cc-audit:|/tmp/cc-.*: OK'
+buildlog "$DEP1" 'check-security:|cc-audit:|/tmp/cc-.*: OK'
 curl -s -o /dev/null -w '%{http_code}\n' -u "$DEMO_AUTH" https://ccspike-v2b.apps.humblebrag.se/
 curl -s -u "$DEMO_AUTH" https://ccspike-v2b.apps.humblebrag.se/ | grep -o '<meta[^>]*Content-Security-Policy[^>]*>'
 curl -sI -u "$DEMO_AUTH" https://ccspike-v2b.apps.humblebrag.se/ | grep -i 'content-security-policy' ; echo "header-träffar=$?"
 sort -n $SCRATCH/spike-b/ram.txt | tail -1      # högsta använda minne (MB) och tillgängligt
 ```
 
-Förväntat (S1): `finished`, två `/tmp/cc-…: OK`, `check-security: OK …`, `cc-audit: OK …`, Demo `200`, metataggen finns, byggtiden ligger tydligt under timeouten från S9 och minst 512 MB var tillgängligt. Förväntat (S11): ingen `Content-Security-Policy`-header (`header-träffar=1`); finns en header gäller båda policyerna samtidigt, så stanna och fråga. Notera byggtid och RAM-topp för bilagan.
+Förväntat (S1): `finished`, tre `/tmp/cc-…: OK` (v1-filen och båda skripten), `check-security: OK …`, `cc-audit: OK …`, Demo `200`, metataggen finns, byggtiden ligger tydligt under timeouten från S9 och minst 512 MB var tillgängligt. Förväntat (S11): ingen `Content-Security-Policy`-header (`header-träffar=1`); finns en header gäller båda policyerna samtidigt, så stanna och fråga. Notera byggtid och RAM-topp för bilagan.
 
 - [ ] **Steg 7: Bygge 2, planterad nyckel (S4).** En falsk JWT skapas vid körning och skrivs aldrig ut:
 
@@ -2116,16 +2140,16 @@ cd "$KEEP_V2" && printf 'eyJ%s.eyJ%s.%s\n' "$(openssl rand -hex 16)" "$(openssl 
 git add public/cc-spike-key.txt && git commit -qm "Spike: planterad nyckel ska fälla bygget" && git push -q origin main
 ```
 
-Stoppar en hook eller GitHubs push protection committen eller pushen: stanna och fråga (R11). Poll tills klart; spara `DEP2`. Förväntat: `failed`; `buildlog "$DEP2" '^check-security:'` visar `check-security: out/cc-spike-key.txt: hemlighet (jwt)`; `curl -s -o /dev/null -w '%{http_code}\n' -u "$DEMO_AUTH" https://ccspike-v2b.apps.humblebrag.se/cc-spike-key.txt` ger `404` och startsidan fortfarande `200` (förra bygget serveras).
+Stoppar en hook eller GitHubs push protection committen eller pushen: stanna och fråga (R11). Poll tills klart; spara `DEP2`. Förväntat: `failed`; `buildlog "$DEP2" 'check-security:'` visar `check-security: out/cc-spike-key.txt: hemlighet (jwt)`; `curl -s -o /dev/null -w '%{http_code}\n' -u "$DEMO_AUTH" https://ccspike-v2b.apps.humblebrag.se/cc-spike-key.txt` ger `404` och startsidan fortfarande `200` (förra bygget serveras).
 
-- [ ] **Steg 8: Bygge 3, repot försöker stänga av spärren (S6).** Nyckeln ligger kvar; repot tar bort sitt eget skript och gör `check` till ett eko:
+- [ ] **Steg 8: Bygge 3, repot försöker stänga av spärren (S6).** Nyckeln ligger kvar; repot tar bort `scripts/check-security.mjs` och gör `check` till ett eko (kopian i `.ccspike/` står för det som Computercat levererar i prod):
 
 ```bash
 cd "$KEEP_V2" && git rm -q scripts/check-security.mjs && jq '.scripts.check = "echo hoppar över"' package.json > package.tmp && mv package.tmp package.json
 git add -A && git commit -qm "Spike: repot tar bort säkerhetsskriptet" && git push -q origin main
 ```
 
-Poll; spara `DEP3`. Förväntat: `failed` och samma `check-security: out/cc-spike-key.txt: hemlighet (jwt)` i loggen (skriptet kom från Computercats sida, här gisten). `finished`: stanna och fråga.
+Poll; spara `DEP3`. Förväntat: `failed` och samma `check-security: out/cc-spike-key.txt: hemlighet (jwt)` i loggen (kommandot beror inte på repots `scripts/` eller `check`; i prod hämtas skriptet från Computercat, Task 12). `finished`: stanna och fråga.
 
 - [ ] **Steg 9: Städning på sparade id:n.**
 
@@ -2133,7 +2157,6 @@ Poll; spara `DEP3`. Förväntat: `failed` och samma `check-security: out/cc-spik
 NAME=ccspike-v2b; UUID=$APP_UUID
 sed -e "s/__NAME__/$NAME/g" -e "s/__UUID__/$UUID/g" $SCRATCH/tinker/delete-app.php > $SCRATCH/tinker/run.php && prodtinker $SCRATCH/tinker/run.php
 [ "$(gh api repos/HumblebragAB/ccspike-v2b --jq .id)" = "$REPO_ID" ] && gh api -X PATCH repos/HumblebragAB/ccspike-v2b -F archived=true --jq .archived
-gh api -X DELETE gists/$GIST_ID && echo "gist raderad"
 rm -rf "$KEEP_V2" "$KEEP_V1" "$SCRATCH/s5/kattsvep" "$SCRATCH/spike-b/ram.txt"   # bara katalogerna och filen som spiken skapade
 ```
 
@@ -2142,16 +2165,16 @@ Kontrollera att RAM-loopen har slutat. `STOPP:` eller fel id: stanna och fråga.
 - [ ] **Steg 10: Bilagan.** Lägg till under avsnittet från Task 1:
 
 ```markdown
-Spike B (<datum>): engångsappen `ccspike-v2b` med den olåsta v2-katalogen och de riktiga skripten från en hemlig gist (prod serverar inte en olåst version), raderad på sitt uuid.
+Spike B (<datum>): engångsappen `ccspike-v2b` med den olåsta v2-katalogen och kopior av de riktiga skripten under `.ccspike/` (prod serverar inte en olåst version), raderad på sitt uuid.
 
 - S1: specens byggkommando fungerar i nixpacks static-läge; `out/` publiceras. Byggtid <min:s>, RAM-topp <MB använt>/<MB totalt>, minst <MB> tillgängligt; timeouten (S9) är <värde>.
 - S3: exemplet laddar och skickar en tid till topplistan i Chrome utan CSP-fel (lokalt API på 127.0.0.1:8123, `connect-src` från `NEXT_PUBLIC_COMPUTERCAT_URL`); Demo serverar metataggen.
 - S4: en falsk JWT i `public/` ger `failed` med `check-security: out/cc-spike-key.txt: hemlighet (jwt)`; Demo serverar förra bygget.
 - S5: `check-security.mjs` ger noll hemlighetsträffar på `out/` från v1-exemplet och Kattsvep.
-- S6: ett repo utan `scripts/check-security.mjs` och med `check` ändrat fäller ändå.
+- S6: ett repo utan `scripts/check-security.mjs` och med `check` ändrat fäller ändå (kommandot använder inte repots `scripts/` eller `check`).
 - S7: `npm run check` med `NODE_ENV=production` i miljön är grön.
 - S11: <ingen Content-Security-Policy-header från Coolify/Traefik/nginx | vad som syntes>.
-- S12: `npm run dev` fungerar med CSP-taggen (<vad som kontrollerades>).
+- S12: `npm run dev` fungerar utan CSP-tagg och utan CSP-meddelanden (taggen bara i produktionsbygget) (<vad som kontrollerades>).
 ```
 
 Fyll i varje `<…>` och kontrollera: `sed -n '/^## Spikresultat delprojekt 3 etapp B/,$p' $WT/docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md | grep -c '<'` ger `0`.
@@ -2177,7 +2200,7 @@ cd $WT && git add docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md && gi
 
 - [ ] **Steg 1: Förutsättningar.** `cd $WT && git log --oneline -1 -- docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` visar commiten från Task 7, och `php artisan computercat:byggguide:verify v2` är grön på nuvarande katalog. Annars: stanna.
 
-- [ ] **Steg 2: Testet för v2:s förväntningar (fallerar tills låset finns).** Läs v2:s `overrides`: `jq -c .overrides $WT/resources/byggguide/v2/files/package.json`. I `tests/Feature/BuildGuideTest.php`, ersätt `EXPECTED`. Utan braces-override (Task 6 steg 4 gav ingen rättad version och Erik valde alternativ a, det väntade enligt R8):
+- [ ] **Steg 2: Testet för v2:s förväntningar (fallerar tills låset finns).** Läs v2:s `overrides`: `jq -c .overrides $WT/resources/byggguide/v2/files/package.json`. Förväntat: `{"vite":"7.3.7"}` (ingen braces-override, R8). I `tests/Feature/BuildGuideTest.php`, ersätt `EXPECTED`:
 
 ```php
     private const EXPECTED = [
@@ -2185,8 +2208,6 @@ cd $WT && git add docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md && gi
         'v2' => ['overrides' => ['vite' => '7.3.7']],
     ];
 ```
-
-Med braces-override (Task 6 steg 5) får v2-raden också nyckeln `'braces'` med exakt den sträng som `jq` skrev ut, efter `'vite'` (samma nyckelordning som i `package.json`, eftersom `assertSame` jämför ordningen).
 
 Run: `cd $WT && php artisan test --filter=BuildGuideTest::test_every_published_version_has_expectations`
 Expected: FAIL (`EXPECTED` har v2, `FROZEN` inte).
@@ -2246,7 +2267,7 @@ git show --stat HEAD | grep -c 'app/Services/BuildGuide.php'    # förväntat: 1
   - `BuildGuide::runsSecurityChecksInBuild(string $version): bool` (false för okänd version; `RuntimeException` om manifestet bara har ett av skripten). Task 10 använder den.
   - `BuildGuide::coolifyBuildCommand(string $version): ?string` (`RuntimeException` för en olåst version eller en sha256 som inte är 64 hextecken; null när versionen saknar skripten).
   - `CoolifyClient::createApplication(string $slug, string $version): string` (ny andra parameter; `build_command` direkt efter `install_command` när kommandot inte är null).
-  - `CoolifyAppStep` läser `build_guide` ur repo-stegets `detail` och fäller med `StepFailed` om värdet saknas (R9).
+  - `CoolifyAppStep` läser `build_guide` ur repo-stegets `detail` och fäller med `StepFailed` om värdet saknas (R9). Den räknar fram `BuildGuide::coolifyBuildCommand($version)` innan markören `create_requested_at` sparas; ett `RuntimeException` därifrån blir `StepFailed` utan att något skickas till Coolify (R13).
 
 - [ ] **Steg 1: Fallerande tester i `BuildGuideTest`.** Ändra hjälparen `unpublishedCopy` så att den kan kopiera från en annan version:
 
@@ -2480,6 +2501,22 @@ Byt `$run = $this->provisioningRun(['slug' => 'kattsvep']);` mot `$run = $this->
         Http::assertSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app') && ! array_key_exists('build_command', $r->data()));
     }
 
+    // R13: en version som inte går att bygga kommando för fäller före markören och före Coolify.
+    public function test_unusable_build_guide_version_fails_before_marker_and_create(): void
+    {
+        $run = $this->runWithGuide('v9');
+        Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([]))]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+            $this->fail('En okänd guideversion släpptes igenom.');
+        } catch (StepFailed $e) {
+            $this->assertStringContainsString('v9', $e->getMessage());
+        }
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app'));
+        $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
+    }
+
     public function test_missing_build_guide_version_fails_before_any_create(): void
     {
         $run = $this->runWithGuide(null);
@@ -2499,7 +2536,7 @@ Byt `$run = $this->provisioningRun(['slug' => 'kattsvep']);` mot `$run = $this->
 Run: `cd $WT && php artisan test --filter='CoolifyClientTest|CoolifyStepsTest'`
 Expected: FAIL (`createApplication()` tar ett argument; v2 skickar inget `build_command`; steget kräver inget värde).
 
-- [ ] **Steg 4: `CoolifyClient::createApplication`.** Lägg till `use App\Services\BuildGuide;` och ersätt metodens början till och med anropet:
+- [ ] **Steg 4: `CoolifyClient::createApplication`.** Lägg till `use App\Services\BuildGuide;`. Ersätt raderna från och med `    public function createApplication(string $slug): string` till och med `        ], [409]);` (slutet på `$this->coolify('POST', $path, [ … ], [409])`-anropet, före `if ($response->status() === 409) {`) med:
 
 ```php
     // $version är byggguideversionen som repo-steget frös. Versioner med säkerhetsskripten
@@ -2545,17 +2582,24 @@ Expected: FAIL (`createApplication()` tar ett argument; v2 skickar inget `build_
         $response = $this->coolify('POST', $path, $body, [409]);
 ```
 
-(resten av metoden oförändrad).
+(resten av metoden, från `if ($response->status() === 409) {`, oförändrad).
 
 - [ ] **Steg 5: `CoolifyAppStep`.** I `run()`, direkt före raden `// Markören sparas före anropet, så att en omkörning efter ett avbrott vet`, lägg till:
 
 ```php
-        // Samma guideversion som repo-steget frös (spec delprojekt 3, "Versioner").
+        // Samma guideversion som repo-steget frös (spec delprojekt 3, "Versioner"). Kommandot
+        // räknas fram före markören, så att en olåst version eller en trasig guide stoppar
+        // steget utan att Coolify anropas och utan en markör som senare kunde adoptera en app (R13).
         $version = self::buildGuideVersion($run);
+        try {
+            BuildGuide::coolifyBuildCommand($version);
+        } catch (\RuntimeException $e) {
+            throw new StepFailed("Build guide {$version} cannot produce the Coolify build command; nothing was created in Coolify.", 0, $e);
+        }
 
 ```
 
-ersätt `$this->coolify->createApplication($run->slug)` med `$this->coolify->createApplication($run->slug, $version)`, och lägg till metoden:
+Lägg till `use App\Services\BuildGuide;` bland importerna och ersätt `$this->coolify->createApplication($run->slug)` med `$this->coolify->createApplication($run->slug, $version)`, och lägg till metoden:
 
 ```php
     // Alla runs sedan delprojekt 2 har värdet; saknas det är något fel, och ingen version gissas.
@@ -2591,7 +2635,7 @@ cd $WT && git add app/Services/BuildGuide.php app/Provisioning/Clients/CoolifyCl
 
 **Interfaces:**
 - Consumes: `BuildGuide::runsSecurityChecksInBuild(string $version): bool` (Task 9); repo-stegets `detail['build_guide']`.
-- Produces: `GetProvisioningStatusTool::DEPLOY_FAILED_NEXT` (specens text); `demo.next` sätts bara när `state` är `deploy_failed` och runnens version kör spärren.
+- Produces: `GetProvisioningStatusTool::DEPLOY_FAILED_NEXT` (specens text, Coolify-status `failed`) och `DEPLOY_CANCELLED_NEXT` (status `cancelled-by-user`); `demo.next` sätts bara när `state` är `deploy_failed` och runnens version kör spärren. Kan guideversionen inte läsas (trasig guide) visas `demo.next_error` med en referens och felet loggas; svaret är ändå ok.
 
 - [ ] **Steg 1: Fallerande tester.** I `tests/Feature/Mcp/ProvisioningStatusToolTest.php`, ersätt `demoFor`:
 
@@ -2624,6 +2668,41 @@ och lägg till:
 
         $this->assertSame('deploy_failed', $demo['state']);
         $this->assertSame('Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen.', $demo['next']);
+    }
+
+    public function test_cancelled_v2_build_gets_its_own_text(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'cancelled-by-user']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ], 'v2');
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertSame('Bygget avbröts i Coolify innan det blev klart. Pusha igen för att starta ett nytt bygge; Demo visar förra lyckade bygget tills dess.', $demo['next']);
+    }
+
+    // Ett fel i byggguiden får inte fälla statusen, men det döljs inte heller.
+    public function test_unreadable_build_guide_is_shown_not_fatal(): void
+    {
+        $root = storage_path('framework/testing/byggguide-'.Str::lower(Str::random(10)));
+        File::copyDirectory(resource_path('byggguide'), $root);
+        try {
+            File::ensureDirectoryExists("{$root}/v99");
+            file_put_contents("{$root}/v99/manifest.json", '{');
+            config(['byggguide.path' => $root]);
+
+            $demo = $this->demoFor([
+                'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+                'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+            ], 'v99');
+
+            $this->assertSame('deploy_failed', $demo['state']);
+            $this->assertArrayNotHasKey('next', $demo);
+            $this->assertStringContainsString('Could not read the build guide', $demo['next_error']);
+        } finally {
+            // Bara katalogen som testet skapade.
+            File::deleteDirectory($root);
+        }
     }
 
     public function test_failed_v1_build_keeps_todays_answer(): void
@@ -2662,21 +2741,35 @@ och lägg till:
     }
 ```
 
+Lägg till `use Illuminate\Support\Facades\File;` och `use Illuminate\Support\Str;` bland importerna.
+
 Run: `cd $WT && php artisan test --filter=ProvisioningStatusToolTest`
-Expected: FAIL i `test_failed_v2_build_tells_the_game_claude_to_run_the_checks_locally` (`Undefined array key "next"`).
+Expected: FAIL i `test_failed_v2_build_tells_the_game_claude_to_run_the_checks_locally`, `test_cancelled_v2_build_gets_its_own_text` och `test_unreadable_build_guide_is_shown_not_fatal` (`Undefined array key`).
 
 - [ ] **Steg 2: Implementera.** I `GetProvisioningStatusTool`: lägg till `use App\Services\BuildGuide;`, konstanten
 
 ```php
     // Spec delprojekt 3, "Status vid fel", ordagrant (svenska som släppflödets next-texter).
     public const DEPLOY_FAILED_NEXT = 'Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen.';
+
+    // Ett avbrutet bygge är inget fel i koden; det ska inte skicka spelets Claude att leta fel.
+    public const DEPLOY_CANCELLED_NEXT = 'Bygget avbröts i Coolify innan det blev klart. Pusha igen för att starta ett nytt bygge; Demo visar förra lyckade bygget tills dess.';
 ```
 
 i `demo()`, direkt efter blocket som bygger `$result = ['state' => …, 'latest_deployment' => …, 'url_status' => $code];`:
 
 ```php
-        if ($state === 'deploy_failed' && $this->runsSecurityChecks($run)) {
-            $result['next'] = self::DEPLOY_FAILED_NEXT;
+        if ($state === 'deploy_failed') {
+            try {
+                if ($this->runsSecurityChecks($run)) {
+                    $result['next'] = $latest['status'] === 'cancelled-by-user' ? self::DEPLOY_CANCELLED_NEXT : self::DEPLOY_FAILED_NEXT;
+                }
+            } catch (\Throwable $e) {
+                // Synligt men inte fatalt: Demo-läget gäller ändå.
+                $ref = (string) Str::uuid();
+                Log::warning('get_provisioning_status kunde inte läsa byggguiden', ['ref' => $ref, 'run' => $run->uuid, 'exception' => $e]);
+                $result['next_error'] = "Could not read the build guide for this game (ref {$ref}).";
+            }
         }
 ```
 
@@ -2735,7 +2828,7 @@ cd $WT && grep -rn "BuildGuide::manifest(\|BuildGuide::publicManifest(\|BuildGui
 
 Förväntat: (1) v1 orörd och låst som förut; (2) varje anrop till `createApplication` skickar en version (bara `CoolifyAppStep` i app); (3) `LATEST` används bara som standardval för nya runs (`RepoStep`), verify och de publika ytorna; (4) varje publik läsning (`BuildGuideController`, `GetBuildGuideTool`, `GetBuildGuideFileTool`) föregås av `isPublished`, och övriga läsare (`RepoStep`, `FactBank`, `VerifyBuildGuide`, `BuildGuideHash`) läser bara låsta versioner eller är kommandon som avsiktligt läser olåsta. Avvikelse: rätta i ägartasken, eller AskUserQuestion om det inte går direkt.
 
-- [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate på hela diffen (`cd $WT && git diff main...HEAD`) med en angripares ögon. Frågor som besvaras mot koden: Kan spelrepot ändra vad Coolify kör (nej: `build_command` sätts av Computercat när appen skapas; skripten hämtas utanför repot och kontrolleras mot sha256; S6)? Kan någon byta skriptet på vägen (bara genom att ändra en låst version i computercat-api, och då stämmer inte sha256 i redan skapade appars kommando, så bygget faller; https utan `-L`)? Byggs kommandot av något som en användare styr (nej: manifestets sha256, kontrollerade som 64 hextecken, och `APP_URL`)? Skriver skriptet eller statusen ut en hemlighet (nej: bara fil och mönsternamn; `next` är en konstant)? Kan en olåst version serveras eller bakas in (nej: `isPublished` i REST, verktyg och `coolifyBuildCommand`)? Kan `cc-audit.mjs` släppa igenom ett fel (nej: ingen rapport ger två försök och sedan fel; high i rapporten fäller även vid exitkod 0; `CC_AUDIT_RETRY_DELAY_MS` kan bara korta väntan)?
+- [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate på hela diffen (`cd $WT && git diff main...HEAD`) med en angripares ögon. Frågor som besvaras mot koden: Kan spelrepot stänga av spärren (nej, inte genom att ta bort eller ändra skripten eller `check`: `build_command` sätts av Computercat när appen skapas och skripten hämtas utanför repot och kontrolleras mot sha256; S6)? Är gränsen ärligt beskriven överallt (R12: spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod, eftersom `npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön; `CLAUDE.md`, README och specen säger samma sak; S13 besvarat)? Kan någon byta skriptet på vägen (bara genom att ändra en låst version i computercat-api, och då stämmer inte sha256 i redan skapade appars kommando, så bygget faller; https utan `-L`)? Byggs kommandot av något som en användare styr (nej: manifestets sha256, kontrollerade som 64 hextecken, och `APP_URL`)? Skriver skriptet eller statusen ut en hemlighet (nej: bara fil och mönsternamn; `next` är en konstant)? Kan en olåst version serveras eller bakas in (nej: `isPublished` i REST, verktyg och `coolifyBuildCommand`)? Kan `cc-audit.mjs` släppa igenom ett fel (nej: ingen rapport ger två försök och sedan fel; high i rapporten fäller även vid exitkod 0; `CC_AUDIT_RETRY_DELAY_MS` kan bara korta väntan)?
 
 - [ ] **Steg 4: `completion-gate`.** Invokera `completion-gate` mot specen (rad B i "Etapper", "Del 3", "Tester" B) och denna plan. Blockerande findings stoppar. Icke-blockerande buntas till **en** AskUserQuestion före överlämning.
 

@@ -21,7 +21,7 @@ Ersätter delprojekt 3 i tidigare specar ("dokument-samlingar och AI-mallar"), s
 ## Avvikelser från den muntliga designen (kräver Eriks bekräftelse)
 
 1. **Ingen bygglogg i status.** Coolify v4.4.6 lämnar bara ut byggloggar till en token med `read:sensitive` (`DeployController.php`: `makeVisible(['logs'])` när `can_read_sensitive`; `GET /applications/{uuid}/logs` kräver `api.ability:read:sensitive`). Samma behörighet lämnar ut basic auth-lösenord och env-värden, och Computercats token saknar den avsiktligt. I stället säger statusen att bygget föll och att samma kontroller körs lokalt (del 3, "Status vid fel").
-2. **Säkerhetsskriptet ägs av Computercat, inte av spelrepot.** Om spärren bara vore `npm run check` ur spelets `package.json` kunde spelets egen kod ändra eller ta bort den. Coolifys byggkommando hämtar därför skriptet från Computercat, kontrollerar dess sha256 och kör det. Spelrepot kan inte stänga av det.
+2. **Säkerhetsskriptet ägs av Computercat, inte av spelrepot.** Om spärren bara vore `npm run check` ur spelets `package.json` kunde spelets egen kod ändra eller ta bort den. Coolifys byggkommando hämtar därför skriptet från Computercat, kontrollerar dess sha256 och kör det. Att ta bort eller ändra skripten i spelrepot stänger inte av det (gränsen står under "Säkerhet").
 3. **Leveransen delas i tre etapper** (A, B, C nedan), eftersom faktabanken, byggguide v2 och artikelinnehållet har olika risk och olika beroenden.
 
 ## Etapper
@@ -128,10 +128,10 @@ Ingen publik REST för faktabanken.
    - Hemligheter, med exakta mönster och ordgränser: privata nycklar (`-----BEGIN [A-Z ]*PRIVATE KEY-----`), GitHub (`\bgh[pousr]_[A-Za-z0-9]{36}\b`, `\bgithub_pat_[A-Za-z0-9_]{50,}\b`), Slack (`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`, `hooks\.slack\.com/services/T[A-Z0-9]+/`), Stripe (`\b[sr]k_live_[A-Za-z0-9]{20,}\b`), AWS (`\bAKIA[0-9A-Z]{16}\b`), JWT (`\beyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b`). En träff fäller med filnamn och mönstrets namn, aldrig värdet. Spiken S5 visar att mönstren ger noll träffar på riktiga exporter.
    - Inga source maps (`*.map`).
    - CSP i varje `out/**/*.html`: en `<meta http-equiv="Content-Security-Policy">` med exakt policyn nedan, där `connect-src` innehåller ursprunget för `NEXT_PUBLIC_COMPUTERCAT_URL` (standard `https://api.computercat.co`).
-2. **CSP-policy** (sätts i `src/app/layout.tsx` och kontrolleras av skriptet): `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' <API-ursprung>; object-src 'none'; base-uri 'self'; form-action 'self'`. `'unsafe-inline'` för skript krävs av Next.js-exportens inline-skript (`self.__next_f.push`); hashar kan inte räknas fram förrän efter exporten och skulle kräva ett eget efterbearbetningssteg, vilket inte är värt det för en statisk sida utan användarinmatning som renderas som HTML. `frame-ancestors` går inte att sätta via meta och ligger utanför v2. S3 verifierar policyn i en riktig webbläsare.
+2. **CSP-policy** (sätts i `src/app/layout.tsx` och kontrolleras av skriptet): `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' <API-ursprung>; object-src 'none'; base-uri 'self'; form-action 'self'`. `'unsafe-inline'` för skript krävs av Next.js-exportens inline-skript (`self.__next_f.push`); hashar kan inte räknas fram förrän efter exporten och skulle kräva ett eget efterbearbetningssteg, vilket inte är värt det för en statisk sida utan användarinmatning som renderas som HTML. `frame-ancestors` går inte att sätta via meta och ligger utanför v2. Metataggen renderas bara när `process.env.NODE_ENV === 'production'` (Eriks beslut 2026-10-14): `next build` sätter alltid det värdet, så `out/` och kontrollen påverkas inte, medan `npm run dev` slipper policyn. S3 verifierar policyn i en riktig webbläsare.
 3. **eslint-regler** som förbjuder `dangerouslySetInnerHTML`, `eval`, `new Function`, `setTimeout`/`setInterval` med sträng, och `process.env.NEXT_PUBLIC_*` utöver `NEXT_PUBLIC_COMPUTERCAT_GAME` och `NEXT_PUBLIC_COMPUTERCAT_URL` (kontrollen av publika variabler sker i källkoden, eftersom Next ersätter dem med sina värden i `out/`).
 4. **`"test": "NODE_ENV=test vitest run"`**, så att testerna inte körs med React i produktionsläge om byggmiljön sätter `NODE_ENV=production`.
-5. **braces-sårbarheten** (dev-beroende via eslint) rättas med `overrides` i `package.json` till den version som `npm audit` anger vid implementationen; `manifest.overrides` och `BuildGuideTest` följer med.
+5. **braces-sårbarheten** (dev-beroende via eslint) får ingen override (Eriks beslut 2026-10-14): det finns ingen rättad version (senaste braces är 3.0.3, GHSA-vfj7-8cjw-p6xm gäller `<=3.0.3`). v2:s `CLAUDE.md` och README säger på en rad att fyndet bara finns i utvecklingsberoenden (eslint-kedjan), att produktionsgranskningen (`npm audit --omit=dev`) är ren och att det är den som spärren kör. `overrides` i v2 är samma som i v1.
 6. **`npm run check`** kör typkontroll, lint, test, bygge, `check-export.mjs` och `check-security.mjs`, så att spelets Claude får samma fel lokalt som Coolify.
 7. **`test/security.test.ts`** kör `check-security.mjs` mot en tillfällig katalog med en planterad nyckel, en `.map`-fil och en HTML-fil utan CSP, och kräver att varje fall fäller med rätt mönsternamn och utan värdet. De planterade strängarna byggs vid körning (`'sk_' + 'live_' + …`), så att GitHubs push protection och gitleaks inte stoppar committen.
 8. **`CLAUDE.md`** får avsnittet "Faktabanken" (när man frågar, att spelets version skickas med, att en artikel går före egen bedömning och att stora beslut utan artikel frågas till en människa).
@@ -152,7 +152,7 @@ npm run build \
  && node /tmp/cc-audit.mjs
 ```
 
-- Säkerhetsskriptet hämtas från byggguidens publika REST (finns sedan delprojekt 2) och kontrolleras mot sha256 som Computercat skriver in när appen skapas. Spelrepot kan inte ändra det. Är hämtningen eller sha256-kontrollen fel: bygget faller.
+- Säkerhetsskriptet hämtas från byggguidens publika REST (finns sedan delprojekt 2) och kontrolleras mot sha256 som Computercat skriver in när appen skapas. Att ta bort eller ändra skriptet i spelrepot påverkar inte det som körs (se gränsen under "Säkerhet"). Är hämtningen eller sha256-kontrollen fel: bygget faller.
 - `scripts/cc-audit.mjs` (också i v2-manifestet) kör `npm audit --omit=dev --audit-level=high`. Det skiljer fynd (fäller med paketnamn och allvarlighetsgrad) från nätverksfel mot registret (ett omförsök efter 10 s, sedan fäller det med texten "npm-registret svarade inte"). En ny high i ett produktionsberoende stoppar alla byggen tills paketet uppdateras; en höjning av nivån kräver Eriks beslut.
 - Typkontroll, lint och tester körs i spelets `npm run check` lokalt men inte i Coolify, eftersom de gäller kvalitet, inte säkerhet, och skulle förlänga bygget i en kö med `concurrent_builds = 1`. Om S1 visar att det ryms inom rimlig tid kan de läggas till senare.
 - Befintliga appar (v1) får inget nytt byggkommando; ett test visar att `createApplication($slug, 'v1')` inte skickar `build_command`.
@@ -161,7 +161,7 @@ Gräns, skriven i artikeln `security`: spärren skyddar mot misstag och kända m
 
 ### Status vid fel
 
-`get_provisioning_status` läser `detail['build_guide']` från provisioneringsrunnen. Vid `deploy_failed` och v2 blir `next`: "Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen." Vid v1 eller saknat värde behålls dagens text.
+`get_provisioning_status` läser `detail['build_guide']` från provisioneringsrunnen. Vid `deploy_failed` och v2 blir `next`: "Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen." Är bygget avbrutet (`cancelled-by-user`) blir `next` i stället: "Bygget avbröts i Coolify innan det blev klart. Pusha igen för att starta ett nytt bygge; Demo visar förra lyckade bygget tills dess." Vid v1 eller saknat värde behålls dagens text. Kan guideversionen inte läsas visas felet med en referens, utan att statusen fäller.
 
 ### Spike före låsning av v2
 
@@ -181,7 +181,7 @@ Faller en punkt: stanna och fråga Erik.
 
 - Faktabanken innehåller inga hemligheter och inget kundspecifikt. Verktygen är bara läsande och bara för staff. `get_fact` slår upp id i ett index byggt från `resources/faktabank`, och id valideras mot mönstret i schemat innan uppslag.
 - Söktext i revisionsloggen redigeras (del 2).
-- Säkerhetsskriptet i bygget kan inte ändras från spelrepot (sha256 från Computercat). Spärren hittar kända mönster; den ersätter inte granskning.
+- Säkerhetsskriptet i bygget hämtas från Computercat och kontrolleras mot sha256: att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön). Den ersätter inte granskning före Live. Spiken svarar ja/nej på om Coolifys GitHub-token går att läsa från bygget.
 - `npm audit` i bygget är tidsberoende och kan stoppa byggen när en ny sårbarhet publiceras. Det är avsiktligt.
 
 ## Tester
