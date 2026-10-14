@@ -3,6 +3,10 @@
 namespace Tests\Feature\Provisioning;
 
 use App\Models\ProvisioningRun;
+use App\Models\ProvisioningStep;
+use App\Provisioning\Saga;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Queue;
 use App\Provisioning\ReadmeIdea;
 use App\Provisioning\StepResult;
 use App\Provisioning\Steps\RepoStep;
@@ -50,11 +54,15 @@ class RepoStepTest extends ProvisioningTestCase
                 ->push(['content' => ['sha' => 'claude']], 201),
         ]);
 
+        $create = $this->runStep(RepoStep::class, $run, 'repo');
         $first = $this->runStep(RepoStep::class, $run, 'repo');
+        $readme = $this->runStep(RepoStep::class, $run, 'repo');
         $second = $this->runStep(RepoStep::class, $run, 'repo');
 
+        $this->assertSame([StepResult::WAIT, 0], [$create->outcome, $create->seconds]);
         $this->assertSame(StepResult::WAIT, $first->outcome);
         $this->assertSame(10, $first->seconds);
+        $this->assertSame([StepResult::WAIT, 0], [$readme->outcome, $readme->seconds]);
         $this->assertSame(StepResult::DONE, $second->outcome);
         $this->assertSame('HumblebragAB/kattsvep', $run->fresh()->github_repo);
         $this->assertSame('v1', $run->steps()->where('step', 'repo')->first()->detail['build_guide']);
@@ -76,7 +84,7 @@ class RepoStepTest extends ProvisioningTestCase
             self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'), 'claude-sha')),
         ]);
 
-        $this->assertSame(StepResult::DONE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
+        $this->assertSame(StepResult::DONE, $this->runToEnd($run)->outcome);
         Http::assertNotSent(fn ($r) => $r->url() === 'https://'.self::CREATE || $r->method() === 'PUT');
     }
 
@@ -92,7 +100,7 @@ class RepoStepTest extends ProvisioningTestCase
                 ->push(['content' => ['sha' => 'ny']]),
         ]);
 
-        $this->runStep(RepoStep::class, $run, 'repo');
+        $this->runToEnd($run);
 
         Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && $r['sha'] === 'claude-sha');
     }
@@ -173,7 +181,7 @@ class RepoStepTest extends ProvisioningTestCase
             self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'))),
         ]);
 
-        $this->assertSame(StepResult::DONE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
+        $this->assertSame(StepResult::DONE, $this->runToEnd($run)->outcome);
         Http::assertNotSent(fn ($r) => $r->method() === 'PUT' || str_ends_with($r->url(), '/repos/HumblebragAB/kattsvep'));
     }
 
@@ -186,10 +194,79 @@ class RepoStepTest extends ProvisioningTestCase
             self::README => Http::response(['message' => 'Not Found'], 404),
         ]);
 
-        $this->assertSame(StepResult::WAIT, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
+        $this->assertSame(0, $this->runStep(RepoStep::class, $run, 'repo')->seconds);
+        $this->assertSame(10, $this->runStep(RepoStep::class, $run, 'repo')->seconds);
         $this->travel(4)->minutes();
 
         $this->expectException(\App\Provisioning\StepFailed::class);
         $this->runStep(RepoStep::class, $run, 'repo');
+    }
+
+    // Efter en README-timeout och retry startar väntefönstret om: den gamla tidsstämpeln får inte fälla steget direkt.
+    public function test_retry_after_readme_timeout_starts_a_fresh_wait_window(): void
+    {
+        Queue::fake();
+        $run = $this->run_();
+        $run->update(['status' => ProvisioningRun::RUNNING]);
+        Http::fake([
+            self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
+            self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
+            self::README => Http::response(['message' => 'Not Found'], 404),
+        ]);
+
+        $this->runStep(RepoStep::class, $run, 'repo');
+        $this->runStep(RepoStep::class, $run, 'repo');
+        $this->travel(4)->minutes();
+        try {
+            $this->runStep(RepoStep::class, $run, 'repo');
+            $this->fail('Timeouten uteblev.');
+        } catch (\App\Provisioning\StepFailed) {
+            $this->stepRow($run, 'repo')->update(['status' => ProvisioningStep::FAILED]);
+            $run->update(['status' => ProvisioningRun::FAILED]);
+        }
+
+        $this->assertTrue(Saga::retry($run->fresh()));
+        $result = $this->runStep(RepoStep::class, $run, 'repo');
+
+        $this->assertSame(StepResult::WAIT, $result->outcome);
+        $this->assertTrue(Carbon::parse($this->stepRow($run, 'repo')->fresh()->detail['readme_wait_started_at'])->isAfter(now()->subMinute()));
+        $this->assertTrue($this->stepRow($run, 'repo')->fresh()->detail['repo_ok']);
+    }
+
+    // Skapandet och filskrivningarna sker i skilda körningar, och en omkörning av en klar fas gör inga skrivningar.
+    public function test_create_and_file_writes_happen_in_separate_passes(): void
+    {
+        $run = $this->run_();
+        Http::fake([
+            self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
+            self::REPO => Http::response(['message' => 'Not Found'], 404),
+            self::CREATE => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid), 201),
+            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
+            self::CLAUDE => Http::sequence()->push(['message' => 'Not Found'], 404)->push(['content' => ['sha' => 'claude']], 201),
+        ]);
+
+        $this->runStep(RepoStep::class, $run, 'repo');
+        Http::assertSent(fn ($r) => $r->url() === 'https://'.self::CREATE);
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/contents/'));
+
+        $this->runStep(RepoStep::class, $run, 'repo');
+        Http::assertNotSent(fn ($r) => $r->method() === 'PUT');
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/CLAUDE.md'));
+
+        $this->assertSame(StepResult::DONE, $this->runStep(RepoStep::class, $run, 'repo')->outcome);
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md'));
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->url() === 'https://'.self::CREATE));
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'PUT'));
+    }
+
+    private function runToEnd(ProvisioningRun $run): StepResult
+    {
+        for ($i = 0; $i < 6; $i++) {
+            $result = $this->runStep(RepoStep::class, $run, 'repo');
+            if ($result->outcome !== StepResult::WAIT) {
+                return $result;
+            }
+        }
+        $this->fail('RepoStep blev aldrig klart.');
     }
 }

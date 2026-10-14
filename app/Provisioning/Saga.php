@@ -56,7 +56,13 @@ final class Saga
             return false;
         }
 
-        $run->steps()->where('status', ProvisioningStep::FAILED)->update(['status' => ProvisioningStep::PENDING]);
+        // Väntefönster (t.ex. README-väntan) startar om vid retry; annars fallerar
+        // steget direkt på en tidsstämpel från förra försöket.
+        foreach ($run->steps()->where('status', ProvisioningStep::FAILED)->get() as $failed) {
+            $detail = $failed->detail ?? [];
+            unset($detail['readme_wait_started_at']);
+            $failed->update(['status' => ProvisioningStep::PENDING, 'detail' => $detail]);
+        }
         // En run vars start() föll innan alla steg skapats (create_game markerar
         // den failed) får sina saknade steg här.
         foreach (array_keys(self::steps($run->kind)) as $name) {

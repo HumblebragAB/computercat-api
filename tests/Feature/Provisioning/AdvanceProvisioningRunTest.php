@@ -237,6 +237,44 @@ class AdvanceProvisioningRunTest extends ProvisioningTestCase
         Queue::assertPushed(AdvanceProvisioningRun::class, 2);
     }
 
+    // Jobbet dör efter att repo markerats klart men innan nästa jobb köats: retry tar upp tråden vid game.
+    public function test_job_killed_between_done_and_next_dispatch_is_recovered_by_retry(): void
+    {
+        $run = $this->startedRun();
+        $this->fakeStep(RepoStep::class, fn () => StepResult::done());
+        $this->runJob($run);
+        Queue::fake(); // nästa jobb "köades aldrig"
+        (new AdvanceProvisioningRun($run->id))->failed(new \RuntimeException('killed'));
+        $this->assertSame(ProvisioningRun::FAILED, $run->fresh()->status);
+        $this->assertSame(ProvisioningStep::DONE, $this->stepStatus($run, 'repo'));
+
+        $ran = [];
+        $this->fakeStep(GameStep::class, function () use (&$ran) {
+            $ran[] = 'game';
+
+            return StepResult::done();
+        });
+        $this->assertTrue(Saga::retry($run->fresh()));
+        Queue::assertPushed(AdvanceProvisioningRun::class, 1);
+        $this->runJob($run);
+
+        $this->assertSame(['game'], $ran);
+        $this->assertSame(ProvisioningStep::DONE, $this->stepStatus($run, 'game'));
+        $this->assertSame(ProvisioningRun::RUNNING, $run->fresh()->status);
+    }
+
+    public function test_retry_clears_wait_timestamps_but_keeps_other_detail(): void
+    {
+        $run = $this->startedRun();
+        $run->steps()->where('step', 'repo')->update(['status' => ProvisioningStep::FAILED, 'detail' => ['repo_ok' => true, 'readme_wait_started_at' => '2026-01-01T00:00:00+00:00']]);
+        $run->update(['status' => ProvisioningRun::FAILED]);
+
+        Saga::retry($run);
+
+        $detail = $run->steps()->where('step', 'repo')->first()->detail;
+        $this->assertSame(['repo_ok' => true], $detail);
+    }
+
     public function test_handlers_resolve_by_kind(): void
     {
         $this->assertSame(GameStep::class, Saga::PROVISION_STEPS['game']);

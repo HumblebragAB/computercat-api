@@ -21,6 +21,10 @@ final class RepoStep implements Step
 {
     public function __construct(private GitHubAppClient $github) {}
 
+    // Tre körningar, så att varje jobb håller sig inom ett fåtal anrop (jobbets
+    // timeout är 60 s, varje GitHub-anrop får vänta 20 s):
+    //   1. repot skapas/adopteras, 2. README skrivs, 3. CLAUDE.md skrivs.
+    // Varje fas sparar sitt resultat i detail och återköar jobbet direkt.
     public function run(ProvisioningRun $run, ProvisioningStep $step): StepResult
     {
         $detail = $step->detail ?? [];
@@ -31,22 +35,43 @@ final class RepoStep implements Step
                 return $release;
             }
             $run->update(['github_repo' => ProvisioningConfig::repoFullName($run->slug)]);
-            $detail['repo_ok'] = true;
-            $detail['readme_wait_started_at'] = now()->toIso8601String();
-            // Samma version vid omkörning, även om en nyare publiceras under tiden.
-            $detail['build_guide'] = BuildGuide::LATEST;
+
+            // Samma guideversion vid omkörning, även om en nyare publiceras under tiden.
+            return StepResult::wait(0, [
+                'repo_ok' => true,
+                'repo_name' => $run->slug,
+                'readme_wait_started_at' => now()->toIso8601String(),
+                'build_guide' => BuildGuide::LATEST,
+            ]);
         }
+
         $version = $detail['build_guide'] ?? BuildGuide::LATEST;
 
+        if (! ($detail['readme_ok'] ?? false)) {
+            return $this->writeReadme($run, $detail, $version);
+        }
+
+        $this->writeClaudeMd($run, $version);
+
+        return StepResult::done(['readme' => 'written', 'claude_md' => 'written']);
+    }
+
+    private function writeReadme(ProvisioningRun $run, array $detail, string $version): StepResult
+    {
         // auto_init skapar README i första commiten; den kan saknas en kort stund.
         $readme = $this->github->getFile($run->slug, 'README.md');
         if ($readme === null) {
-            $deadline = Carbon::parse($detail['readme_wait_started_at'])->addMinutes((int) config('provisioning.repo_ready_timeout_minutes'));
-            if ($deadline->isPast()) {
-                throw new StepFailed('README.md did not appear in the new repository within '.config('provisioning.repo_ready_timeout_minutes').' minutes.');
+            // Saknas tidsstämpeln (nollad av retry) startar väntefönstret om.
+            $started = $detail['readme_wait_started_at'] ?? null;
+            if ($started === null) {
+                return StepResult::wait(10, ['readme_wait_started_at' => now()->toIso8601String()]);
+            }
+            $minutes = (int) config('provisioning.repo_ready_timeout_minutes');
+            if (Carbon::parse($started)->addMinutes($minutes)->isPast()) {
+                throw new StepFailed("README.md did not appear in the new repository within {$minutes} minutes.");
             }
 
-            return StepResult::wait(10, $detail);
+            return StepResult::wait(10);
         }
 
         // Hela README ersätts; ReadmeIdea fallerar (och inget skrivs) om mallens markörer är fel.
@@ -55,6 +80,11 @@ final class RepoStep implements Step
             $this->github->putFile($run->slug, 'README.md', $wanted, $readme['sha'], "README från byggguide {$version} (run {$run->uuid})");
         }
 
+        return StepResult::wait(0, ['readme_ok' => true]);
+    }
+
+    private function writeClaudeMd(ProvisioningRun $run, string $version): void
+    {
         $claude = BuildGuide::claudeMd($version);
         $existing = $this->github->getFile($run->slug, 'CLAUDE.md');
         if ($existing === null) {
@@ -62,8 +92,6 @@ final class RepoStep implements Step
         } elseif ($existing['text'] !== $claude) {
             $this->github->putFile($run->slug, 'CLAUDE.md', $claude, $existing['sha'], "CLAUDE.md från byggguide {$version} (run {$run->uuid})");
         }
-
-        return StepResult::done($detail + ['readme' => 'written', 'claude_md' => 'written']);
     }
 
     private function ensureRepository(ProvisioningRun $run): ?StepResult

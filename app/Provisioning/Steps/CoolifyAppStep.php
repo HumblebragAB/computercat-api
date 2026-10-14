@@ -5,6 +5,8 @@ namespace App\Provisioning\Steps;
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Provisioning\Clients\CoolifyClient;
+use App\Provisioning\Clients\CoolifyConflictException;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
@@ -41,8 +43,25 @@ final class CoolifyAppStep implements Step
         $step->update(['detail' => [...$detail, 'create_requested_at' => now()->toIso8601String()]]);
 
         // 409 (domänkonflikt) kastar CoolifyConflictException och stoppar sagan.
-        $run->update(['coolify_app_uuid' => $this->coolify->createApplication($run->slug)]);
+        try {
+            $run->update(['coolify_app_uuid' => $this->coolify->createApplication($run->slug)]);
+        } catch (CoolifyConflictException|ExternalApiException $e) {
+            // Ett definitivt avslag (4xx) betyder att ingen app skapades: markören
+            // rensas, så att en app någon skapar för hand med samma namn aldrig
+            // adopteras vid retry. Timeout, 5xx och anslutningsfel behåller den.
+            if ($e instanceof CoolifyConflictException || self::isDefiniteRejection($e->status)) {
+                unset($detail['create_requested_at']);
+                $step->update(['detail' => $detail]);
+            }
+
+            throw $e;
+        }
 
         return StepResult::done();
+    }
+
+    private static function isDefiniteRejection(int $status): bool
+    {
+        return $status >= 400 && $status < 500 && ! in_array($status, [408, 425, 429], true);
     }
 }

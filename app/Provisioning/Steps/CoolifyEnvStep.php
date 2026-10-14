@@ -22,7 +22,8 @@ final class CoolifyEnvStep implements Step
 
         $existing = null;
         foreach ($this->coolify->environmentVariables($uuid) as $variable) {
-            if (is_array($variable) && ($variable['key'] ?? null) === self::KEY) {
+            // Preview-varianten är en egen post med samma nyckel; den är inte vår.
+            if (is_array($variable) && ($variable['key'] ?? null) === self::KEY && ($variable['is_preview'] ?? false) !== true) {
                 $existing = $variable;
             }
         }

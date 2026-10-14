@@ -46,4 +46,24 @@ class GameStepTest extends ProvisioningTestCase
         $this->expectException(StepFailed::class);
         $this->runStep(GameStep::class, $run, 'game');
     }
+
+    // Nuvarande spec: ett främmande spel stoppar steget utan att röra repot eller slugspärren.
+    public function test_foreign_game_leaves_repo_and_slug_lock_untouched(): void
+    {
+        Game::create(['slug' => 'kattsvep', 'name' => 'Annan', 'is_active' => true, 'settings' => []]);
+        $run = $this->provisioningRun(['slug' => 'kattsvep', 'github_repo' => 'HumblebragAB/kattsvep']);
+        $lock = $run->slug_lock;
+
+        try {
+            $this->runStep(GameStep::class, $run, 'game');
+            $this->fail('Steget borde ha fallerat.');
+        } catch (StepFailed) {
+        }
+
+        $run = $run->fresh();
+        $this->assertSame('HumblebragAB/kattsvep', $run->github_repo);
+        $this->assertSame($lock, $run->slug_lock);
+        $this->assertNull($run->game_id);
+        $this->assertSame(1, Game::where('slug', 'kattsvep')->count());
+    }
 }

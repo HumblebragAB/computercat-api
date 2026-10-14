@@ -77,6 +77,73 @@ class CoolifyStepsTest extends ProvisioningTestCase
         $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
     }
 
+    public function test_definite_rejection_clears_the_create_marker_so_a_later_manual_app_is_not_adopted(): void
+    {
+        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        Http::fake([
+            self::PROJECT_URL => Http::sequence()
+                ->push(ProvisioningFakes::coolifyProject([]))
+                ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('handgjord', 'spel-kattsvep')])),
+            'coolify.test/api/v1/applications/private-github-app' => Http::response(['message' => 'Validation failed'], 422),
+        ]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+            $this->fail('422 borde ha kastat.');
+        } catch (\App\Provisioning\Http\ExternalApiException) {
+        }
+        $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
+
+        $this->expectException(StepFailed::class);
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+        } finally {
+            $this->assertNull($run->fresh()->coolify_app_uuid);
+        }
+    }
+
+    public function test_conflict_clears_the_marker_but_server_errors_keep_it(): void
+    {
+        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
+            'coolify.test/api/v1/applications/private-github-app' => Http::sequence()
+                ->push(ProvisioningFakes::coolifyConflict(), 409)
+                ->push(['message' => 'boom'], 502),
+        ]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+        } catch (\App\Provisioning\Clients\CoolifyConflictException) {
+        }
+        $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+        } catch (\App\Provisioning\Http\ExternalApiException) {
+        }
+        $this->assertArrayHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail);
+    }
+
+    public function test_preview_variable_with_the_same_key_is_ignored(): void
+    {
+        $run = $this->provisioningRun(['slug' => 'kattsvep', 'coolify_app_uuid' => 'app-1']);
+        $preview = ProvisioningFakes::coolifyEnv('NEXT_PUBLIC_COMPUTERCAT_GAME', 'annat');
+        $preview['is_preview'] = true;
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
+            'coolify.test/api/v1/applications/app-1/envs' => Http::sequence()
+                ->push([$preview])
+                ->push(ProvisioningFakes::coolifyEnv('NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep'), 201),
+        ]);
+
+        $this->runStep(CoolifyEnvStep::class, $run, 'coolify_env');
+
+        // Bara preview-posten fanns: den räknas inte, så den riktiga skapas (POST) i stället för att PATCH:as.
+        $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'POST'));
+        $this->assertCount(0, Http::recorded(fn ($r) => $r->method() === 'PATCH'));
+    }
+
     public function test_build_variable_is_created_or_updated(): void
     {
         $run = $this->provisioningRun(['slug' => 'kattsvep', 'coolify_app_uuid' => 'app-1']);
