@@ -13,7 +13,7 @@ Lägg inte till tredjeparts-analytics, spårning eller reklam i spelet. Det krä
 
 ## Varför
 
-Faktabankens stackregler säger uttryckligen nej till tredjeparts-analytics och spårning utan Eriks beslut. Computercat är spelets backend, och dess spel-API (`routes/api.php`) har ingen route för analytics, spårning eller reklam. Det finns alltså ingen Computercat-byggsten att använda i stället; frågan går till en människa.
+Faktabankens stackregler säger uttryckligen nej till tredjeparts-analytics, spårning och reklam utan Eriks beslut. Computercat är spelets backend, och dess spel-API (`routes/api.php`) har ingen route för analytics, spårning eller reklam. Det finns alltså ingen Computercat-byggsten att använda i stället; frågan går till en människa.
 
 ## Så gör du
 

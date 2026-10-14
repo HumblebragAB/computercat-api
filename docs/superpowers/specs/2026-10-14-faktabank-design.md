@@ -38,7 +38,7 @@ Ersätter delprojekt 3 i tidigare specar ("dokument-samlingar och AI-mallar"), s
 
 | Ämne (`topic`) | Innehåll |
 |---|---|
-| `stack` | Val i ordningen (1) byggguidens stack, (2) Computercats byggstenar för allt som är backend, (3) nytt npm-beroende bara med skriven motivering i commit-meddelandet. Uttryckliga nej: egen backend, API-routes, Firebase/Supabase/liknande, tredjeparts-analytics och spårning utan Eriks beslut, externa typsnitt och CDN-skript. |
+| `stack` | Val i ordningen (1) byggguidens stack, (2) Computercats byggstenar för allt som är backend, (3) nytt npm-beroende bara med skriven motivering i commit-meddelandet. Uttryckliga nej: egen backend, API-routes, Firebase/Supabase/liknande, tredjeparts-analytics, spårning och reklam utan Eriks beslut (reklam: Eriks beslut 2026-10-14), externa typsnitt och CDN-skript. |
 | `testing` | Vad som testas och hur: spellogik som rena enhetstester, Computercat-flöden med `test/fakeFetch.ts`, jsdom-integrationstest för vinst och resultat, anti-cheat-bevis. Vad som inte behöver tester. |
 | `security` | Vad bygg-spärren kontrollerar och hur varje fel rättas, och vad spärren inte kan se: anti-cheat-inställningar, rimliga poänggränser, vad som får lagras i sparfiler. Spärren hittar kända mönster och ersätter inte granskning. |
 | `practice` | Mobil först, tillgänglighet, prestanda, offline-kön, svensk copy utan AI-ton (samma regler som Eriks CLAUDE.md, avsnitt Content). |
