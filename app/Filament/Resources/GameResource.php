@@ -421,6 +421,11 @@ class GameResource extends Resource
                     ->label('Dev Kit')
                     ->icon('heroicon-o-command-line')
                     ->url(fn (Game $record) => static::getUrl('devkit', ['record' => $record])),
+                Tables\Actions\Action::make('releases')
+                    ->label('Releases')
+                    ->icon('heroicon-o-rocket-launch')
+                    ->visible(fn () => auth()->user()?->isPlatformAdmin() === true)
+                    ->url(fn (Game $record) => static::getUrl('releases', ['record' => $record])),
                 Tables\Actions\Action::make('voices')
                     ->label('Röster')
                     ->icon('heroicon-o-speaker-wave')
@@ -452,6 +457,7 @@ class GameResource extends Resource
             'create' => Pages\CreateGame::route('/create'),
             'edit' => Pages\EditGame::route('/{record}/edit'),
             'devkit' => Pages\GameDevKit::route('/{record}/devkit'),
+            'releases' => Pages\GameReleases::route('/{record}/releases'),
             'voices' => Pages\GameVoices::route('/{record}/voices'),
         ];
     }

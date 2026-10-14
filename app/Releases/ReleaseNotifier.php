@@ -2,6 +2,7 @@
 
 namespace App\Releases;
 
+use App\Filament\Resources\GameResource;
 use App\Models\Game;
 use App\Models\Release;
 use App\Support\SlackAlert;
@@ -14,10 +15,9 @@ final class ReleaseNotifier
 {
     public function __construct(private SlackAlert $slack) {}
 
-    // Task 9 byter till GameResource::getUrl('releases', …) när sidan finns.
     public function approvalUrl(Game $game): string
     {
-        return url('/admin/games/'.$game->getKey().'/releases');
+        return GameResource::getUrl('releases', ['record' => $game->getKey()], true, 'admin');
     }
 
     /** @return string|null SlackAlert-konstant, eller null för teststeg (inget skickas) */
