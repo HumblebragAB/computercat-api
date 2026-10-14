@@ -7,7 +7,9 @@
     dynamisk registrering och hör inte hemma på godkännandesidan.
     Redirect-värden visas: den adress Passport skickar koden till. Passport har
     redan kontrollerat redirect_uri mot klientens registrerade adresser, och
-    dynamisk registrering godtar bara claude.ai.
+    dynamisk registrering godtar bara claude.ai och loopback (localhost, 127.0.0.1,
+    [::1]) för Claude Code. En loopback-redirect lämnar koden på användarens egen
+    dator, och PKCE krävs för publika klienter.
     Alla dynamiska värden escapas med {{ }}.
     Temat (typsnitt och tokens) kommer från public/css/cc-theme.css på samma domän.
 --}}
@@ -70,7 +72,7 @@
         <p class="email">{{ $redirectHost }}</p>
     </div>
 
-    <p class="muted" style="margin-bottom: 16px">Godkänn bara om du själv just startade kopplingen i claude.ai.</p>
+    <p class="muted" style="margin-bottom: 16px">Godkänn bara om du själv just startade kopplingen i claude.ai eller Claude Code.</p>
 
     @if (count($scopes) > 0)
         <p><strong>Behörigheter</strong></p>

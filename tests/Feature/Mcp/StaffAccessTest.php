@@ -166,7 +166,7 @@ class StaffAccessTest extends TestCase
         $response->assertDontSee('/build/', false);
         // Vart koden skickas och en varning mot godkännanden man inte själv startat.
         $response->assertSeeInOrder(['Svaret skickas till', 'claude.ai']);
-        $response->assertSee('Godkänn bara om du själv just startade kopplingen i claude.ai.');
+        $response->assertSee('Godkänn bara om du själv just startade kopplingen i claude.ai eller Claude Code.');
     }
 
     public function test_authorize_page_uses_the_theme(): void

@@ -17,9 +17,27 @@ class OAuthRegistrationTest extends TestCase
         ])->assertCreated()->assertJsonPath('scope', 'mcp:use');
     }
 
+    /** Claude Code (CLI och VS Code) tar emot callbacken på en loopback-port (RFC 8252). */
+    public function test_registration_with_loopback_redirect_succeeds(): void
+    {
+        foreach (['http://localhost:54321/callback', 'http://127.0.0.1:54321/callback', 'http://[::1]:54321/callback'] as $uri) {
+            $this->postJson('/oauth/register', [
+                'client_name' => 'Claude Code',
+                'redirect_uris' => [$uri],
+            ])->assertCreated();
+        }
+    }
+
     public function test_registration_with_foreign_redirect_domain_is_rejected(): void
     {
-        foreach (['https://evil.example/callback', 'https://claude.ai.evil.example/callback'] as $uri) {
+        foreach ([
+            'https://evil.example/callback',
+            'https://claude.ai.evil.example/callback',
+            'http://localhost.evil.example/callback',
+            'http://localhost@evil.example/callback',
+            'http://user@localhost:54321/callback',
+            'http://evil.example/localhost/callback',
+        ] as $uri) {
             $this->postJson('/oauth/register', [
                 'client_name' => 'Evil',
                 'redirect_uris' => [$uri],

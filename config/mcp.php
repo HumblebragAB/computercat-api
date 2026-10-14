@@ -15,10 +15,14 @@ return [
     |
     */
 
-    // Bara claude.ai får registrera OAuth-klienter (DCR). Exakt redirect-URI
-    // verifieras mot en riktig connector innan produktion.
+    // DCR tillåts för claude.ai-connectorn och för Claude Code (CLI/VS Code),
+    // som tar emot callbacken på en loopback-port (RFC 8252). 'http://localhost'
+    // slår på paketets loopback-kontroll: exakt värd localhost, 127.0.0.1 eller
+    // [::1], bara http, ingen användarinfo. Staff-inloggning och samtycke gäller
+    // fortfarande, och oanvända klienter gallras av computercat:prune-oauth-clients.
     'redirect_domains' => [
         'https://claude.ai',
+        'http://localhost',
     ],
 
     /*
