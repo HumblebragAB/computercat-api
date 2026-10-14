@@ -135,6 +135,12 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(120)->by('mcp:'.($request->user()?->getAuthIdentifier() ?? $request->ip()));
         });
 
+        // Byggguiden (publik, bara läsning). Ett nytt spelrepo behöver två anrop
+        // (manifest och package-lock.json); resten går via MCP.
+        RateLimiter::for('build-guide', function (Request $request) {
+            return Limit::perMinute(30)->by('build-guide:'.$request->ip());
+        });
+
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });

@@ -1,0 +1,55 @@
+<?php
+
+namespace Tests\Feature\Api\V1;
+
+use App\Services\BuildGuide;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
+use Tests\TestCase;
+
+class BuildGuideApiTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_manifest_is_public_and_cacheable(): void
+    {
+        $response = $this->getJson('/api/v1/build-guide')->assertOk();
+
+        $this->assertSame('v1', $response->json('data.version'));
+        $this->assertSame(BuildGuide::publicManifest('v1')['files'], $response->json('data.files'));
+        $this->assertStringContainsString('public', $response->headers->get('Cache-Control'));
+        $this->getJson('/api/v1/build-guide/v1')->assertOk()->assertJsonPath('data.version', 'v1');
+    }
+
+    public function test_file_is_served_as_plain_text_with_sha256(): void
+    {
+        $response = $this->get('/api/v1/build-guide/v1/files/package-lock.json')->assertOk();
+
+        $this->assertSame(BuildGuide::file('v1', 'package-lock.json')['content'], $response->getContent());
+        $this->assertSame(hash('sha256', $response->getContent()), $response->headers->get('X-Content-SHA256'));
+        $this->assertStringStartsWith('text/plain', $response->headers->get('Content-Type'));
+        $this->assertSame('nosniff', $response->headers->get('X-Content-Type-Options'));
+        $this->get('/api/v1/build-guide/v1/files/src/lib/computercat/index.ts')->assertOk();
+        $this->get('/api/v1/build-guide/v1/files/.gitignore')->assertOk();
+    }
+
+    public function test_unknown_files_versions_and_traversal_are_404(): void
+    {
+        $this->getJson('/api/v1/build-guide/v9')->assertNotFound()->assertJsonPath('message', 'Build guide version not found.');
+        $this->getJson('/api/v1/build-guide/v1/files/README.md')->assertNotFound()->assertJsonPath('message', 'Build guide file not found.');
+        $this->getJson('/api/v1/build-guide/v1/files/..%2F..%2F..%2F.env')->assertNotFound();
+        $this->getJson('/api/v1/build-guide/v1/files/files/package.json')->assertNotFound();
+        $this->getJson('/api/v1/build-guide/x1')->assertNotFound();
+    }
+
+    public function test_routes_have_their_own_rate_limit(): void
+    {
+        $this->assertNotNull(RateLimiter::limiter('build-guide'));
+        foreach (['/api/v1/build-guide', '/api/v1/build-guide/v1', '/api/v1/build-guide/v1/files/package.json'] as $uri) {
+            $route = Route::getRoutes()->match(Request::create($uri));
+            $this->assertContains('throttle:build-guide', $route->gatherMiddleware(), $uri);
+        }
+    }
+}

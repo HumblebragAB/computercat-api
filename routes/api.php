@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\AchievementController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\BuildGuideController;
 use App\Http\Controllers\Api\V1\DailyContentController;
 use App\Http\Controllers\Api\V1\GameController;
 use App\Http\Controllers\Api\V1\GameEventController;
@@ -46,6 +47,15 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
     // Games (public)
     Route::get('/games', [GameController::class, 'index']);
     Route::get('/games/{game:slug}', [GameController::class, 'show']);
+
+    // Byggguiden (publik, bara läsning; spec 2c "Byggguiden")
+    Route::middleware('throttle:build-guide')->group(function () {
+        Route::get('/build-guide', [BuildGuideController::class, 'show']);
+        Route::get('/build-guide/{version}', [BuildGuideController::class, 'show'])->where('version', 'v[1-9][0-9]{0,2}');
+        Route::get('/build-guide/{version}/files/{path}', [BuildGuideController::class, 'file'])
+            ->where('version', 'v[1-9][0-9]{0,2}')
+            ->where('path', '.*');
+    });
 
     // Remote Config (public, no auth required)
     Route::middleware(ResolveGame::class)
