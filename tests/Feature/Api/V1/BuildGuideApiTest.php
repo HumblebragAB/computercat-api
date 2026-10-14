@@ -52,4 +52,28 @@ class BuildGuideApiTest extends TestCase
             $this->assertContains('throttle:build-guide', $route->gatherMiddleware(), $uri);
         }
     }
+
+    public function test_31st_request_within_a_minute_is_throttled(): void
+    {
+        RateLimiter::clear('build-guide:127.0.0.1');
+        for ($i = 0; $i < 30; $i++) {
+            $this->getJson('/api/v1/build-guide')->assertOk();
+        }
+
+        $this->getJson('/api/v1/build-guide')->assertStatus(429);
+    }
+
+    // Ett internt fel (här: APP_URL saknas, så nedladdningsadressen kan inte byggas)
+    // ger 500 utan undantagstext eller stack trace i svaret.
+    public function test_internal_error_returns_500_without_details(): void
+    {
+        config(['app.debug' => false, 'app.url' => '']);
+
+        $response = $this->getJson('/api/v1/build-guide')->assertStatus(500);
+
+        $body = $response->getContent();
+        $this->assertStringNotContainsString('APP_URL', $body);
+        $this->assertStringNotContainsString('BuildGuide', $body);
+        $this->assertStringNotContainsString('trace', $body);
+    }
 }
