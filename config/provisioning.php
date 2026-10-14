@@ -42,7 +42,8 @@ return [
     // under apps.humblebrag.se (uppdateras när Coolify-appar läggs till för hand).
     'reserved_slugs' => array_values(array_unique(array_filter(array_merge(
         ['www', 'api', 'admin', 'app', 'apps', 'demo', 'mail', 'spel'],
-        array_map('trim', explode(',', (string) env('PROVISIONING_RESERVED_SUBDOMAINS', ''))),
+        // Gemener: DNS skiljer inte på skiftläge, och slugregeln kräver gemener.
+        array_map(fn ($slug) => strtolower(trim($slug)), explode(',', (string) env('PROVISIONING_RESERVED_SUBDOMAINS', ''))),
     ), fn ($slug) => $slug !== ''))),
 
     'max_demo_games' => 15,

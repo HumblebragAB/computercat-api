@@ -82,4 +82,31 @@ class ProvisioningConfigTest extends TestCase
 
         $this->assertContains('SLACK_ALERT_WEBHOOK_URL (must start with https://)', ProvisioningConfig::missing());
     }
+
+    // DNS-etiketter är skiftlägesokänsliga; slugregeln kräver gemener, så en
+    // reserverad underdomän i env med versaler måste ändå spärra slugen.
+    public function test_reserved_subdomains_from_env_are_trimmed_and_lowercased(): void
+    {
+        $before = [$_ENV['PROVISIONING_RESERVED_SUBDOMAINS'] ?? null, $_SERVER['PROVISIONING_RESERVED_SUBDOMAINS'] ?? null];
+        $_ENV['PROVISIONING_RESERVED_SUBDOMAINS'] = $_SERVER['PROVISIONING_RESERVED_SUBDOMAINS'] = ' Brandlens ,FOOTR,, pockettrove ';
+
+        try {
+            $reserved = (require config_path('provisioning.php'))['reserved_slugs'];
+        } finally {
+            foreach ([0 => '_ENV', 1 => '_SERVER'] as $i => $global) {
+                if ($before[$i] === null) {
+                    unset($GLOBALS[$global]['PROVISIONING_RESERVED_SUBDOMAINS']);
+                } else {
+                    $GLOBALS[$global]['PROVISIONING_RESERVED_SUBDOMAINS'] = $before[$i];
+                }
+            }
+        }
+
+        foreach (['brandlens', 'footr', 'pockettrove', 'www', 'spel'] as $slug) {
+            $this->assertContains($slug, $reserved);
+        }
+        $this->assertNotContains('Brandlens', $reserved);
+        $this->assertNotContains('FOOTR', $reserved);
+        $this->assertNotContains('', $reserved);
+    }
 }
