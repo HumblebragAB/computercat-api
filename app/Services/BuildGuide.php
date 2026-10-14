@@ -127,6 +127,10 @@ final class BuildGuide
     public static function downloadUrl(string $version, string $path): string
     {
         $base = rtrim((string) preg_replace('#^http://#', 'https://', (string) config('app.url')), '/');
+        $parts = parse_url($base);
+        if ($base === '' || ! is_array($parts) || ($parts['scheme'] ?? null) !== 'https' || ($parts['host'] ?? '') === '') {
+            throw new \RuntimeException('APP_URL måste vara en http(s)-adress med värd; byggguidens nedladdningar serveras alltid över https.');
+        }
 
         return $base.'/api/v1/build-guide/'.$version.'/files/'.implode('/', array_map('rawurlencode', explode('/', $path)));
     }
@@ -137,6 +141,12 @@ final class BuildGuide
         // source kommer ur manifestet, aldrig från anroparen; kontrollen är ett extra skydd.
         if (str_contains($source, '..') || ! is_file($file)) {
             throw new \RuntimeException("Byggguidens fil {$source} saknas i {$version}.");
+        }
+        // En länk (eller en länkad katalog på vägen) kan peka var som helst på servern.
+        $real = realpath($file);
+        $rootReal = realpath(self::root($version));
+        if (is_link($file) || $real === false || $rootReal === false || ! str_starts_with($real, $rootReal.'/')) {
+            throw new \RuntimeException("Byggguidens fil {$source} i {$version} är en symbolisk länk eller ligger utanför guiden.");
         }
 
         $content = (string) file_get_contents($file);

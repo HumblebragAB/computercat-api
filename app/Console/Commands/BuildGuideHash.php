@@ -40,6 +40,20 @@ class BuildGuideHash extends Command
             return self::FAILURE;
         }
 
+        // Symboliska länkar (filer eller kataloger) kan peka utanför guiden; de hashas aldrig.
+        foreach ((new Finder)->in($root.'/files')->ignoreDotFiles(false)->ignoreVCS(false) as $entry) {
+            if ($entry->isLink()) {
+                $this->error('files/'.str_replace('\\', '/', $entry->getRelativePathname()).' är en symbolisk länk. Ersätt den med en vanlig fil och kör igen.');
+
+                return self::FAILURE;
+            }
+        }
+        if (is_link($readme)) {
+            $this->error('templates/README.md är en symbolisk länk.');
+
+            return self::FAILURE;
+        }
+
         $files = [];
         foreach ((new Finder)->files()->in($root.'/files')->ignoreDotFiles(false)->ignoreVCS(false) as $file) {
             $relative = str_replace('\\', '/', $file->getRelativePathname());

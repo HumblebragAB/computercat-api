@@ -203,4 +203,64 @@ class BuildGuideTest extends TestCase
         $this->assertSame(hash('sha256', "export default {};\n"), BuildGuide::file('v2', 'next.config.ts')['sha256']);
         $this->assertContains('.gitignore', array_column(BuildGuide::manifest('v2')['files'], 'path'));
     }
+
+    // En symbolisk länk i guiden kan peka var som helst på servern; den
+    // serveras aldrig, inte ens när innehållet råkar stämma med sha256.
+    public function test_symlinked_file_is_refused_even_with_matching_sha256(): void
+    {
+        $root = $this->tempGuide();
+        $target = "{$root}/utanfor-next.config.ts";
+        copy("{$root}/v1/files/next.config.ts", $target);
+        unlink("{$root}/v1/files/next.config.ts");
+        symlink($target, "{$root}/v1/files/next.config.ts");
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('symbolisk länk');
+        BuildGuide::file('v1', 'next.config.ts');
+    }
+
+    public function test_hash_command_refuses_symlinks(): void
+    {
+        $root = $this->tempGuide();
+        File::copyDirectory("{$root}/v1", "{$root}/v2");
+        $manifest = json_decode(file_get_contents("{$root}/v2/manifest.json"), true);
+        $manifest['version'] = 'v2';
+        file_put_contents("{$root}/v2/manifest.json", json_encode($manifest));
+        symlink("{$root}/v2/files/package.json", "{$root}/v2/files/lank.json");
+
+        $this->artisan('computercat:byggguide:hash v2')->expectsOutputToContain('symbolisk länk')->assertExitCode(1);
+    }
+
+    public function test_download_url_requires_an_https_app_url(): void
+    {
+        config(['app.url' => 'http://computercat.test']);
+        $this->assertSame('https://computercat.test/api/v1/build-guide/v1/files/package-lock.json', BuildGuide::downloadUrl('v1', 'package-lock.json'));
+
+        foreach (['', 'computercat.test', 'ftp://computercat.test', 'https://'] as $url) {
+            config(['app.url' => $url]);
+            try {
+                BuildGuide::downloadUrl('v1', 'package-lock.json');
+                $this->fail("Släpptes igenom: '{$url}'");
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('APP_URL', $e->getMessage());
+            }
+        }
+    }
+
+    // Forges nginx nekar sökvägar med /. (kommentaren i publicManifest): en
+    // dotfil måste alltid gå inline via MCP och får därför aldrig bli för stor.
+    public function test_dotfiles_are_always_delivered_inline(): void
+    {
+        foreach (BuildGuide::versions() as $version) {
+            foreach (BuildGuide::publicManifest($version)['files'] as $file) {
+                $dotted = collect(explode('/', $file['path']))->contains(fn (string $segment) => str_starts_with($segment, '.'));
+                if (! $dotted) {
+                    continue;
+                }
+                $this->assertLessThanOrEqual(BuildGuide::INLINE_MAX_BYTES, $file['bytes'], $file['path']);
+                $this->assertSame('mcp', $file['delivery'], $file['path']);
+                $this->assertNull($file['download_url'], $file['path']);
+            }
+        }
+    }
 }
