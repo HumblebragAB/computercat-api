@@ -84,8 +84,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "3be7749d03c5f234002dc0cec26bcf9773fc6b9fe3d7879c2c644fd39960f7ce",
-            "bytes": 8858
+            "sha256": "0da47702a6eba2d0b11c7f1151cda28e928db77d6a8e29b59ea8923db6d74acc",
+            "bytes": 9071
         },
         {
             "path": "eslint.config.mjs",
@@ -120,8 +120,8 @@
         {
             "path": "scripts/cc-gate.mjs",
             "source": "files/scripts/cc-gate.mjs",
-            "sha256": "1e76599319e04f6f4ef3cc812904558eaf4d7b38c5e0a15b351a6650704afd3e",
-            "bytes": 5482
+            "sha256": "994fe1bcbaa1cfb48648aeea1ed04d2d4960775fad865094b33765af5d67f384",
+            "bytes": 9087
         },
         {
             "path": "scripts/check-export.mjs",
@@ -234,14 +234,14 @@
         {
             "path": "src/lib/computercat/csp.test.ts",
             "source": "files/src/lib/computercat/csp.test.ts",
-            "sha256": "41616983620849477654ba966d9b773f8a83fd777cb9ded047539477916fc5a9",
-            "bytes": 1024
+            "sha256": "9b1819acb7711431af8c1811955d3b6a6a45cee68313ee2be5392015b4d2fec3",
+            "bytes": 1225
         },
         {
             "path": "src/lib/computercat/csp.ts",
             "source": "files/src/lib/computercat/csp.ts",
-            "sha256": "998a36c6795ef7119ae03a457e077646864f71d4edd51e2ace3c9dfeab62e963",
-            "bytes": 994
+            "sha256": "44dd82b6265efc99adebcd9e8b96d3cbbbf5447a155033728d4b914c4f2ed236",
+            "bytes": 1447
         },
         {
             "path": "src/lib/computercat/errors.test.ts",
@@ -366,8 +366,8 @@
         {
             "path": "test/security.test.ts",
             "source": "files/test/security.test.ts",
-            "sha256": "91b50e3e62d825739a49fa49f6db07448fa84fc48c54c5d4a9e8c6d65bea8a01",
-            "bytes": 6682
+            "sha256": "2d0627f96e14fd654737b939fe78199baa14fe61d38d2366ed4c6d4f0f143221",
+            "bytes": 11149
         },
         {
             "path": "tsconfig.json",

@@ -6,8 +6,15 @@ import { DEFAULT_BASE_URL } from './config';
 // exakt den här policyn; en ändring här kräver en ny byggguideversion.
 // 'unsafe-inline' för skript krävs av Next.js-exportens inline-skript (self.__next_f.push).
 export function contentSecurityPolicy(apiUrl: string | undefined): string {
-  // Ogiltig adress: new URL kastar och bygget faller (fail loud).
-  const origin = new URL(apiUrl?.trim() || DEFAULT_BASE_URL).origin;
+  // Samma regler som parseConfig i config.ts; allt annat kastar och bygget faller (fail loud).
+  const raw = apiUrl?.trim() || DEFAULT_BASE_URL;
+  const url = new URL(raw);
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+    throw new Error('NEXT_PUBLIC_COMPUTERCAT_URL måste börja med https:// (http bara mot localhost).');
+  }
+  if (raw.includes('*') || url.origin === 'null') throw new Error('NEXT_PUBLIC_COMPUTERCAT_URL är ingen giltig adress.');
+  const origin = url.origin;
   return [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",

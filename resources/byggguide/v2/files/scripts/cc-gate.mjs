@@ -2,9 +2,21 @@
 // exporten i out/. Del 2 (sist i filen): npm audit för produktionsberoenden.
 // Körs sist i `npm run check` och i Coolify-bygget, där kommandot hämtar den här filen över
 // https från den låsta byggguidens REST (Computercat serverar bara låsta filer och kontrollerar
-// deras sha256 innan de skickas); spelrepot kan inte ändra det som körs där. Skriptet importerar
-// inget utanför Node, eftersom Coolify kör det fristående från /tmp.
-// Skriver aldrig ut ett hittat värde, bara fil och mönstrets namn.
+// deras sha256 innan de skickas). Skriptet importerar inget utanför Node, eftersom Coolify kör
+// det fristående från /tmp. Skriver aldrig ut ett hittat värde, bara fil och mönstrets namn.
+//
+// Hotmodell
+// - Skyddas: att en hemlighet, en source map, en dold fil eller en sida utan (eller med kringgången)
+//   Content-Security-Policy publiceras på Demo.
+// - Indata: innehållet i out/ och miljön, båda producerade av spelets kod och spelets Claude.
+// - Antaganden: Node och filsystemet är hederliga; out/ är resultatet av `npm run build`.
+// - Gräns (R12): spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod.
+//   `npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön.
+//   Att ta bort eller ändra skripten eller `check` stänger inte av spärren i Coolify, men ett
+//   lokalt `check` bevisar ingenting om en ändrad kopia.
+// - CSP-metataggen gäller bara resurser som webbläsaren hittar efter den. React/Next lyfter
+//   <script async src>, <link rel=stylesheet> m.fl. ovanför metataggen, så alla resurs-URL:er i
+//   HTML kontrolleras separat och måste vara samma ursprung (se checkResources).
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -40,16 +52,27 @@ function fromEnvFiles(name) {
   return null;
 }
 
+// Samma regler som parseConfig i src/lib/computercat/config.ts: https, http bara mot
+// localhost/127.0.0.1, ingen joker, inget ogenomskinligt ursprung.
+function apiOrigin(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) return null;
+  if (raw.includes('*') || url.origin === 'null') return null;
+  return url.origin;
+}
+
 // Samma policy som src/lib/computercat/csp.ts (test/security.test.ts jämför dem). Skriptet kan inte
 // importera csp.ts: Coolify kör det fristående.
 function expectedPolicy() {
   const raw = process.env[URL_NAME]?.trim() || fromEnvFiles(URL_NAME) || DEFAULT_API_URL;
-  let origin;
-  try {
-    origin = new URL(raw).origin;
-  } catch {
-    return null;
-  }
+  const origin = apiOrigin(raw);
+  if (origin === null) return null;
   return [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
@@ -86,16 +109,79 @@ const decode = (text) =>
     hex ? String.fromCodePoint(parseInt(hex, 16)) : dec ? String.fromCodePoint(Number(dec)) : ENTITIES[name.toLowerCase()],
   );
 
-function cspPolicies(html) {
-  const policies = [];
-  for (const [tag] of html.matchAll(/<meta\b[^>]*>/gi)) {
+const TAG = /<([a-zA-Z][a-zA-Z0-9-]*)\b((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+const ATTR = /([a-zA-Z_:][a-zA-Z0-9_:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+
+function parseTags(html) {
+  const tags = [];
+  for (const [, name, rest] of html.matchAll(TAG)) {
     const attrs = {};
-    for (const [, key, double, single] of tag.matchAll(/([a-zA-Z:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-      attrs[key.toLowerCase()] = decode(double ?? single ?? '');
-    }
-    if ((attrs['http-equiv'] ?? '').toLowerCase() === 'content-security-policy') policies.push(attrs.content ?? '');
+    for (const [, key, d, s, u] of rest.matchAll(ATTR)) attrs[key.toLowerCase()] = decode(d ?? s ?? u ?? '');
+    tags.push({ name: name.toLowerCase(), attrs });
   }
-  return policies;
+  return tags;
+}
+
+function cspPolicies(tags) {
+  return tags
+    .filter((t) => t.name === 'meta' && (t.attrs['http-equiv'] ?? '').trim().toLowerCase() === 'content-security-policy')
+    .map((t) => t.attrs.content ?? '');
+}
+
+// URL-bärande attribut per element. data: tillåts bara för bilder (img-src 'self' data:).
+const RESOURCE_ATTRS = {
+  script: ['src'],
+  link: ['href', 'imagesrcset'],
+  iframe: ['src'],
+  frame: ['src'],
+  img: ['src', 'srcset'],
+  source: ['src', 'srcset'],
+  video: ['src', 'poster'],
+  audio: ['src'],
+  track: ['src'],
+  object: ['data'],
+  embed: ['src'],
+  form: ['action'],
+  input: ['src', 'formaction'],
+  button: ['formaction'],
+  base: ['href'],
+};
+const DATA_OK = new Set(['img', 'source']);
+
+function sameOrigin(value, allowData) {
+  const v = value.trim();
+  if (/[\u0000-\u001f\u007f\s\\]/.test(v)) return false; // webbläsare tar bort/omtolkar dessa tecken
+  if (allowData && /^data:/i.test(v)) return true;
+  return (v.startsWith('/') && !v.startsWith('//')) || v.startsWith('./') || v.startsWith('../');
+}
+
+function checkResources(file, tags) {
+  for (const { name, attrs } of tags) {
+    if (name === 'base') {
+      report(file, '<base> tillåts inte');
+      continue;
+    }
+    if (name === 'meta' && (attrs['http-equiv'] ?? '').trim().toLowerCase() === 'refresh') {
+      report(file, '<meta http-equiv="refresh"> tillåts inte');
+      continue;
+    }
+    for (const attr of RESOURCE_ATTRS[name] ?? []) {
+      const value = attrs[attr];
+      if (value === undefined || value.trim() === '') continue;
+      const parts = attr.endsWith('srcset') ? value.split(',').map((p) => p.trim().split(/\s+/)[0]) : [value];
+      for (const part of parts) {
+        if (part && !sameOrigin(part, DATA_OK.has(name))) {
+          let shown = 'ogiltig adress';
+          try {
+            shown = new URL(part, 'https://x.invalid').origin;
+          } catch {
+            // behåll ogiltig adress
+          }
+          report(file, `extern resurs (<${name} ${attr}> pekar utanför samma ursprung: ${shown})`);
+        }
+      }
+    }
+  }
 }
 
 if (!existsSync(OUT) || !lstatSync(OUT).isDirectory()) {
@@ -112,15 +198,17 @@ if (policy === null) {
 const files = walk(OUT);
 let pages = 0;
 for (const file of files) {
-  if (file.endsWith('.map')) report(file, 'source map (*.map publiceras inte)');
+  if (file.toLowerCase().endsWith('.map')) report(file, 'source map (*.map publiceras inte)');
   // latin1 läser varje byte som ett tecken: mönstren är ASCII och träffar oavsett filens kodning.
   const text = readFileSync(file, 'latin1');
   for (const [name, pattern] of SECRETS) {
     if (pattern.test(text)) report(file, `hemlighet (${name})`);
   }
-  if (file.endsWith('.html')) {
+  if (file.toLowerCase().endsWith('.html')) {
     pages++;
-    const found = cspPolicies(text);
+    const tags = parseTags(text);
+    checkResources(file, tags);
+    const found = cspPolicies(tags);
     if (found.length === 0) report(file, 'CSP saknas (<meta http-equiv="Content-Security-Policy">)');
     else if (found.length > 1) report(file, 'mer än en CSP-tagg');
     else if (found[0] !== policy) report(file, 'CSP avviker från byggguidens policy');

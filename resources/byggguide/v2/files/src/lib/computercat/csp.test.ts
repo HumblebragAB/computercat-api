@@ -16,4 +16,8 @@ describe('contentSecurityPolicy', () => {
   it('kastar på en ogiltig adress, så att bygget faller i stället för att släppa igenom fel policy', () => {
     expect(() => contentSecurityPolicy('inte en adress')).toThrow();
   });
+
+  it.each(['ftp://x.example', 'http://evil.example', 'https://*.example', 'javascript:alert(1)'])('avvisar %s som API-adress', (url) => {
+    expect(() => contentSecurityPolicy(url)).toThrow();
+  });
 });

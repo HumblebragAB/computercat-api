@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -76,6 +76,82 @@ describe('cc-gate.mjs: säkerhetsdelen', () => {
     expect(res.status).toBe(0);
   });
 
+  // Ordgräns: ett ordtecken direkt före träffen ska stoppa mönstret (gäller de mönster som börjar med \\b).
+  it.each(PLANTED.filter(([name]) => !['private-key', 'slack-webhook'].includes(name)))('ordgräns för %s', (_name, value) => {
+    const res = run(project({ 'out/index.html': okPage, 'out/a.js': `const k="x${value}";` }));
+    expect(res.status).toBe(0);
+  });
+
+  it.each(['h', 'o', 'u', 's', 'r'])('github-token träffar gh%s_ men inte gh%s_ med fel längd', (letter) => {
+    const hit = run(project({ 'out/index.html': okPage, 'out/a.js': `"gh${letter}_${filler(36)}"` }));
+    expect(hit.status).toBe(letter === 'h' ? 0 : 1);
+    const short = run(project({ 'out/index.html': okPage, 'out/a.js': `"ghp_${filler(35)}"` }));
+    expect(short.status).toBe(0);
+  });
+
+  it.each(['sk', 'rk'])('stripe-live-key träffar %s_live_ och kräver minst 20 tecken', (prefix) => {
+    expect(run(project({ 'out/index.html': okPage, 'out/a.js': `"${prefix}_` + `live_${filler(24)}"` })).status).toBe(1);
+    expect(run(project({ 'out/index.html': okPage, 'out/a.js': `"${prefix}_` + `live_${filler(19)}"` })).status).toBe(0);
+  });
+
+  it('fäller på symboliska länkar i out/', () => {
+    const dir = project({ 'out/index.html': okPage, 'hemligt.txt': 'x' });
+    symlinkSync(join(dir, 'hemligt.txt'), join(dir, 'out/länk.txt'));
+    const res = run(dir);
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('check-security: out/länk.txt: symbolisk länk');
+  });
+
+  it('fäller på extern resurs som React lyft ovanför CSP-taggen', () => {
+    const evil = `<!DOCTYPE html><html lang="sv"><head><script src="https://evil.example/x.js" async=""></script>${metaTag(contentSecurityPolicy(undefined))}</head><body></body></html>`;
+    const res = run(project({ 'out/index.html': evil }));
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('check-security: out/index.html: extern resurs (<script src>');
+    expect(res.output).toContain('https://evil.example');
+  });
+
+  it.each([
+    ['<script src="//evil.example/x.js"></script>', 'script src'],
+    ['<script src="/\\evil.example/x.js"></script>', 'script src'],
+    ['<link rel="stylesheet" href="https://evil.example/a.css"/>', 'link href'],
+    ['<img src="https://evil.example/a.png"/>', 'img src'],
+    ['<img srcset="/a.png 1x, https://evil.example/b.png 2x"/>', 'img srcset'],
+    ['<iframe src="https://evil.example"></iframe>', 'iframe src'],
+    ['<form action="https://evil.example"></form>', 'form action'],
+    ['<script src=https://evil.example/x.js></script>', 'script src'],
+    ['<link rel="preload" href="data:text/css,x"/>', 'link href'],
+  ])('fäller på %s', (tag, what) => {
+    const html = okPage.replace('</body>', `${tag}</body>`);
+    const res = run(project({ 'out/index.html': html }));
+    expect(res.status).toBe(1);
+    expect(res.output).toContain(`(<${what}>`);
+  });
+
+  it('fäller på <base> och meta refresh', () => {
+    const base = run(project({ 'out/index.html': okPage.replace('<title>', '<base href="/x/"/><title>') }));
+    expect(base.status).toBe(1);
+    expect(base.output).toContain('<base> tillåts inte');
+    const refresh = run(project({ 'out/index.html': okPage.replace('<title>', '<meta http-equiv="refresh" content="0;url=/x"/><title>') }));
+    expect(refresh.status).toBe(1);
+  });
+
+  it('släpper igenom samma ursprung och data: i bilder', () => {
+    const html = okPage.replace(
+      '</body>',
+      '<script src="/_next/static/a.js" async=""></script><link rel="stylesheet" href="/_next/static/a.css"/><img src="data:image/png;base64,AAAA"/><img srcset="./a.png 1x, ../b.png 2x"/><a href="https://example.com">l</a></body>',
+    );
+    const res = run(project({ 'out/index.html': html }));
+    expect(res.output).toContain('check-security: OK');
+    expect(res.status).toBe(0);
+  });
+
+  it('fäller på source maps och HTML med versaler i filnamnet', () => {
+    const res = run(project({ 'out/index.html': okPage, 'out/A.JS.MAP': '{}', 'out/X.HTML': page() }));
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('out/A.JS.MAP: source map');
+    expect(res.output).toContain('out/X.HTML: CSP saknas');
+  });
+
   it('fäller på source maps', () => {
     const res = run(project({ 'out/index.html': okPage, 'out/_next/static/a.js.map': '{}' }));
     expect(res.status).toBe(1);
@@ -121,7 +197,12 @@ describe('cc-gate.mjs: säkerhetsdelen', () => {
   });
 
   it('fäller när out/ saknas eller adressen är ogiltig', () => {
-    expect(run(project({ 'README.md': 'x' })).output).toContain('check-security: out/ saknas');
+    const missing = run(project({ 'README.md': 'x' }));
+    expect(missing.status).toBe(1);
+    expect(missing.output).toContain('check-security: out/ saknas');
+    const http = run(project({ 'out/index.html': okPage }), { NEXT_PUBLIC_COMPUTERCAT_URL: 'http://evil.example/api' });
+    expect(http.status).toBe(1);
+    expect(http.output).toContain('ingen giltig adress');
     const res = run(project({ 'out/index.html': okPage }), { NEXT_PUBLIC_COMPUTERCAT_URL: 'inte en adress' });
     expect(res.status).toBe(1);
     expect(res.output).toContain('NEXT_PUBLIC_COMPUTERCAT_URL är ingen giltig adress');
