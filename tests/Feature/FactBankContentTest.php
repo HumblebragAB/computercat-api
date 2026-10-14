@@ -18,9 +18,17 @@ class FactBankContentTest extends TestCase
         }
     }
 
+    // Etapp A:s fröartiklar gäller både v1- och v2-spel. Etapp C får ha build_guide: [v2].
+    private const SEED_ARTICLES = [
+        'process-ide-till-live', 'process-slapp-engangssteg', 'process-slappflode', 'security-hemligheter-i-klienten',
+        'stack-ingen-egen-backend', 'stack-nytt-beroende', 'stack-valordning', 'testing-vad-som-testas',
+    ];
+
     public function test_seed_articles_apply_to_every_build_guide_version(): void
     {
-        foreach ((new FactBank)->all() as $fact) {
+        $seeds = array_filter((new FactBank)->all(), fn (array $fact) => in_array($fact['id'], self::SEED_ARTICLES, true));
+        $this->assertCount(count(self::SEED_ARTICLES), $seeds);
+        foreach ($seeds as $fact) {
             $this->assertNull($fact['build_guide'], $fact['id']);
             $this->assertStringNotContainsString('byggguide/v2', $fact['markdown'], $fact['id']);
         }
