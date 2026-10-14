@@ -6,5 +6,5 @@ use App\Mcp\ComputercatServer;
 
 class FixtureServer extends ComputercatServer
 {
-    protected array $tools = [FixtureGameTool::class];
+    protected array $tools = [FixtureGameTool::class, FixturePlatformTool::class];
 }

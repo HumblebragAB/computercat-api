@@ -69,4 +69,21 @@ class GameAccessTest extends TestCase
             'ownerRecord' => $game, 'pageClass' => \App\Filament\Resources\GameResource\Pages\EditGame::class,
         ])->assertSee('mattias@humblebrag.se')->assertSee('owner');
     }
+
+    public function test_is_owner_follows_pivot_role_or_platform_admin(): void
+    {
+        $game = Game::create(['slug' => 'mine', 'name' => 'M', 'is_active' => true, 'settings' => []]);
+        $owner = User::factory()->staff()->create();
+        $member = User::factory()->staff()->create();
+        $bannedOwner = User::factory()->staff()->create(['is_banned' => true]);
+        $admin = User::factory()->staff(admin: true)->create();
+        $game->members()->attach($owner, ['role' => 'owner']);
+        $game->members()->attach($member, ['role' => 'member']);
+        $game->members()->attach($bannedOwner, ['role' => 'owner']);
+
+        $this->assertTrue(GameAccess::isOwner($owner, $game));
+        $this->assertFalse(GameAccess::isOwner($member, $game));
+        $this->assertFalse(GameAccess::isOwner($bannedOwner, $game));
+        $this->assertTrue(GameAccess::isOwner($admin, $game));
+    }
 }

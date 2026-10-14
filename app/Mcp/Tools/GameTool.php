@@ -2,14 +2,12 @@
 
 namespace App\Mcp\Tools;
 
-use App\Mcp\AuditLogger;
 use App\Mcp\GameAccess;
+use App\Mcp\Tools\Concerns\ToolHelpers;
 use App\Models\Game;
 use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
@@ -19,14 +17,31 @@ use Laravel\Mcp\Server\Tool;
 // revisionslogg sker här, så att ett nytt verktyg inte kan glömma dem.
 abstract class GameTool extends Tool
 {
-    // Körs i en transaktion. Ett felsvar (isError) rullar tillbaka allt som
-    // run() hunnit skriva, likaså ett undantag.
+    use ToolHelpers;
+
+    // Körs i en transaktion om transactional() är sant. Ett felsvar (isError)
+    // rullar tillbaka allt som run() hunnit skriva, likaså ett undantag.
     abstract protected function run(Game $game, array $args, User $user): Response;
 
     // Subklassens schema() ska börja med [...$this->gameSchema($schema), ...].
     protected function gameSchema(JsonSchema $schema): array
     {
         return ['game' => $schema->string()->description('Game slug')->required()];
+    }
+
+    // Verktyg som anropar externa tjänster (Slack) eller köar jobb svarar
+    // false: inget HTTP-anrop får ske inne i en databastransaktion.
+    protected function transactional(): bool
+    {
+        return true;
+    }
+
+    // Anropas när spelet inte hittas. Ett verktyg kan då svara om något som
+    // finns utan spel (en provisionering som stannade innan spelet skapades).
+    // Null ger samma "Game not found" som för icke-medlemmar.
+    protected function whenGameMissing(User $user, string $slug, array $args): ?Response
+    {
+        return null;
     }
 
     public function handle(Request $request): Response
@@ -39,22 +54,31 @@ abstract class GameTool extends Tool
         $game = $user && $slug !== '' ? GameAccess::find($user, $slug) : null;
 
         if (! $game) {
+            try {
+                $fallback = $user && $user->isStaff() && $slug !== '' ? $this->whenGameMissing($user, $slug, $args) : null;
+            } catch (\Throwable $e) {
+                return $this->unexpected($user, null, $args, $e);
+            }
+
+            if ($fallback !== null) {
+                $this->audit($user, null, $args, $fallback->isError() ? 'validation_error' : 'ok');
+
+                return $fallback;
+            }
+
             $this->audit($user, null, $args, 'denied');
 
             return $this->gameNotFound();
         }
 
         try {
-            $response = $this->runInTransaction($game, $args, $user);
+            $response = $this->transactional()
+                ? $this->runInTransaction($game, $args, $user)
+                : $this->run($game, $args, $user);
         } catch (ValidationException $e) {
             $response = $this->validationFailed($e->errors());
         } catch (\Throwable $e) {
-            $ref = (string) Str::uuid();
-            Log::error('MCP tool failed', ['ref' => $ref, 'tool' => $this->name(), 'user_id' => $user->id, 'game' => $game->slug, 'args' => AuditLogger::summarize($args), 'exception' => $e]);
-            $this->audit($user, $game, $args, 'error');
-
-            // Undantagets text kan innehålla interna detaljer; klienten får bara referensen.
-            return Response::error("Unexpected error (ref {$ref}).");
+            return $this->unexpected($user, $game, $args, $e);
         }
 
         // Skrivs utanför transaktionen så att även misslyckade anrop loggas.
@@ -66,17 +90,6 @@ abstract class GameTool extends Tool
     protected function gameNotFound(): Response
     {
         return Response::error('Game not found.');
-    }
-
-    /** @param array<string, string|array<int, string>> $errors */
-    protected function validationFailed(array $errors): Response
-    {
-        return Response::error("Validation failed:\n".collect($errors)->map(fn ($m, $f) => "- {$f}: ".implode(' ', (array) $m))->implode("\n"));
-    }
-
-    protected function json(array $data): Response
-    {
-        return Response::text(json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     }
 
     private function runInTransaction(Game $game, array $args, User $user): Response
@@ -94,16 +107,5 @@ abstract class GameTool extends Tool
         $response->isError() ? DB::rollBack() : DB::commit();
 
         return $response;
-    }
-
-    // En trasig loggning får inte ändra svaret: ändringen är redan gjord
-    // (eller nekad). Felet rapporteras i stället.
-    private function audit(?User $user, ?Game $game, array $args, string $outcome): void
-    {
-        try {
-            AuditLogger::record($user, $game, $this->name(), $args, $outcome);
-        } catch (\Throwable $e) {
-            report($e);
-        }
     }
 }

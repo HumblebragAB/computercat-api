@@ -28,4 +28,19 @@ class GameAccess
     {
         return self::visible($user)->where('slug', $slug)->first();
     }
+
+    // Ägare enligt pivot (role = owner) eller plattformsadmin. Avstängda
+    // användare är aldrig ägare.
+    public static function isOwner(User $user, Game $game): bool
+    {
+        if (! $user->isStaff()) {
+            return false;
+        }
+
+        if ($user->isPlatformAdmin()) {
+            return true;
+        }
+
+        return $game->members()->whereKey($user->getKey())->wherePivot('role', 'owner')->exists();
+    }
 }

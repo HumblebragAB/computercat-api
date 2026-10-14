@@ -4,6 +4,7 @@ namespace Tests\Feature\Mcp;
 
 use App\Mcp\ComputercatServer;
 use App\Mcp\Tools\GameTool;
+use App\Mcp\Tools\PlatformTool;
 use App\Models\McpAuditLog;
 use App\Models\StaffUser;
 use Laravel\Passport\Passport;
@@ -88,5 +89,16 @@ class ToolInvariantsTest extends McpTestCase
         $expected = array_map(fn ($class) => (new $class)->name(), ComputercatServer::toolClasses());
 
         $this->assertEqualsCanonicalizing($expected, $listed);
+    }
+
+    /** Varje verktyg ärver en bas som loggar och fångar fel. */
+    public function test_every_tool_extends_a_logging_base(): void
+    {
+        foreach (ComputercatServer::toolClasses() as $class) {
+            $this->assertTrue(
+                is_subclass_of($class, GameTool::class) || is_subclass_of($class, PlatformTool::class),
+                "{$class} ärver varken GameTool eller PlatformTool",
+            );
+        }
     }
 }

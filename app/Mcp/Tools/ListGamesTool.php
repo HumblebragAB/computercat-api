@@ -2,18 +2,14 @@
 
 namespace App\Mcp\Tools;
 
-use App\Mcp\AuditLogger;
 use App\Mcp\GameAccess;
 use App\Models\Game;
 use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
-use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
-use Laravel\Mcp\Server\Tool;
 
-// Listar spelen användaren når. Tar inget spel och ärver därför inte GameTool,
-// men loggas på samma sätt (utan spel).
-class ListGamesTool extends Tool
+// Listar spelen användaren når. Tar inget spel; loggas via PlatformTool.
+class ListGamesTool extends PlatformTool
 {
     protected string $name = 'list_games';
 
@@ -24,16 +20,8 @@ class ListGamesTool extends Tool
         return [];
     }
 
-    public function handle(Request $request): Response
+    protected function run(array $args, User $user): Response
     {
-        $user = User::find($request->user()?->getKey());
-
-        if (! $user || ! $user->isStaff()) {
-            $this->audit($user, 'denied');
-
-            return Response::error('Not allowed.');
-        }
-
         // Fälten väljs uttryckligen: settings bär hemligheter och får aldrig följa med.
         $games = GameAccess::visible($user)->orderBy('slug')->get()
             ->map(fn (Game $game) => [
@@ -43,17 +31,6 @@ class ListGamesTool extends Tool
                 'allowed_origins' => $game->allowed_origins ?? [],
             ])->values()->all();
 
-        $this->audit($user, 'ok');
-
-        return Response::text(json_encode(['games' => $games], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
-    }
-
-    private function audit(?User $user, string $outcome): void
-    {
-        try {
-            AuditLogger::record($user, null, $this->name(), [], $outcome);
-        } catch (\Throwable $e) {
-            report($e);
-        }
+        return $this->json(['games' => $games]);
     }
 }
