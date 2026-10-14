@@ -10,10 +10,11 @@ class ComputercatServer extends Server
 
     protected string $version = '1.0.0';
 
-    protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Only games you are a member of are visible.';
+    protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Create new Demo games with create_game and follow them with get_provisioning_status. A new game repo gets its base code from the build guide (get_build_guide, get_build_guide_file). Only games you are a member of are visible.';
 
     protected array $tools = [
         Tools\ListGamesTool::class,
+        Tools\CreateGameTool::class,
         Tools\GetBuildGuideTool::class,
         Tools\GetBuildGuideFileTool::class,
         Tools\GetGameTool::class,
