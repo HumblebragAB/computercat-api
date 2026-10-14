@@ -24,6 +24,14 @@ describe('säkerhetsreglerna i eslint', () => {
     ['setInterval med sträng', 'setInterval(`alert(1)`, 10);\n', 'no-implied-eval'],
     ['en annan NEXT_PUBLIC-variabel', 'export const k = process.env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
     ['NEXT_PUBLIC med hakparentes', "export const k = process.env['NEXT_PUBLIC_COMPUTERCAT_GAME'];\n", 'no-restricted-syntax'],
+    ['destrukturering av process.env', 'const { NEXT_PUBLIC_STRIPE_KEY } = process.env;\nexport const k = NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['alias av process.env', 'const env = process.env;\nexport const k = env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['spridning av process.env', 'export const all = { ...process.env };\n', 'no-restricted-syntax'],
+    ['globalThis.process.env', 'export const k = globalThis.process.env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['window.process.env', 'export const k = window.process.env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['process[env] med hakparentes', "export const k = process['env'].NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
+    ['tilldelning av dangerouslySetInnerHTML', 'export function f(el: HTMLElement, h: string) {\n  (el as unknown as { dangerouslySetInnerHTML: unknown }).dangerouslySetInnerHTML = { __html: h };\n}\n', 'no-restricted-syntax'],
+    ['dangerouslySetInnerHTML med hakparentes', "export const x = (o: Record<string, unknown>) => o['dangerouslySetInnerHTML'];\n", 'no-restricted-syntax'],
   ])('fäller %s', async (_name, code, rule) => {
     const rules = await rulesFor(code);
     expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);

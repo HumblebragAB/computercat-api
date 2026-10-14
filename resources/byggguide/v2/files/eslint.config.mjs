@@ -15,9 +15,20 @@ const OTHER_PUBLIC_ENV = {
     "MemberExpression[object.type='MemberExpression'][object.object.name='process'][object.property.name='env'][computed=false][property.name=/^NEXT_PUBLIC_/]:not([property.name=/^NEXT_PUBLIC_COMPUTERCAT_(GAME|URL)$/])",
   message: 'Bara NEXT_PUBLIC_COMPUTERCAT_GAME och NEXT_PUBLIC_COMPUTERCAT_URL får läsas (byggguide v2). Allt i NEXT_PUBLIC_* blir publikt.',
 };
-const COMPUTED_ENV = {
-  selector: "MemberExpression[object.type='MemberExpression'][object.object.name='process'][object.property.name='env'][computed=true]",
-  message: 'Läs process.env med punkt och bokstavligt namn (byggguide v2); Next bakar bara in NEXT_PUBLIC_* i den formen.',
+// I src/: varje åtkomst till process.env (även globalThis.process.env och process['env']) som inte
+// är en direkt punktläsning av NODE_ENV eller de två tillåtna NEXT_PUBLIC-namnen. Det stänger
+// destrukturering, alias (const env = process.env), spridning och hakparentes.
+const ENV_OBJECT = {
+  selector:
+    "MemberExpression:matches([property.name='env'][computed=false], [property.value='env'][computed=true]):matches([object.name='process'], [object.property.name='process']):not(MemberExpression[computed=false][property.name=/^(NODE_ENV|NEXT_PUBLIC_COMPUTERCAT_(GAME|URL))$/] > .object)",
+  message:
+    'Läs bara process.env.NODE_ENV, process.env.NEXT_PUBLIC_COMPUTERCAT_GAME och process.env.NEXT_PUBLIC_COMPUTERCAT_URL, direkt med punkt (byggguide v2). Inga alias, destrukturering, spridning eller hakparentes.',
+};
+// Tilldelning och hakparentesläsning av egenskapen på ett element (el.dangerouslySetInnerHTML = ..., x['dangerouslySetInnerHTML']).
+const DANGEROUS_HTML_MEMBER = {
+  selector:
+    "MemberExpression[property.name='dangerouslySetInnerHTML'][computed=false], MemberExpression[property.value='dangerouslySetInnerHTML'][computed=true]",
+  message: 'dangerouslySetInnerHTML är förbjudet (byggguide v2). Rendera texten som text.',
 };
 
 export default defineConfig([
@@ -28,15 +39,15 @@ export default defineConfig([
       'no-eval': 'error',
       'no-implied-eval': 'error',
       'no-new-func': 'error',
-      'no-restricted-syntax': ['error', DANGEROUS_HTML, OTHER_PUBLIC_ENV],
+      'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV],
     },
   },
   // Spelets källkod (det som bakas in i out/). Ett senare block ersätter regelns hela
-  // värde för sina filer, därför upprepas de två första väljarna här.
+  // värde för sina filer, därför upprepas de tre första väljarna här.
   {
     files: ['src/**/*.{ts,tsx}'],
     rules: {
-      'no-restricted-syntax': ['error', DANGEROUS_HTML, OTHER_PUBLIC_ENV, COMPUTED_ENV],
+      'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV, ENV_OBJECT],
     },
   },
   globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', '.claude/**']),
