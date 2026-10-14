@@ -23,6 +23,8 @@ class Game extends Model
     // följa med när en modell serialiseras till ett svar.
     protected $hidden = ['settings'];
 
+    protected $attributes = ['release_targets' => '[]'];
+
     protected function casts(): array
     {
         return [
@@ -30,6 +32,8 @@ class Game extends Model
             'allowed_origins' => 'array',
             'is_active' => 'boolean',
             'is_listed' => 'boolean',
+            'release_targets' => 'array',
+            'releases_enabled' => 'boolean',
         ];
     }
 
@@ -96,5 +100,26 @@ class Game extends Model
     public function members(): BelongsToMany
     {
         return $this->belongsToMany(User::class)->withPivot('role')->withTimestamps();
+    }
+
+    /** @return list<string> */
+    public function releaseTargets(): array
+    {
+        return array_values($this->release_targets ?? []);
+    }
+
+    public function releases(): HasMany
+    {
+        return $this->hasMany(Release::class);
+    }
+
+    public function setupSteps(): HasMany
+    {
+        return $this->hasMany(ReleaseSetupStep::class);
+    }
+
+    public function demoBuilds(): HasMany
+    {
+        return $this->hasMany(DemoBuild::class);
     }
 }
