@@ -247,25 +247,36 @@ console.log(`check-security: OK (${files.length} filer, ${pages} HTML-sidor med 
 
 const ARGS = ['audit', '--omit=dev', '--audit-level=high', '--json', '--registry=https://registry.npmjs.org/'];
 const SERIOUS = new Set(['high', 'critical']);
-const NETWORK = /^(ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|E?5\d\d)$/;
+const NETWORK = /^(ENOTFOUND|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EPIPE|ERR_SOCKET_TIMEOUT|E?5\d\d)$/;
+const NPM_TIMEOUT_MS = 120_000;
 // Bara testerna kortar väntan; den kan aldrig bli längre än 10 s.
-const RETRY_DELAY_MS = Math.min(10_000, Math.max(0, Number(process.env.CC_AUDIT_RETRY_DELAY_MS ?? 10_000) || 0));
+// Ogiltigt eller negativt värde ger 10 s.
+const RETRY_DELAY_MS = (() => {
+  const raw = process.env.CC_AUDIT_RETRY_DELAY_MS;
+  const n = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.min(10_000, n) : 10_000;
+})();
+
+// Det som skrivs ut kommer från npm och registret: ta bort styrtecken och korta av.
+const clean = (value) => String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, 80);
 
 // error.code om npm skickar den, annars koden ur message (E-kod eller HTTP-status).
 function errorCode(json) {
   if (typeof json?.error?.code === 'string' && json.error.code !== '') return json.error.code;
   const message = typeof json?.message === 'string' ? json.message : '';
-  return message.match(/\b(E[A-Z][A-Z0-9_]+)\b/)?.[1] ?? message.match(/\b(5\d\d)\b/)?.[1] ?? 'okänd kod';
+  return message.match(/\b(E[A-Z][A-Z0-9_]+)\b/)?.[1] ?? message.match(/\b(?:status|HTTP)\s*(5\d\d)\b/i)?.[1] ?? 'okänd kod';
 }
 
 function audit() {
   // Spike A (S8): nixpacks sätter NPM_CONFIG_PRODUCTION=false, och då räknar npm audit
-  // --omit=dev ändå med utvecklingsberoenden. Variabeln får aldrig nå npm här.
-  const env = { ...process.env };
-  delete env.NPM_CONFIG_PRODUCTION;
-  delete env.npm_config_production;
-  const r = spawnSync('npm', ARGS, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
-  if (r.error) return { kind: 'failed', code: r.error.code ?? 'npm startade inte' };
+  // --omit=dev ändå med utvecklingsberoenden. npm läser npm_config_* utan hänsyn till versaler,
+  // så alla sådana variabler tas bort (fail closed); bara flaggorna i ARGS styr granskningen.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^npm_config_/i.test(key)));
+  const r = spawnSync('npm', ARGS, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, timeout: NPM_TIMEOUT_MS });
+  if (r.error) {
+    const code = r.error.code ?? 'npm startade inte';
+    return NETWORK.test(code) ? { kind: 'registry', code } : { kind: 'failed', code };
+  }
 
   let json = null;
   try {
@@ -274,7 +285,8 @@ function audit() {
     return { kind: 'failed', code: 'ingen JSON' };
   }
   const isReport =
-    json !== null && typeof json === 'object' && 'auditReportVersion' in json && typeof json.vulnerabilities === 'object' && json.vulnerabilities !== null;
+    json !== null && typeof json === 'object' && 'auditReportVersion' in json && typeof json.vulnerabilities === 'object' && json.vulnerabilities !== null &&
+    typeof json.metadata === 'object' && json.metadata !== null && typeof json.metadata.vulnerabilities === 'object' && json.metadata.vulnerabilities !== null;
   if (!isReport) {
     const code = errorCode(json);
     return NETWORK.test(code) ? { kind: 'registry', code } : { kind: 'failed', code };
@@ -283,7 +295,7 @@ function audit() {
   // Fail closed: high eller critical fäller även om npm avslutade med 0.
   const serious = Object.values(json.vulnerabilities)
     .filter((v) => v && SERIOUS.has(v.severity))
-    .map((v) => `${v.name} (${v.severity})`)
+    .map((v) => `${clean(v.name)} (${v.severity})`)
     .sort();
   if (serious.length > 0) return { kind: 'findings', serious };
   if (r.status !== 0) return { kind: 'unexpected', status: r.status };
@@ -292,7 +304,7 @@ function audit() {
 
 let result = audit();
 if (result.kind === 'registry') {
-  console.error(`cc-audit: npm-registret svarade inte (${result.code}); nytt försök om ${RETRY_DELAY_MS / 1000} s.`);
+  console.error(`cc-audit: npm-registret svarade inte (${clean(result.code)}); nytt försök om ${RETRY_DELAY_MS / 1000} s.`);
   await new Promise((done) => setTimeout(done, RETRY_DELAY_MS));
   result = audit();
 }
@@ -304,10 +316,10 @@ if (result.kind === 'ok') {
   console.error('cc-audit: uppdatera paketen (npm audit fix eller en ny version) och pusha igen. Tysta aldrig fyndet.');
   process.exit(1);
 } else if (result.kind === 'unexpected') {
-  console.error(`cc-audit: npm audit avslutade med kod ${result.status} utan high eller critical i rapporten.`);
+  console.error(`cc-audit: npm audit avslutade med kod ${clean(result.status)} utan high eller critical i rapporten.`);
   process.exit(1);
 } else if (result.kind === 'failed') {
-  console.error(`cc-audit: npm audit misslyckades (${result.code}). Kör npm audit --omit=dev lokalt och läs felet.`);
+  console.error(`cc-audit: npm audit misslyckades (${clean(result.code)}). Kör npm audit --omit=dev lokalt och läs felet.`);
   process.exit(1);
 } else {
   console.error('cc-audit: npm-registret svarade inte (två försök). Vänta och pusha igen.');

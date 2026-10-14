@@ -87,6 +87,6 @@ class BuildGuideV2Test extends TestCase
 
         $this->assertContains('test/ccAudit.test.ts', $paths);
         $this->assertStringContainsString("'--omit=dev', '--audit-level=high'", $gate);
-        $this->assertStringContainsString('delete env.NPM_CONFIG_PRODUCTION;', $gate);
+        $this->assertStringContainsString('!/^npm_config_/i.test(key)', $gate);
     }
 }

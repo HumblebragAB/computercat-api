@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -43,6 +43,7 @@ n=$(cat "${dir}/anrop" 2>/dev/null || echo 0)
 echo $((n + 1)) > "${dir}/anrop"
 echo "$@" >> "${dir}/argument"
 echo "\${NPM_CONFIG_PRODUCTION-osatt} \${npm_config_production-osatt}" >> "${dir}/miljo"
+env | grep -i '^npm_config_' >> "${dir}/npmconfig"
 i=$n; [ "$i" -gt ${last} ] && i=${last}
 cat "${dir}/svar-$i.json"
 exit $(cat "${dir}/kod-$i")
@@ -62,21 +63,23 @@ function project(): string {
   return dir;
 }
 
-function run(answers: Answer[], env: Record<string, string> = {}) {
+function run(answers: Answer[], env: Record<string, string> = {}, opts: { cwd?: string; timeout?: number } = {}) {
   const dir = fakeNpm(answers);
   const base: NodeJS.ProcessEnv = { ...process.env };
   delete base.NEXT_PUBLIC_COMPUTERCAT_URL;
   const r = spawnSync(process.execPath, [SCRIPT], {
-    cwd: project(),
+    cwd: opts.cwd ?? project(),
+    timeout: opts.timeout,
     env: { ...base, PATH: `${dir}:${process.env.PATH}`, CC_AUDIT_RETRY_DELAY_MS: '0', ...env },
     encoding: 'utf8',
   });
   return {
     status: r.status,
     output: `${r.stdout}${r.stderr}`,
-    calls: Number(readFileSync(join(dir, 'anrop'), 'utf8')),
-    args: readFileSync(join(dir, 'argument'), 'utf8'),
-    env: readFileSync(join(dir, 'miljo'), 'utf8'),
+    calls: existsSync(join(dir, 'anrop')) ? Number(readFileSync(join(dir, 'anrop'), 'utf8')) : 0,
+    args: existsSync(join(dir, 'argument')) ? readFileSync(join(dir, 'argument'), 'utf8') : '',
+    npmConfig: existsSync(join(dir, 'npmconfig')) ? readFileSync(join(dir, 'npmconfig'), 'utf8') : '',
+    env: existsSync(join(dir, 'miljo')) ? readFileSync(join(dir, 'miljo'), 'utf8') : '',
   };
 }
 
@@ -86,6 +89,12 @@ describe('cc-gate.mjs: audit-delen', () => {
     const res = run([CLEAN], { NPM_CONFIG_PRODUCTION: 'false', npm_config_production: 'false' });
     expect(res.status).toBe(0);
     expect(res.env.trim()).toBe('osatt osatt');
+  });
+
+  it('tar bort alla npm_config_-variabler, även med andra versaler', () => {
+    const res = run([CLEAN], { NPM_CONFIG_production: 'true', Npm_Config_Include: 'dev', npm_config_omit: '', NPM_CONFIG_AUDIT_LEVEL: 'critical' });
+    expect(res.status).toBe(0);
+    expect(res.npmConfig).toBe('');
   });
 
   it('godkänner en ren rapport och kör npm audit med specens flaggor', () => {
@@ -148,6 +157,36 @@ describe('cc-gate.mjs: audit-delen', () => {
     expect(res.status).toBe(1);
     expect(res.output).toContain('npm audit misslyckades (ingen JSON)');
     expect(res.calls).toBe(1);
+  });
+
+  it('fäller när rapporten saknar metadata (fail closed)', () => {
+    const res = run([{ status: 0, stdout: JSON.stringify({ auditReportVersion: 2, vulnerabilities: {} }) }]);
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('npm audit misslyckades');
+    expect(res.calls).toBe(1);
+  });
+
+  it('väntar på riktigt mellan försöken', () => {
+    const start = Date.now();
+    const res = run([REGISTRY_DOWN, CLEAN], { CC_AUDIT_RETRY_DELAY_MS: '300' });
+    expect(res.status).toBe(0);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(250);
+  });
+
+  it('ett ogiltigt CC_AUDIT_RETRY_DELAY_MS ger standardväntan 10 s, inte 0', () => {
+    // Avbryts efter 2 s: meddelandet skrivs före väntan.
+    const res = run([REGISTRY_DOWN], { CC_AUDIT_RETRY_DELAY_MS: 'abc' }, { timeout: 2000 });
+    expect(res.output).toContain('nytt försök om 10 s');
+    expect(res.calls).toBe(1);
+  });
+
+  it('anropar aldrig npm när säkerhetsdelen fäller', () => {
+    const cwd = project();
+    writeFileSync(join(cwd, 'out/app.js.map'), '{}');
+    const res = run([CLEAN], {}, { cwd });
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('check-security');
+    expect(res.calls).toBe(0);
   });
 
   it('fäller när npm avslutar med fel utan high eller critical i rapporten', () => {
