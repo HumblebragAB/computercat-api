@@ -136,7 +136,8 @@ class AppAttestVerifierTest extends TestCase
 
     /**
      * Varje kategori ur Apples tabell (validating-apps-that-connect-to-your-server, steg 10) i båda lägena.
-     * null = tillägget saknas.
+     * null = tillägget saknas. Apple kallar extensions "optional client properties", och en riktig
+     * iPhone (TestFlight, 2026-10-14) skickade inga: då avgör aaguid miljön och nyckeln godtas.
      *
      * @return array<string, array{int|null, bool, bool}>
      */
@@ -146,7 +147,7 @@ class AppAttestVerifierTest extends TestCase
         $out = [];
         foreach ([null, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] as $c) {
             foreach ($accepted as $mode => $ok) {
-                $out[($c ?? 'saknas')." i {$mode}"] = [$c, $mode === 'development', in_array($c, $ok, true)];
+                $out[($c ?? 'saknas')." i {$mode}"] = [$c, $mode === 'development', $c === null || in_array($c, $ok, true)];
             }
         }
 
@@ -166,6 +167,25 @@ class AppAttestVerifierTest extends TestCase
             $this->expectExceptionMessageMatches('/validation category/');
         }
         $this->assertSame($category, $this->verify($a, dev: $dev)->validationCategory);
+    }
+
+    /** Som från en riktig iPhone: authData slutar efter COSE-nyckeln, inga extensions alls. */
+    public function test_godtar_attestering_utan_extensions(): void
+    {
+        $a = $this->fake()->attest(self::CHALLENGE, self::APP_ID, ['extensions' => []]);
+        $key = $this->verify($a);
+        $this->assertSame('production', $key->environment);
+        $this->assertNull($key->validationCategory);
+        $this->assertNull($key->bundleVersion);
+    }
+
+    /** Utan extensions avgör aaguid: en development-nyckel avvisas fortfarande i produktion. */
+    public function test_utan_extensions_avvisas_development_nyckel_i_produktion(): void
+    {
+        $a = $this->fake()->attest(self::CHALLENGE, self::APP_ID, ['extensions' => [], 'aaguid' => 'appattestdevelop']);
+        $this->expectException(InvalidAttestationException::class);
+        $this->expectExceptionMessageMatches('/development-nyckel i produktion/');
+        $this->verify($a);
     }
 
     /** Artikeln kallar värdet UInt32; ett CBOR-heltal tolkas på samma sätt som Apples 4-byte-form. */

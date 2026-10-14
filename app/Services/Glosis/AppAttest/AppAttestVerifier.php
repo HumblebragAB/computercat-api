@@ -62,8 +62,10 @@ PEM;
     /**
      * apple_validation_category_01 (validating-apps-that-connect-to-your-server, steg 10):
      * 2 = TestFlight, 4 = App Store. 3 = development-signerad, bara när development är tillåtet.
-     * Allt annat (saknas, 0 ogiltig, 1 OS-binär, 5 Enterprise/ad hoc, 6 Developer ID,
-     * 7–9 olämpliga, 10 övrigt, okända) avvisas.
+     * Allt annat (0 ogiltig, 1 OS-binär, 5 Enterprise/ad hoc, 6 Developer ID, 7–9 olämpliga,
+     * 10 övrigt, okända) avvisas. Saknas värdet godtas nyckeln: Apple kallar extensions
+     * "optional client properties", och en riktig iPhone (TestFlight, 2026-10-14) skickade inga.
+     * Miljön avgörs då av aaguid (steg 8), som alltid finns.
      */
     public const PRODUCTION_CATEGORIES = [2, 4];
 
@@ -214,11 +216,11 @@ PEM;
             throw new InvalidAttestationException('COSE-nyckeln är inte credCerts nyckel');
         }
 
-        // 10. apple_validation_category_01 ska vara en tillåten kategori (se PRODUCTION_CATEGORIES).
+        // 10. apple_validation_category_01 ska, när den finns, vara en tillåten kategori (se PRODUCTION_CATEGORIES).
         $category = $auth->validationCategory();
         $allowed = $allowDevelopment ? [...$this->productionCategories, ...$this->developmentCategories] : $this->productionCategories;
-        if ($category === null || ! in_array($category, $allowed, true)) {
-            throw new InvalidAttestationException('validation category '.($category ?? 'saknas').' är inte tillåten');
+        if ($category !== null && ! in_array($category, $allowed, true)) {
+            throw new InvalidAttestationException("validation category {$category} är inte tillåten");
         }
 
         // 11. apple_bundle_version_01 tolkas och sparas men avgör inte.
