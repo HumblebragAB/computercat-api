@@ -148,12 +148,29 @@ const RESOURCE_ATTRS = {
 };
 const DATA_OK = new Set(['img', 'source']);
 
-function sameOrigin(value, allowData) {
+// Ger null om adressen är samma ursprung, annars vad som är fel (aldrig en påhittad adress).
+function originProblem(value, allowData) {
   const v = value.trim();
-  if (/[\u0000-\u001f\u007f\s\\]/.test(v)) return false; // webbläsare tar bort/omtolkar dessa tecken
-  if (allowData && /^data:/i.test(v)) return true;
-  return (v.startsWith('/') && !v.startsWith('//')) || v.startsWith('./') || v.startsWith('../');
+  if (/[\u0000-\u001f\u007f\s\\]/.test(v)) return 'otillåtet tecken (blanksteg, styrtecken eller backslash)';
+  if (allowData && /^data:/i.test(v)) return null;
+  if (v.startsWith('//')) return 'protokolllös adress (//)';
+  const scheme = v.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (scheme) {
+    if (/^https?$/i.test(scheme[1])) {
+      try {
+        return `extern adress till ${new URL(v).origin}`;
+      } catch {
+        return 'ogiltig extern adress';
+      }
+    }
+    return `schemat ${scheme[1].toLowerCase()}: tillåts inte`;
+  }
+  return null; // /sökväg, ./sökväg, ../sökväg och sökväg utan schema är samma ursprung
 }
+
+// <link href> laddar bara något för dessa rel-värden; canonical, alternate m.fl. är metadata.
+const LOADING_RELS = new Set(['stylesheet', 'preload', 'modulepreload', 'prefetch', 'icon', 'apple-touch-icon', 'manifest']);
+const loadsResource = (rel) => (rel ?? '').toLowerCase().split(/\s+/).some((r) => LOADING_RELS.has(r));
 
 function checkResources(file, tags) {
   for (const { name, attrs } of tags) {
@@ -165,20 +182,14 @@ function checkResources(file, tags) {
       report(file, '<meta http-equiv="refresh"> tillåts inte');
       continue;
     }
+    if (name === 'link' && !loadsResource(attrs.rel)) continue;
     for (const attr of RESOURCE_ATTRS[name] ?? []) {
       const value = attrs[attr];
       if (value === undefined || value.trim() === '') continue;
       const parts = attr.endsWith('srcset') ? value.split(',').map((p) => p.trim().split(/\s+/)[0]) : [value];
       for (const part of parts) {
-        if (part && !sameOrigin(part, DATA_OK.has(name))) {
-          let shown = 'ogiltig adress';
-          try {
-            shown = new URL(part, 'https://x.invalid').origin;
-          } catch {
-            // behåll ogiltig adress
-          }
-          report(file, `extern resurs (<${name} ${attr}> pekar utanför samma ursprung: ${shown})`);
-        }
+        const problem = part ? originProblem(part, DATA_OK.has(name)) : null;
+        if (problem) report(file, `extern resurs (<${name} ${attr}>: ${problem})`);
       }
     }
   }

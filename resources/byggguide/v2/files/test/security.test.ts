@@ -107,7 +107,7 @@ describe('cc-gate.mjs: säkerhetsdelen', () => {
     const res = run(project({ 'out/index.html': evil }));
     expect(res.status).toBe(1);
     expect(res.output).toContain('check-security: out/index.html: extern resurs (<script src>');
-    expect(res.output).toContain('https://evil.example');
+    expect(res.output).toContain('extern adress till https://evil.example');
   });
 
   it.each([
@@ -125,6 +125,22 @@ describe('cc-gate.mjs: säkerhetsdelen', () => {
     const res = run(project({ 'out/index.html': html }));
     expect(res.status).toBe(1);
     expect(res.output).toContain(`(<${what}>`);
+  });
+
+  it('släpper igenom relativa sökvägar utan snedstreck och canonical/alternate-länkar', () => {
+    const html = okPage.replace(
+      '</body>',
+      '<img src="cat.png"/><link rel="preload" href="cat.png" as="image"/><link rel="canonical" href="https://spel.example/"/><link rel="alternate" hreflang="en" href="https://spel.example/en"/></body>',
+    );
+    const res = run(project({ 'out/index.html': html }));
+    expect(res.output).toContain('check-security: OK');
+    expect(res.status).toBe(0);
+  });
+
+  it('kontrollerar link href även när rel har flera värden eller versaler', () => {
+    const res = run(project({ 'out/index.html': okPage.replace('</body>', '<link rel="Shortcut ICON" href="https://evil.example/f.ico"/></body>') }));
+    expect(res.status).toBe(1);
+    expect(res.output).toContain('<link href>');
   });
 
   it('fäller på <base> och meta refresh', () => {

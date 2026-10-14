@@ -120,8 +120,8 @@
         {
             "path": "scripts/cc-gate.mjs",
             "source": "files/scripts/cc-gate.mjs",
-            "sha256": "994fe1bcbaa1cfb48648aeea1ed04d2d4960775fad865094b33765af5d67f384",
-            "bytes": 9087
+            "sha256": "450e50a227284ebc950d49bbaa7075bcd98a30e92a5d84f8b72d8fa0ef09d5c1",
+            "bytes": 9772
         },
         {
             "path": "scripts/check-export.mjs",
@@ -366,8 +366,8 @@
         {
             "path": "test/security.test.ts",
             "source": "files/test/security.test.ts",
-            "sha256": "2d0627f96e14fd654737b939fe78199baa14fe61d38d2366ed4c6d4f0f143221",
-            "bytes": 11149
+            "sha256": "2263ced1c36e4079fa8a23011fa3652b9c4b08790a67e9d163e979933f7dde33",
+            "bytes": 12008
         },
         {
             "path": "tsconfig.json",
