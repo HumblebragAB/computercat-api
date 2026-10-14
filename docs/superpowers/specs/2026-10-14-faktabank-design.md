@@ -21,7 +21,7 @@ Ersätter delprojekt 3 i tidigare specar ("dokument-samlingar och AI-mallar"), s
 ## Avvikelser från den muntliga designen (kräver Eriks bekräftelse)
 
 1. **Ingen bygglogg i status.** Coolify v4.4.6 lämnar bara ut byggloggar till en token med `read:sensitive` (`DeployController.php`: `makeVisible(['logs'])` när `can_read_sensitive`; `GET /applications/{uuid}/logs` kräver `api.ability:read:sensitive`). Samma behörighet lämnar ut basic auth-lösenord och env-värden, och Computercats token saknar den avsiktligt. I stället säger statusen att bygget föll och att samma kontroller körs lokalt (del 3, "Status vid fel").
-2. **Säkerhetsskriptet ägs av Computercat, inte av spelrepot.** Om spärren bara vore `npm run check` ur spelets `package.json` kunde spelets egen kod ändra eller ta bort den. Coolifys byggkommando hämtar därför skriptet från Computercat, kontrollerar dess sha256 och kör det. Att ta bort eller ändra skripten i spelrepot stänger inte av det (gränsen står under "Säkerhet").
+2. **Säkerhetsskriptet ägs av Computercat, inte av spelrepot.** Om spärren bara vore `npm run check` ur spelets `package.json` kunde spelets egen kod ändra eller ta bort den. Coolifys byggkommando hämtar därför skriptet över https från den låsta byggguiden i Computercat och kör det. Att ta bort eller ändra skripten i spelrepot stänger inte av det (gränsen står under "Säkerhet").
 3. **Leveransen delas i tre etapper** (A, B, C nedan), eftersom faktabanken, byggguide v2 och artikelinnehållet har olika risk och olika beroenden.
 
 ## Etapper
@@ -124,7 +124,7 @@ Ingen publik REST för faktabanken.
 
 ### Innehåll i v2 jämfört med v1
 
-1. **`scripts/check-security.mjs`** (ägs av Computercat, del av manifestet) kontrollerar `out/`:
+1. **`scripts/cc-gate.mjs`** (ägs av Computercat, del av manifestet) är spärren i ett enda skript utan beroenden utanför Node (Eriks beslut 2026-10-14 efter spike A). Det kontrollerar först `out/` och kör sedan `npm audit` (se "Coolify kör spärren"). Kontrollen av `out/`:
    - Hemligheter, med exakta mönster och ordgränser: privata nycklar (`-----BEGIN [A-Z ]*PRIVATE KEY-----`), GitHub (`\bgh[pousr]_[A-Za-z0-9]{36}\b`, `\bgithub_pat_[A-Za-z0-9_]{50,}\b`), Slack (`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`, `hooks\.slack\.com/services/T[A-Z0-9]+/`), Stripe (`\b[sr]k_live_[A-Za-z0-9]{20,}\b`), AWS (`\bAKIA[0-9A-Z]{16}\b`), JWT (`\beyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b`). En träff fäller med filnamn och mönstrets namn, aldrig värdet. Spiken S5 visar att mönstren ger noll träffar på riktiga exporter.
    - Inga source maps (`*.map`).
    - CSP i varje `out/**/*.html`: en `<meta http-equiv="Content-Security-Policy">` med exakt policyn nedan, där `connect-src` innehåller ursprunget för `NEXT_PUBLIC_COMPUTERCAT_URL` (standard `https://api.computercat.co`).
@@ -132,28 +132,23 @@ Ingen publik REST för faktabanken.
 3. **eslint-regler** som förbjuder `dangerouslySetInnerHTML`, `eval`, `new Function`, `setTimeout`/`setInterval` med sträng, och `process.env.NEXT_PUBLIC_*` utöver `NEXT_PUBLIC_COMPUTERCAT_GAME` och `NEXT_PUBLIC_COMPUTERCAT_URL` (kontrollen av publika variabler sker i källkoden, eftersom Next ersätter dem med sina värden i `out/`).
 4. **`"test": "NODE_ENV=test vitest run"`**, så att testerna inte körs med React i produktionsläge om byggmiljön sätter `NODE_ENV=production`.
 5. **braces-sårbarheten** (dev-beroende via eslint) får ingen override (Eriks beslut 2026-10-14): det finns ingen rättad version (senaste braces är 3.0.3, GHSA-vfj7-8cjw-p6xm gäller `<=3.0.3`). v2:s `CLAUDE.md` och README säger på en rad att fyndet bara finns i utvecklingsberoenden (eslint-kedjan), att produktionsgranskningen (`npm audit --omit=dev`) är ren och att det är den som spärren kör. `overrides` i v2 är samma som i v1.
-6. **`npm run check`** kör typkontroll, lint, test, bygge, `check-export.mjs` och `check-security.mjs`, så att spelets Claude får samma fel lokalt som Coolify.
-7. **`test/security.test.ts`** kör `check-security.mjs` mot en tillfällig katalog med en planterad nyckel, en `.map`-fil och en HTML-fil utan CSP, och kräver att varje fall fäller med rätt mönsternamn och utan värdet. De planterade strängarna byggs vid körning (`'sk_' + 'live_' + …`), så att GitHubs push protection och gitleaks inte stoppar committen.
+6. **`npm run check`** kör typkontroll, lint, test, bygge, `check-export.mjs` och `cc-gate.mjs`, så att spelets Claude får samma fel lokalt som Coolify.
+7. **`test/security.test.ts`** kör säkerhetsdelen i `cc-gate.mjs` mot en tillfällig katalog med en planterad nyckel, en `.map`-fil och en HTML-fil utan CSP, och kräver att varje fall fäller med rätt mönsternamn och utan värdet. De planterade strängarna byggs vid körning (`'sk_' + 'live_' + …`), så att GitHubs push protection och gitleaks inte stoppar committen.
 8. **`CLAUDE.md`** får avsnittet "Faktabanken" (när man frågar, att spelets version skickas med, att en artikel går före egen bedömning och att stora beslut utan artikel frågas till en människa).
 
 ### Coolify kör spärren
 
 För nya appar med v2 sätter `CoolifyClient::createApplication($slug, $version)` `build_command` till ett kommando som Computercat äger, inte spelrepots `npm run check`:
 
-Byggkommandot är en enda rad (Coolify tar en sträng); här radbrutet för läsbarhet. `<S>` och `<A>` är sha256 ur v2-manifestet, inskrivna av Computercat när appen skapas.
+Byggkommandot (en rad):
 
 ```bash
-npm run build \
- && curl -fsS https://api.computercat.co/api/v1/build-guide/v2/files/scripts/check-security.mjs -o /tmp/cc-security.mjs \
- && curl -fsS https://api.computercat.co/api/v1/build-guide/v2/files/scripts/cc-audit.mjs -o /tmp/cc-audit.mjs \
- && echo "<S>  /tmp/cc-security.mjs" | sha256sum -c - \
- && echo "<A>  /tmp/cc-audit.mjs" | sha256sum -c - \
- && node /tmp/cc-security.mjs \
- && node /tmp/cc-audit.mjs
+npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v2/files/scripts/cc-gate.mjs -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs
 ```
 
-- Säkerhetsskriptet hämtas från byggguidens publika REST (finns sedan delprojekt 2) och kontrolleras mot sha256 som Computercat skriver in när appen skapas. Att ta bort eller ändra skriptet i spelrepot påverkar inte det som körs (se gränsen under "Säkerhet"). Är hämtningen eller sha256-kontrollen fel: bygget faller.
-- `scripts/cc-audit.mjs` (också i v2-manifestet) kör `npm audit --omit=dev --audit-level=high`. Det skiljer fynd (fäller med paketnamn och allvarlighetsgrad) från nätverksfel mot registret (ett omförsök efter 10 s, sedan fäller det med texten "npm-registret svarade inte"). En ny high i ett produktionsberoende stoppar alla byggen tills paketet uppdateras; en höjning av nivån kräver Eriks beslut.
+- Spike A visade att Coolify sparar `build_command` i `varchar(255)` (längre ger 500 och ingen app) och bara godkänner `SHELL_SAFE_COMMAND_PATTERN` (inga `|`, `;`, `>`, `<`, `$`). Två hämtningar med sha256-kontroll ryms inte, så Erik beslutade 2026-10-14: ett skript och ingen sha256 i kommandot. Integriteten: Computercat serverar bara låsta guidefiler, `BuildGuide::read` kontrollerar varje fils sha256 mot manifestet innan den skickas, hämtningen går över https till vår egen server, och spelrepot kan inte ändra filen. `BuildGuide::coolifyBuildCommand()` fäller själv om kommandot blir längre än 255 tecken eller får tecken utanför mönstret. Är hämtningen fel: bygget faller.
+- `resources/byggguide/v2` tas aldrig bort så länge appar byggda från v2 finns; deras byggkommando hämtar skriptet därifrån.
+- Audit-delen kör `npm audit --omit=dev --audit-level=high` med `NPM_CONFIG_PRODUCTION` och `npm_config_production` borttagna ur npm:s miljö: nixpacks sätter `NPM_CONFIG_PRODUCTION=false`, och då räknar `--omit=dev` ändå med utvecklingsberoenden (spike A: 5 high från eslint-kedjan; utan variabeln ren). Den skiljer fynd (fäller med paketnamn och allvarlighetsgrad) från nätverksfel mot registret (ett omförsök efter 10 s, sedan fäller den med texten "npm-registret svarade inte"); andra npm-fel fäller direkt med sin kod. En ny high i ett produktionsberoende stoppar alla byggen tills paketet uppdateras; en höjning av nivån kräver Eriks beslut.
 - Typkontroll, lint och tester körs i spelets `npm run check` lokalt men inte i Coolify, eftersom de gäller kvalitet, inte säkerhet, och skulle förlänga bygget i en kö med `concurrent_builds = 1`. Om S1 visar att det ryms inom rimlig tid kan de läggas till senare.
 - Befintliga appar (v1) får inget nytt byggkommando; ett test visar att `createApplication($slug, 'v1')` inte skickar `build_command`.
 
@@ -168,11 +163,11 @@ Gräns, skriven i artikeln `security`: spärren skyddar mot misstag och kända m
 Med en engångsapp som städas på sparade id:n (samma mönster som spiken i delprojekt 2), mot den ofrusna v2-katalogen:
 
 - **S1:** Coolifys byggkommando ovan fungerar i nixpacks static-läge: `out/` publiceras, byggtid och RAM-topp noteras (1 vCPU, 4 GB, `concurrent_builds = 1`) och jämförs med Coolifys timeout för deployment.
-- **S2:** `npm audit` och `curl` mot `api.computercat.co` når nätet från byggmiljön, `sha256sum` finns i nixpacks-bilden, och `NODE_ENV` i byggmiljön noteras.
+- **S2:** `npm audit` och `curl` mot `api.computercat.co` når nätet från byggmiljön, och `NODE_ENV` i byggmiljön noteras. (Klar i spike A 2026-10-14, se bilagan.)
 - **S3:** CSP-policyn låter exemplet ladda och skicka en tid till topplistan i en riktig webbläsare utan CSP-fel i konsolen.
 - **S4:** förutsatt ett tidigare lyckat bygge: en planterad nyckel i `public/` ger ett `failed` bygge, och Demo visar fortfarande förra bygget.
-- **S5:** `check-security.mjs` ger noll träffar på `out/` från v1-exemplet och från Kattsvep.
-- **S6:** ett spelrepo som tagit bort `check-security.mjs` eller ändrat `package.json` fäller ändå i Coolify (skriptet hämtas från Computercat).
+- **S5:** säkerhetsdelen i `cc-gate.mjs` ger noll träffar på `out/` från v1-exemplet och från Kattsvep.
+- **S6:** ett spelrepo som tagit bort `cc-gate.mjs` eller ändrat `package.json` fäller ändå i Coolify (skriptet hämtas från Computercat).
 - **S7:** `npm run check` med `NODE_ENV=production` i miljön är grön (testskriptet sätter `NODE_ENV=test`).
 
 Faller en punkt: stanna och fråga Erik.
@@ -181,13 +176,13 @@ Faller en punkt: stanna och fråga Erik.
 
 - Faktabanken innehåller inga hemligheter och inget kundspecifikt. Verktygen är bara läsande och bara för staff. `get_fact` slår upp id i ett index byggt från `resources/faktabank`, och id valideras mot mönstret i schemat innan uppslag.
 - Söktext i revisionsloggen redigeras (del 2).
-- Säkerhetsskriptet i bygget hämtas från Computercat och kontrolleras mot sha256: att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön). Den ersätter inte granskning före Live. Spiken svarar ja/nej på om Coolifys GitHub-token går att läsa från bygget.
+- Spärrskriptet i bygget hämtas över https från den låsta byggguiden i Computercat (som kontrollerar filens sha256 innan den skickas): att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön). Den ersätter inte granskning före Live. Coolifys GitHub-token går inte att läsa i bygget: byggkatalogen `/app` saknar `.git/config` (spike A, S13).
 - `npm audit` i bygget är tidsberoende och kan stoppa byggen när en ny sårbarhet publiceras. Det är avsiktligt.
 
 ## Tester
 
 - **A:** `FactBank` (giltiga artiklar, varje valideringsregel fäller med tydligt fel, källhänvisningar med och utan suffix, symlänk och `realpath`, ociterat datum, rubrik i kodblock, sökningens tokenisering, prefixträff, poäng och ordning, ogiltig UTF-8, filter på `build_guide`); verktygen (staff, icke-staff nekas och loggas, okänt id, okänt ämne, revisionslogg med redigerad söktext); innehållstest av alla artiklar i ordinarie svit.
-- **B:** `computercat:byggguide:verify v2`; `test/security.test.ts` i guiden; `FROZEN`-hash; parametriserade `BuildGuideTest`; `CoolifyClient` skickar byggkommandot med rätt sha256 för v2 och inget för v1; statustexten för v1 och v2.
+- **B:** `computercat:byggguide:verify v2`; `test/security.test.ts` och `test/ccAudit.test.ts` i guiden (bland annat att `NPM_CONFIG_PRODUCTION` inte når npm); `FROZEN`-hash; parametriserade `BuildGuideTest`; `CoolifyClient` skickar byggkommandot för v2 (högst 255 tecken, Coolifys teckenmönster) och inget för v1; statustexten för v1 och v2.
 - **C:** innehållstestet täcker de nya artiklarna; Erik granskar texten.
 
 ## Utanför scope
