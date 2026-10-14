@@ -4,6 +4,8 @@ namespace Tests\Feature\Provisioning;
 
 use App\Models\Game;
 use App\Models\ProvisioningRun;
+use App\Provisioning\Clients\CoolifyConflictException;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 use App\Provisioning\Steps\CoolifyAppStep;
@@ -86,7 +88,7 @@ class CoolifyStepsTest extends ProvisioningTestCase
             'coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyConflict(), 409),
         ]);
 
-        $this->expectException(\App\Provisioning\Clients\CoolifyConflictException::class);
+        $this->expectException(CoolifyConflictException::class);
         $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
     }
 
@@ -103,7 +105,7 @@ class CoolifyStepsTest extends ProvisioningTestCase
         try {
             $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
             $this->fail('422 borde ha kastat.');
-        } catch (\App\Provisioning\Http\ExternalApiException) {
+        } catch (ExternalApiException) {
         }
         $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
 
@@ -127,13 +129,13 @@ class CoolifyStepsTest extends ProvisioningTestCase
 
         try {
             $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
-        } catch (\App\Provisioning\Clients\CoolifyConflictException) {
+        } catch (CoolifyConflictException) {
         }
         $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
 
         try {
             $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
-        } catch (\App\Provisioning\Http\ExternalApiException) {
+        } catch (ExternalApiException) {
         }
         $this->assertArrayHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail);
     }

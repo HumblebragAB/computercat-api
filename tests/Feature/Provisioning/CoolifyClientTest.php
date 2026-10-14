@@ -5,9 +5,11 @@ namespace Tests\Feature\Provisioning;
 use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\Clients\CoolifyConflictException;
 use App\Provisioning\Clients\CoolifyGuardException;
+use App\Provisioning\Http\ExternalApiException;
 use App\Services\BuildGuide;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\ProvisioningFakes;
 
 class CoolifyClientTest extends ProvisioningTestCase
@@ -71,7 +73,7 @@ class CoolifyClientTest extends ProvisioningTestCase
         try {
             $this->client()->createApplication('kattsvep', 'v1');
             $this->fail('422 kastade inte.');
-        } catch (\App\Provisioning\Http\ExternalApiException $e) {
+        } catch (ExternalApiException $e) {
             $this->assertStringContainsString('Coolify POST /applications/private-github-app returned 422', $e->getMessage());
         }
 
@@ -165,7 +167,7 @@ class CoolifyClientTest extends ProvisioningTestCase
         $this->assertNull($this->client()->latestDeployment('app-2'));
         Http::assertSent(fn ($r) => $r->method() === 'GET' && $r->url() === 'https://coolify.test/api/v1/deployments/applications/app-1?skip=0&take=1');
 
-        $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
+        $this->expectException(ExternalApiException::class);
         $this->client()->latestDeployment('app-3');
     }
 
@@ -265,7 +267,7 @@ class CoolifyClientTest extends ProvisioningTestCase
     }
 
     // Fail loud: ett svar av oväntad form blir ett fel, aldrig tomma strängar.
-    #[\PHPUnit\Framework\Attributes\DataProvider('malformedDeployments')]
+    #[DataProvider('malformedDeployments')]
     public function test_latest_deployment_fails_loud_on_malformed_response(array $body, string $expected): void
     {
         $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
@@ -274,7 +276,7 @@ class CoolifyClientTest extends ProvisioningTestCase
         try {
             $this->client()->latestDeployment('app-1');
             $this->fail('Ett felformat svar godtogs.');
-        } catch (\App\Provisioning\Http\ExternalApiException $e) {
+        } catch (ExternalApiException $e) {
             $this->assertStringContainsString($expected, $e->getMessage());
         }
     }
