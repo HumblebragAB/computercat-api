@@ -172,4 +172,21 @@ class ReleaseGateTest extends TestCase
 
         $this->assertStringContainsString('Setup is not finished for web', (string) ReleaseGate::check($game->fresh(), 'web', 'web_production', $this->sha()));
     }
+
+    public function test_production_test_stage_success_of_another_game_does_not_count(): void // spärr 2, per spel
+    {
+        $other = $this->releasableGame('ordjakt', ['app_store']);
+        $this->release($other, ['target' => 'app_store', 'stage' => 'testflight', 'commit_sha' => $this->sha('d'), 'status' => Release::SUCCEEDED]);
+        $this->demoBuild($this->game, $this->sha('d'));
+
+        $this->assertStringContainsString('has not succeeded in testflight', (string) $this->check('app_store', 'app_store', $this->sha('d')));
+    }
+
+    public function test_web_production_demo_receipt_of_another_game_does_not_count(): void // spärr 2, per spel
+    {
+        $other = $this->releasableGame('ordjakt', ['web']);
+        $this->demoBuild($other, $this->sha('e'));
+
+        $this->assertStringContainsString('has no successful Demo build', (string) $this->check('web', 'web_production', $this->sha('e')));
+    }
 }
