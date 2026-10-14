@@ -255,8 +255,7 @@ PEM;
         // 1–3. nonce = SHA256(authenticatorData ‖ SHA256(clientData)); signaturen är ECDSA P-256/SHA-256 med
         // nonce som meddelande (dubbel hashning), som node-app-attest (createVerify('SHA256').update(nonce)) och
         // devicecheck-appattest (SHA256withECDSA, update(nonce)).
-        // ASSUMED — verifieras mot en riktig enhet (planens Task 14) innan gratisflaggan slås på; Apple saknar assertion-testvektor.
-        // Reserv om enhetsprovet visar enkel hashning: openssl_verify($authData.hash('sha256', $clientData, true), …).
+        // Verifierat på en riktig iPhone (TestFlight) 2026-10-14: nyckel 1 i prod godkändes med sign_count 2.
         $nonce = hash('sha256', $authData.hash('sha256', $clientData, true), true);
         $key = @openssl_pkey_get_public($publicKeyPem);
         $details = $key instanceof OpenSSLAsymmetricKey ? openssl_pkey_get_details($key) : false;
