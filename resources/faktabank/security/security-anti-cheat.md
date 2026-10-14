@@ -22,7 +22,7 @@ Varje resultat till en topplista prövas av `AntiCheatService` mot `games.settin
 5. Finns ett bevis prövas det även när det inte krävs:
    - Fälten `pid`, `mc` (heltal), `gh`, `t` (heltal) och `sig` måste finnas: annars `Invalid proof format.`
    - Signaturen (`proof_algorithm`, standard `fnv1a`): `Proof signature mismatch.`
-   - `|t - score|` högst `proof_time_tolerance` (standard 1000; 0 stänger av kontrollen): `Proof time does not match score.`
+   - Bevisets tid `t` (millisekunder) jämförs med poängen: skillnaden får vara högst `proof_time_tolerance` (standard 1000) i poängens enhet. Med `score_unit` `seconds` delas `t` med 1000 först. 0 stänger av kontrollen. Annars: `Proof time does not match score.`
    - `mc` minst `min_moves` (standard 1): `Too few moves.`
 
 Standardvärdena gäller även ett spel utan inställningar, så ett poängspel med resultat över 86400 avvisas tills `max_score` höjs.
@@ -32,19 +32,19 @@ I panelen (Games, sektionen Anti-Cheat) väljer en människa ett förval och kan
 | Förval | Sätter |
 |---|---|
 | `none` | inget |
-| `time_ms` | `min_score` 5000, `max_score` 86400000, `fnv1a`, `proof_time_tolerance` 1000, `min_moves` 1 |
-| `time_seconds` | `min_score` 5, `max_score` 86400, `fnv1a`, `proof_time_tolerance` 2, `min_moves` 1 |
-| `points` | `min_score` 0, `max_score` 1000000 |
-| `points_with_proof` | `min_score` 0, `max_score` 1000000, `require_proof`, `fnv1a`, `min_moves` 1 |
+| `time_ms` | `score_unit` ms, `min_score` 5000, `max_score` 86400000, `fnv1a`, `proof_time_tolerance` 1000, `min_moves` 1 |
+| `time_seconds` | `score_unit` seconds, `min_score` 5, `max_score` 86400, `fnv1a`, `proof_time_tolerance` 2, `min_moves` 1 |
+| `points` | `min_score` 0, `max_score` 1000000, `proof_time_tolerance` 0 |
+| `points_with_proof` | `min_score` 0, `max_score` 1000000, `proof_time_tolerance` 0, `require_proof`, `fnv1a`, `min_moves` 1 |
 
-`proof_time_tolerance` har inget eget fält i panelen och sätts bara av förvalen. `points_with_proof` sätter det inte, så standardvärdet 1000 gäller.
+`score_unit` och `proof_time_tolerance` har inga egna fält i panelen och sätts bara av förvalen. Byte av förval skriver om alla förvalsnycklar, så inget ligger kvar från det förra.
 
-Connectorns verktyg ändrar inte inställningarna, och `get_game` visar aldrig spelets settings. `get_integration_guide` visar förvalet, poängintervallet och om bevis krävs, när förvalet inte är `none`.
+Connectorns verktyg ändrar inte inställningarna, och `get_game` visar aldrig spelets settings. `get_integration_guide` visar förvalet, poängintervallet, om bevis krävs och hur `t` jämförs, när förvalet inte är `none`.
 
 ## Så gör du
 
 1. Läs `get_integration_guide` för spelet och se vad som gäller i dag.
-2. Föreslå förval och gränser utifrån vad en riktig spelare kan nå (lägsta rimliga tid, högsta rimliga poäng, minsta antal drag). Skriv förslaget till en människa och be henne sätta det i panelen. Sätt inget själv och anta inte att det är gjort.
+2. Föreslå förval och gränser utifrån vad en riktig spelare kan nå (lägsta rimliga tid, högsta rimliga poäng, minsta antal drag). Skriv förslaget till en människa och be om att det sätts i panelen. Sätt inget själv och anta inte att det är gjort.
 3. Kräver spelet bevis: skapa det när rundan är klar och skicka det med resultatet:
 
 ```ts
@@ -53,7 +53,7 @@ const { flushed } = cc.client.recordScore(typ, score, { proof });
 ```
 
    `createProof` kastar `RangeError` om `pid` eller `stateHash` är `""` eller `"0"`, eller om `moves` eller `elapsedMs` inte är heltal.
-4. Servern jämför `t` direkt med poängen. Är poängen en tid ska `elapsedMs` alltså ha samma enhet som poängen (sekunder med förvalet `time_seconds`, trots namnet). Är poängen inte en tid måste `proof_time_tolerance` vara 0, annars avvisas beviset med `Proof time does not match score.` Panelen har inget fält för det; säg det till människan som sätter inställningarna.
+4. Skicka alltid `elapsedMs` i millisekunder, även när poängen är sekunder; servern räknar om med förvalets `score_unit`. Poängförvalen jämför inte tiden alls. Får ett riktigt resultat ändå `Proof time does not match score.`: kontrollera i `get_integration_guide` att förvalet passar spelets poäng och be en människa byta förval.
 5. Visa ett avvisat resultat för spelaren. Dölj det aldrig.
 
 Testa att beviset skapas och skickas: `testing-anti-cheat-bevis`.

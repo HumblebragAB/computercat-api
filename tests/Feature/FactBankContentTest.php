@@ -41,6 +41,15 @@ class FactBankContentTest extends TestCase
         $this->assertSame('stack-nytt-beroende', $bank->search('lägga till npm-paket')[0]['id']);
         $this->assertSame('stack-ingen-egen-backend', $bank->search('egen backend databas')[0]['id']);
         $this->assertSame('testing-vad-som-testas', $bank->search('vilka tester')[0]['id']);
+        // Etapp C.
+        foreach ([
+            'bygget föll' => 'security-ratta-sparrfel', 'extern font' => 'security-csp', 'anti cheat' => 'security-anti-cheat',
+            'deploy_failed' => 'process-provisioning-status', 'analytics' => 'stack-ingen-tredjepartssparning',
+            'lint regel' => 'security-lint-regler', 'npm run check' => 'testing-npm-run-check', 'sparfil' => 'security-sparfiler',
+            'offline kö' => 'practice-offline-kon', 'fråga en människa' => 'process-fraga-manniska',
+        ] as $query => $id) {
+            $this->assertSame($id, $bank->search($query)[0]['id'] ?? null, $query);
+        }
         $this->assertSame('security-hemligheter-i-klienten', $bank->search('api-nyckel hemlighet')[0]['id']);
         $this->assertSame('process-ide-till-live', $bank->search('request_live')[0]['id']);
     }
