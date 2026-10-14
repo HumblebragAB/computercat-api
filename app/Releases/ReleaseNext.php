@@ -20,7 +20,7 @@ final class ReleaseNext
         'in_progress' => 'Släppet {release} av commit {commit} pågår ({status}). Fråga igen med get_release_status.',
         'succeeded' => 'Släppet {release} av commit {commit} är klart i {stage}. Inget mer att göra.',
         'failed' => 'Släppet {release} av commit {commit} misslyckades: {error} Åtgärda orsaken och begär ett nytt släpp med promote_release(target: {target}, stage: {stage}).',
-        'cancelled' => 'Släppet {release} av commit {commit} avbröts. Begär ett nytt med promote_release(target: {target}, stage: {stage}).',
+        'cancelled' => 'Släppet {release} av commit {commit} avbröts. Väntar det på godkännande som inte kommer: fråga Erik. Annars begär ett nytt med promote_release(target: {target}, stage: {stage}).',
     ];
 
     /** @param array<string, string> $vars */

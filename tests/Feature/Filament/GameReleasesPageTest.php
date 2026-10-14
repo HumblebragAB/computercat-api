@@ -10,6 +10,7 @@ use App\Models\ReleaseSetupStep;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Livewire\Livewire;
 use Tests\Support\CreatesReleases;
 use Tests\Support\ProvisioningFakes;
@@ -148,6 +149,20 @@ class GameReleasesPageTest extends TestCase
         $this->assertSame('open', $theirs->fresh()->status);
     }
 
+    public function test_a_step_that_is_already_done_keeps_who_and_when(): void
+    {
+        $first = $this->adminUser();
+        $second = $this->adminUser();
+        $step = ReleaseSetupStep::where('game_id', $this->game->id)->first();
+        $at = now()->subDay()->startOfSecond();
+        $step->update(['status' => 'done', 'done_by' => $first->id, 'done_at' => $at]);
+
+        $this->page($second)->call('markStepDone', $step->id);
+
+        $this->assertSame($first->id, $step->fresh()->done_by);
+        $this->assertTrue($at->equalTo($step->fresh()->done_at));
+    }
+
     public function test_the_automatic_bundle_id_step_cannot_be_checked_off_by_hand(): void
     {
         $game = $this->releasableGame('ordjakt', ['app_store']);
@@ -172,9 +187,12 @@ class GameReleasesPageTest extends TestCase
 
     public function test_admin_toggles_the_game_switch(): void
     {
-        $page = $this->page($this->adminUser());
+        $admin = $this->adminUser();
+        $page = $this->page($admin);
+        Log::spy();
 
         $page->call('toggleGameSwitch');
+        Log::shouldHaveReceived('notice')->once()->with(\Mockery::type('string'), ['user_id' => $admin->id, 'game' => 'kattsvep', 'releases_enabled' => false]);
         $this->assertFalse($this->game->fresh()->releases_enabled);
 
         $page->call('toggleGameSwitch');

@@ -15,7 +15,7 @@ class SearchFactsTool extends PlatformTool
 {
     protected string $name = 'search_facts';
 
-    protected string $description = 'Search the Computercat fact bank for how we build games. Ask before choosing a library or adding a dependency, before writing tests, when a build or check fails, and before request_live. Search in Swedish or English; the articles are in Swedish. Returns up to 10 articles with id, title and summary; read one with get_fact. Pass build_guide with the version in the game\'s CLAUDE.md. Articles override your own judgement; if nothing covers a big decision, ask a human.';
+    protected string $description = 'Search the Computercat fact bank for how we build games. Ask before choosing a library or adding a dependency, before writing tests, when a build or check fails, and before promote_release or request_live. Search in Swedish or English; the articles are in Swedish. Returns up to 10 articles with id, title and summary; read one with get_fact. Pass build_guide with the version in the game\'s CLAUDE.md. Articles override your own judgement; if nothing covers a big decision, ask a human.';
 
     public function schema(JsonSchema $schema): array
     {

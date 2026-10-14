@@ -2,27 +2,33 @@
 
 namespace App\Mcp\Tools;
 
+use App\Mcp\GameAccess;
 use App\Models\Game;
+use App\Models\ProvisioningRun;
 use App\Models\User;
+use App\Rules\GameOrigin;
+use App\Support\SlackAlert;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\Validator;
 use Laravel\Mcp\Response;
 
-// Ersatt av promote_release (spec Del 1). Verktyget finns kvar som tunn väg in så att
-// inget befintligt flöde slutar fungera, men ändrar och skickar ingenting.
+// Ber Erik om Live-gång. Ändrar ingenting; Live görs för hand.
+// Tills etapp 1b öppnar webbproduktion i promote_release är det här enda vägen till Erik.
 class RequestLiveTool extends GameTool
 {
     protected string $name = 'request_live';
 
-    protected string $description = 'Replaced by promote_release. Does nothing except point you to promote_release(target: web, stage: web_production) and get_release_status. Kept so old instructions still get an answer.';
+    protected string $description = 'Ask Erik to take a finished Demo game live, optionally with a desired production domain. Sends a notification only; nothing is changed. Only the game owner. Production cannot be requested with promote_release yet; use get_release_status to follow the flow.';
 
     public function schema(JsonSchema $schema): array
     {
         return [
             ...$this->gameSchema($schema),
-            'domain' => $schema->string()->description('Ignored. Erik sets the public address as a one-time setup step.'),
+            'domain' => $schema->string()->description('Optional desired domain, e.g. kattsvep.se (no scheme, no path).'),
         ];
     }
 
+    // Slack-anropet får inte ske inne i en databastransaktion.
     protected function transactional(): bool
     {
         return false;
@@ -30,14 +36,38 @@ class RequestLiveTool extends GameTool
 
     protected function run(Game $game, array $args, User $user): Response
     {
-        $message = 'request_live is replaced. Call get_release_status to see what to do next, and promote_release(target: web, stage: web_production, commit_sha: <commit with a successful Demo build>) to ask for a production release. The first production release per game is approved by Erik; nothing is changed by this call.';
-
-        $domain = $args['domain'] ?? null;
-        if (is_string($domain) && trim($domain) !== '') {
-            // Aldrig tyst: en angiven domän sparas inte längre här.
-            $message .= ' The domain '.mb_substr(trim($domain), 0, 100).' was not recorded; Erik sets the public address as a setup step.';
+        if (! GameAccess::isOwner($user, $game)) {
+            return Response::error('Only the game owner can request Live.');
         }
 
-        return $this->json(['requested' => false, 'message' => $message]);
+        // Tom sträng hoppar över closure-regeln i Laravel; behandla den som utelämnad.
+        if (array_key_exists('domain', $args) && is_string($args['domain']) && trim($args['domain']) === '') {
+            $args['domain'] = null;
+        }
+
+        $validator = Validator::make($args, ['domain' => ['bail', 'nullable', 'string', 'max:253', function (string $attribute, mixed $value, \Closure $fail) {
+            // isValid tål avslutande snedstreck och port; en domän får ingetdera.
+            if (preg_match('/[\/:\s]/', $value) === 1 || ! GameOrigin::isValid('https://'.$value)) {
+                $fail('The domain must be a plain host name such as kattsvep.se.');
+            }
+        }]]);
+        if ($validator->fails()) {
+            return $this->validationFailed($validator->errors()->toArray());
+        }
+        $domain = $validator->validated()['domain'] ?? null;
+
+        $run = ProvisioningRun::provision()->where('game_id', $game->id)->where('status', ProvisioningRun::SUCCEEDED)->orderByDesc('id')->first();
+        if ($run === null) {
+            return Response::error('Only games with a finished Demo can request Live.');
+        }
+
+        $text = 'Live-förfrågan för `'.SlackAlert::escape($game->slug).'` ('.SlackAlert::escape($game->name).') från '.SlackAlert::escape((string) ($user->email ?? $user->name))
+            .". Demo: {$run->demo_url}. Önskad domän: ".($domain === null ? 'ingen angiven' : SlackAlert::escape($domain)).'.';
+
+        return match (app(SlackAlert::class)->send("request_live:{$game->slug}", $text)) {
+            SlackAlert::SENT => $this->json(['requested' => true, 'message' => 'Erik has been notified. Nothing was changed. Production cannot be requested with promote_release yet in this version; use get_release_status to follow the flow.']),
+            SlackAlert::DUPLICATE => $this->json(['requested' => true, 'message' => 'Erik was already notified about this today. Nothing was changed. Production cannot be requested with promote_release yet in this version; use get_release_status to follow the flow.']),
+            default => Response::error('Could not notify Erik. Nothing was changed; try again later.'),
+        };
     }
 }

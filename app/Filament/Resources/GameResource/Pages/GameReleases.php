@@ -113,15 +113,24 @@ class GameReleases extends Page
             return;
         }
 
+        // Redan avbockat: skriv inte över vem som bockade av och när.
+        if ($step->status === ReleaseSetupStep::DONE) {
+            Notification::make()->warning()->title('Steget är redan avbockat.')->send();
+
+            return;
+        }
+
         $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => $admin->id, 'done_at' => now()]);
         Notification::make()->success()->title('Engångssteget är avbockat.')->send();
     }
 
     public function toggleGameSwitch(): void
     {
-        $this->admin();
+        $admin = $this->admin();
         $game = $this->getRecord();
         $game->forceFill(['releases_enabled' => ! $game->releases_enabled])->save();
+        Log::notice('Släppbrytare ändrad för spel', ['user_id' => $admin->id, 'game' => $game->slug, 'releases_enabled' => $game->releases_enabled]);
+        Notification::make()->success()->title($game->releases_enabled ? 'Släpp är påslagna för spelet.' : 'Släpp är avstängda för spelet.')->send();
     }
 
     // Global nödbroms utöver miljövariabeln RELEASES_ENABLED: stänger släpp för alla spel.
