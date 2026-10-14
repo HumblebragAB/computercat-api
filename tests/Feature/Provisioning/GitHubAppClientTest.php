@@ -52,7 +52,8 @@ class GitHubAppClientTest extends ProvisioningTestCase
             && str_starts_with($r->header('Authorization')[0], 'Bearer ey')
             && $r->header('X-GitHub-Api-Version')[0] === '2022-11-28'
             && $r->body() === '');
-        $this->assertStringNotContainsString($first, (string) Cache::get('provisioning:github:installation-token'));
+        $this->assertNotNull(Cache::get('provisioning:github:installation-token:4242'));
+        $this->assertStringNotContainsString($first, (string) Cache::get('provisioning:github:installation-token:4242'));
     }
 
     public function test_create_sends_exact_body_and_mints_new_token_afterwards(): void
@@ -202,5 +203,43 @@ class GitHubAppClientTest extends ProvisioningTestCase
         foreach ((new \ReflectionClass(GitHubAppClient::class))->getMethods() as $method) {
             $this->assertDoesNotMatchRegularExpression('/delete|remove|destroy/i', $method->getName());
         }
+    }
+
+    // Token för en annan installation får aldrig återanvändas.
+    public function test_cache_is_per_installation(): void
+    {
+        Http::fake([
+            'api.github.com/app/installations/*/access_tokens' => Http::sequence()
+                ->push(ProvisioningFakes::githubToken('ghs_forstainstallationen0000000000001'), 201)
+                ->push(ProvisioningFakes::githubToken('ghs_andrainstallationen00000000000002'), 201),
+        ]);
+
+        $this->assertSame('ghs_forstainstallationen0000000000001', $this->client()->installationToken());
+        config(['provisioning.github.installation_id' => '5151']);
+        $this->assertSame('ghs_andrainstallationen00000000000002', $this->client()->installationToken());
+
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/app/installations/5151/access_tokens'));
+    }
+
+    // Går token ut inom marginalen (5 min) används den en gång men cachas inte.
+    public function test_token_expiring_within_the_margin_is_not_cached(): void
+    {
+        Http::fake([self::TOKEN_URL => Http::response(['token' => 'ghs_kortlivadtoken000000000000000001', 'expires_at' => now()->addMinutes(4)->utc()->format('Y-m-d\TH:i:s\Z')], 201)]);
+
+        $this->client()->installationToken();
+        $this->client()->installationToken();
+
+        Http::assertSentCount(2);
+        $this->assertNull(Cache::get('provisioning:github:installation-token:4242'));
+    }
+
+    // En token som redan gått ut är ett fel som ska synas, inte en 401 senare.
+    public function test_already_expired_token_fails_loud(): void
+    {
+        Http::fake([self::TOKEN_URL => Http::response(['token' => 'ghs_utgangentoken00000000000000000001', 'expires_at' => now()->subMinute()->utc()->format('Y-m-d\TH:i:s\Z')], 201)]);
+
+        $this->expectException(ExternalApiException::class);
+        $this->expectExceptionMessage('already expired');
+        $this->client()->installationToken();
     }
 }

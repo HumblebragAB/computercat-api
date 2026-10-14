@@ -57,7 +57,9 @@ class GitHubAppClient
 
     public function installationToken(): string
     {
-        $cached = Cache::get(self::TOKEN_CACHE_KEY);
+        $installation = $this->installationId();
+        $cacheKey = $this->tokenCacheKey();
+        $cached = Cache::get($cacheKey);
         if (is_string($cached)) {
             try {
                 $token = Crypt::decryptString($cached);
@@ -65,13 +67,8 @@ class GitHubAppClient
 
                 return $token;
             } catch (DecryptException) {
-                Cache::forget(self::TOKEN_CACHE_KEY);
+                Cache::forget($cacheKey);
             }
-        }
-
-        $installation = (string) config('provisioning.github.installation_id');
-        if (preg_match('/^\d+\z/', $installation) !== 1) {
-            throw new \InvalidArgumentException('GITHUB_APP_INSTALLATION_ID måste vara ett heltal.');
         }
 
         $path = "/app/installations/{$installation}/access_tokens";
@@ -85,10 +82,16 @@ class GitHubAppClient
         }
 
         Redactor::registerSecret($token);
-        $until = Carbon::parse($expiresAt)->subMinutes(5);
+        $expires = Carbon::parse($expiresAt);
+        // En redan utgången token ger annars en 401 i nästa anrop; felet ska synas här.
+        if (! $expires->isFuture()) {
+            throw new ExternalApiException('GitHub', 'POST', $path, $response->status(), 'installation token already expired (expires_at is in the past)');
+        }
+        // Cachas bara om den gäller längre än marginalen (5 min); annars används den en gång.
+        $until = $expires->copy()->subMinutes(5);
         if ($until->isFuture()) {
             // Krypterad i cachen: cachetabellen är inte en hemlighetslagring.
-            Cache::put(self::TOKEN_CACHE_KEY, Crypt::encryptString($token), $until);
+            Cache::put($cacheKey, Crypt::encryptString($token), $until);
         }
 
         return $token;
@@ -96,7 +99,23 @@ class GitHubAppClient
 
     public function forgetInstallationToken(): void
     {
-        Cache::forget(self::TOKEN_CACHE_KEY);
+        Cache::forget($this->tokenCacheKey());
+    }
+
+    // Nyckeln bär installationen: en token för en annan installation återanvänds aldrig.
+    private function tokenCacheKey(): string
+    {
+        return self::TOKEN_CACHE_KEY.':'.$this->installationId();
+    }
+
+    private function installationId(): string
+    {
+        $installation = (string) config('provisioning.github.installation_id');
+        if (preg_match('/^\d+\z/', $installation) !== 1) {
+            throw new \InvalidArgumentException('GITHUB_APP_INSTALLATION_ID måste vara ett heltal.');
+        }
+
+        return $installation;
     }
 
     public function getRepository(string $name): ?array
@@ -127,7 +146,7 @@ class GitHubAppClient
             return $response->json();
         }
 
-        // Bara "namnet finns redan" betyder null (spike S12 bekräftar bodyn).
+        // Bara "namnet finns redan" betyder null (bodyns form verifieras i spike S12).
         // Alla andra 422 är fel som ska synas, inte en upptagen slug.
         if (str_contains(strtolower($response->body()), 'already exists')) {
             return null;

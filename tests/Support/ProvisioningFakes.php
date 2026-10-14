@@ -4,7 +4,8 @@ namespace Tests\Support;
 
 // Konfiguration och fejkade svar för provisioneringstesterna. Svarsformerna
 // följer bilaga A (Coolify v4.4.6), bilaga B (GitHub) och SiteOps-kontraktet
-// i planen. Rader märkta "spike Sx" är verifierade i Task 1.
+// i planen. Rader märkta "spike Sx" är OBEKRÄFTADE och verifieras i Task 1
+// (spiken); justera dem efter spikens sparade svar.
 final class ProvisioningFakes
 {
     public const GITHUB = 'https://api.github.com';
