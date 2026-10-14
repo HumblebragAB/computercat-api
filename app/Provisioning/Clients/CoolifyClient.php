@@ -32,6 +32,8 @@ class CoolifyClient
     /** @return list<array{uuid: string, name: string}> */
     public function demoApplications(): array
     {
+        // OBEKRÄFTAT – verifieras i spike S13: GET /projects/{uuid}/{environment_name}
+        // svarar med miljön och dess applications[] (finns inte i bilaga A).
         $path = '/projects/'.rawurlencode((string) config('provisioning.coolify.project_uuid')).'/'.rawurlencode((string) config('provisioning.coolify.environment_name'));
         $applications = $this->coolify('GET', $path)->json('applications');
         if (! is_array($applications)) {
@@ -67,6 +69,7 @@ class CoolifyClient
             'server_uuid' => (string) config('provisioning.coolify.server_uuid'),
             'environment_name' => (string) config('provisioning.coolify.environment_name'),
             'github_app_uuid' => (string) config('provisioning.coolify.github_app_uuid'),
+            // OBEKRÄFTAT – verifieras i spike S1 (formatet owner/repo) och S2 (ports_exposes '80').
             'git_repository' => ProvisioningConfig::repoFullName($slug),
             'git_branch' => 'main',
             'build_pack' => 'nixpacks',
@@ -130,30 +133,40 @@ class CoolifyClient
 
     // Computercat startar aldrig ett bygge (byggguiden: första bygget kommer
     // från auto-deploy när spelets Claude pushar). Bara läsning av senaste bygget.
-    // Svarsformen {count, deployments[]} nyast först är verifierad i spike S22.
+    // Svarsformen {count, deployments[]} nyast först verifieras i spike S22.
     /** @return array{deployment_uuid: string, status: string, created_at: string}|null */
     public function latestDeployment(string $uuid): ?array
     {
         $this->assertKnown($uuid);
         $path = '/deployments/applications/'.$uuid.'?'.http_build_query(['skip' => 0, 'take' => 1]);
         $deployments = $this->coolify('GET', $path)->json('deployments');
-        if (! is_array($deployments)) {
-            throw new ExternalApiException('Coolify', 'GET', $path, 200, 'response lacks deployments[]');
+        if (! is_array($deployments) || ! array_is_list($deployments)) {
+            throw new ExternalApiException('Coolify', 'GET', $path, 200, 'response lacks deployments[] (expected a list)');
         }
         if ($deployments === []) {
             return null;
         }
 
         $latest = $deployments[0];
+        if (! is_array($latest)) {
+            throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment entry is not an object');
+        }
         $status = $latest['status'] ?? null;
         if (! in_array($status, self::DEPLOYMENT_STATUSES, true)) {
             throw new ExternalApiException('Coolify', 'GET', $path, 200, 'unknown deployment status: '.(is_scalar($status) ? (string) $status : gettype($status)));
         }
 
+        // Fail loud: ett fält som saknas blir ett fel, aldrig en tom sträng.
+        foreach (['deployment_uuid', 'created_at'] as $field) {
+            if (! is_string($latest[$field] ?? null) || $latest[$field] === '') {
+                throw new ExternalApiException('Coolify', 'GET', $path, 200, "deployment lacks {$field}");
+            }
+        }
+
         return [
-            'deployment_uuid' => (string) ($latest['deployment_uuid'] ?? ''),
+            'deployment_uuid' => $latest['deployment_uuid'],
             'status' => $status,
-            'created_at' => (string) ($latest['created_at'] ?? ''),
+            'created_at' => $latest['created_at'],
         ];
     }
 

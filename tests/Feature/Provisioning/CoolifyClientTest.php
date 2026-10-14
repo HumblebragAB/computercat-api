@@ -198,4 +198,83 @@ class CoolifyClientTest extends ProvisioningTestCase
         $install = \App\Services\BuildGuide::manifest(\App\Services\BuildGuide::LATEST)['commands']['install'];
         Http::assertSent(fn ($r) => ($r->data()['install_command'] ?? null) === $install);
     }
+
+    public function test_build_variables_refuse_unknown_uuid_without_any_request(): void
+    {
+        Http::fake();
+
+        foreach (['createBuildVariable', 'updateBuildVariable'] as $method) {
+            try {
+                $this->client()->{$method}('okand-app', 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep');
+                $this->fail("{$method} släppte igenom en okänd uuid.");
+            } catch (CoolifyGuardException) {
+                // väntat
+            }
+        }
+
+        Http::assertNothingSent();
+    }
+
+    public function test_build_variables_refuse_app_outside_demo_project(): void
+    {
+        $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
+        Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-9', 'spel-annat')]))]);
+
+        foreach (['createBuildVariable', 'updateBuildVariable'] as $method) {
+            try {
+                $this->client()->{$method}('app-1', 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep');
+                $this->fail("{$method} släppte igenom en app utanför Demo-projektet.");
+            } catch (CoolifyGuardException) {
+                // väntat
+            }
+        }
+
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), '/envs'));
+        // Spärren läste den konfigurerade miljön, inte någon annan.
+        Http::assertSent(fn ($r) => $r->method() === 'GET' && $r->url() === 'https://coolify.test/api/v1/projects/demo-project-uuid/production');
+    }
+
+    public function test_update_build_variable_patches_in_demo_project(): void
+    {
+        $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])),
+            'coolify.test/api/v1/applications/app-1/envs' => Http::response(ProvisioningFakes::coolifyEnv('NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep'), 201),
+        ]);
+
+        $this->client()->updateBuildVariable('app-1', 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'kattsvep');
+
+        Http::assertSent(fn ($r) => $r->method() === 'PATCH' && $r->url() === 'https://coolify.test/api/v1/applications/app-1/envs' && $r->data() === [
+            'key' => 'NEXT_PUBLIC_COMPUTERCAT_GAME', 'value' => 'kattsvep', 'is_preview' => false, 'is_buildtime' => true, 'is_runtime' => false,
+        ]);
+    }
+
+    /** @return array<string, array{0: array, 1: string}> */
+    public static function malformedDeployments(): array
+    {
+        $valid = ['deployment_uuid' => 'dep-1', 'status' => 'finished', 'created_at' => '2026-10-14T08:00:00.000000Z'];
+
+        return [
+            'inte en lista' => [['count' => 1, 'deployments' => ['senaste' => $valid]], 'expected a list'],
+            'saknar deployment_uuid' => [['count' => 1, 'deployments' => [array_diff_key($valid, ['deployment_uuid' => 1])]], 'deployment_uuid'],
+            'tom deployment_uuid' => [['count' => 1, 'deployments' => [['deployment_uuid' => ''] + $valid]], 'deployment_uuid'],
+            'saknar created_at' => [['count' => 1, 'deployments' => [array_diff_key($valid, ['created_at' => 1])]], 'created_at'],
+            'post är inte ett objekt' => [['count' => 1, 'deployments' => ['finished']], 'deployment'],
+        ];
+    }
+
+    // Fail loud: ett svar av oväntad form blir ett fel, aldrig tomma strängar.
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedDeployments')]
+    public function test_latest_deployment_fails_loud_on_malformed_response(array $body, string $expected): void
+    {
+        $this->provisioningRun(['coolify_app_uuid' => 'app-1']);
+        Http::fake(['coolify.test/api/v1/deployments/applications/app-1*' => Http::response($body)]);
+
+        try {
+            $this->client()->latestDeployment('app-1');
+            $this->fail('Ett felformat svar godtogs.');
+        } catch (\App\Provisioning\Http\ExternalApiException $e) {
+            $this->assertStringContainsString($expected, $e->getMessage());
+        }
+    }
 }
