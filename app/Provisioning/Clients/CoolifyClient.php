@@ -32,8 +32,8 @@ class CoolifyClient
     /** @return list<array{uuid: string, name: string}> */
     public function demoApplications(): array
     {
-        // OBEKRÄFTAT – verifieras i spike S13: GET /projects/{uuid}/{environment_name}
-        // svarar med miljön och dess applications[] (finns inte i bilaga A).
+        // Verifierat i spike 2026-10-14 (S13): GET /projects/{uuid}/{environment_name}
+        // svarar med miljön och dess applications[] med uuid och name.
         $path = '/projects/'.rawurlencode((string) config('provisioning.coolify.project_uuid')).'/'.rawurlencode((string) config('provisioning.coolify.environment_name'));
         $applications = $this->coolify('GET', $path)->json('applications');
         if (! is_array($applications)) {
