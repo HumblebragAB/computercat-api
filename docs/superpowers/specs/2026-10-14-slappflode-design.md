@@ -121,6 +121,23 @@ Ett köat jobb (`AdvanceRelease`, samma mönster som `AdvanceProvisioningRun`) p
 
 En andra Coolify-app per spel, `spel-<slug>-prod`, i ett eget Coolify-projekt "Spel produktion", utan basic auth, med `is_auto_deploy_enabled: false`, samma byggkommando och säkerhetsspärr som Demo, och domänen Erik satt. Vid befordran sätter Computercat appens commit till den befordrade och startar ett bygge (kräver token-förmågan `deploy`). Coolify-spärren från delprojekt 2 utökas med en egen kontroll för produktionsprojektet (`assertInProductionProject`) och en egen kolumn för produktionsappens uuid, med egna tester: muterande anrop bara mot appar som Computercat själv skapat i respektive projekt. Att Coolify kan låsa en app till en commit (`git_commit_sha` via PATCH), att `POST /deploy` bygger den commiten, och att `is_auto_deploy_enabled: false` verkligen stoppar webhooken verifieras i spiken. Token måste skapas om med `write` och `deploy` (Coolifys UI nollställer valet när `deploy` kryssas) och vara team-begränsad, utan `root`. Ett produktionsbygge delar kö med Demo-byggena (`concurrent_builds = 1`); fastnar det i kön gäller tidsgränsen ovan.
 
+## Del 2b: förbered App Store och lämna över (Eriks önskemål 2026-10-14)
+
+Erik vill att Mattias ska kunna gå från idé till test i webbläsaren och till TestFlight utan Erik, och att Computercat sedan förbereder så mycket som möjligt av App Store-publiceringen själv och lämnar över resten till Erik som en färdig checklista.
+
+**Computercat förbereder automatiskt** (varje punkt bekräftas i etapp 2:s spike innan den byggs; det som inte går via API flyttas till checklistan):
+
+- Bundle-id (`POST /v1/bundleIds`) och provisioneringsprofil.
+- TestFlight: bygget till intern testgrupp, så att Mattias och Erik kan installera det direkt; testgruppen och dess medlemmar hålls av Computercat.
+- App- och versionstexter på svenska (och engelska om spelet har det): namn, undertitel, beskrivning, nyckelord, support- och integritets-URL, utkast skrivet av spelets Claude från README:s idé och granskat i spelets PR.
+- Skärmdumpar i de storlekar Apple kräver, tagna automatiskt från Demo i en headless webbläsare i telefonformat och laddade upp via API (`appScreenshotSets`, `appScreenshots`).
+- Åldersgränsdeklarationen (frågorna besvaras av spelets Claude utifrån spelets innehåll och syns för Erik i checklistan innan inskick).
+- Versionen kopplad till rätt bygge, redo för inskick.
+
+**Överlämning till Erik:** `get_release_status` och Filament visar en checklista med exakta värden att klistra in för det som bara Erik kan göra: skapa app-posten i App Store Connect (namn, primärspråk, bundle-id, SKU), integritetsuppgifterna ("App Privacy") om API:t inte täcker dem, pris och tillgänglighet om de inte kan sättas via API, och avtal i App Store Connect. När Erik bockat av skickar Computercat in för granskning; första produktionssläppet kräver ändå Eriks godkännande (spärr 3).
+
+**Spelets roll:** byggguidens nya version får en mall för butikstexterna (`store/app-store.sv.md`) som spelets Claude fyller i, och faktabanken får artiklar om vad som krävs för App Store (texter, skärmdumpar, åldersgräns), så att spelets Claude vet vad som ska göras utan att fråga.
+
 ## Del 3: verktyg, godkännande och dokumentation
 
 ### MCP-verktyg
@@ -151,12 +168,16 @@ Faktabanken får artiklar under ämnet `process`: ett per steg och ett om engån
 
 ## Etapper
 
+Ordningen följer Eriks prioritet: Mattias ska nå TestFlight och Erik få en färdig överlämning för App Store innan publik webb och Android.
+
 | Etapp | Innehåll | Spike före bygge |
 |---|---|---|
-| **1a. Modell** | `release_targets`, `releases`, `demo_builds`, `release_setup_steps`, spärrar, lås, brytare, tre MCP-verktyg, `request_live` som hänvisning, Filament-godkännande, bevakning, faktabanksartiklar | Coolify: hur `commit` står i bygglistan och hur länge byggen syns |
+| **1a. Modell** | `release_targets`, `releases`, `demo_builds`, `release_setup_steps`, spärrar, lås, brytare, tre MCP-verktyg, `request_live` som hänvisning, Filament-godkännande, bevakning, faktabanksartiklar | Coolify: hur `commit` står i bygglistan (S22 visade 40 tecken för ett pushbygge) och hur länge byggen syns |
+| **2. iOS: TestFlight och App Store-förberedelse** | släpprepot (`HumblebragAB/spelstudio-release`), Capacitor iOS i byggguiden, bundle-id och profil via API, TestFlight till intern grupp, butikstexter, automatiska skärmdumpar, åldersgräns, överlämningschecklista, inskick | GitHub: dispatch, `run-name`-korrelation, utcheckning av annat repo med begränsad token. Apple: nyckelns roll, osignerad arkivering och signering i separat steg, profiler via API, certifikat (CSR), byggnummer, exportkrav (`ITSAppUsesNonExemptEncryption`), interna testare via API, vilka metadata, skärmdumpsstorlekar, åldersgräns och integritetsuppgifter som kan sättas via API, kontoägare (Humblebrag AB). Kräver en testapp som Erik skapar i App Store Connect. |
 | **1b. Webbproduktion** | produktionsprojekt och -app i Coolify, låst commit, bygge med `deploy`-token, utökad spärr | Coolify: `git_commit_sha` via PATCH, `POST /deploy`, att auto-deploy av verkligen stoppar webhooken, kö och tidsgräns |
-| **2. iOS** | släpprepo eller alternativ 2, Capacitor iOS i byggguiden, bundle-id via API, TestFlight-status, inskick | GitHub: dispatch, `run-name`-korrelation, utcheckning av annat repo med begränsad token. Apple: nyckelns roll, osignerad arkivering och signering i separat steg, profiler via API, certifikat (CSR), byggnummer, exportkrav (`ITSAppUsesNonExemptEncryption`), interna testare och vem som lägger till dem, krav före första inskick, kontoägare (Humblebrag AB) |
 | **3. Android** | Capacitor Android, uppladdning till `qa`, befordran till produktion | Play: kontotyp och testkrav, första uppladdning, servicekonto per app (bjuds in i Play Console, ett engångssteg per spel), versionskod, kvoter för `edits`, krav för spel som riktar sig till barn |
+
+Etapp 2:s spike kan köras parallellt med bygget av 1a, eftersom den inte rör Computercats kod.
 
 Varje etapp får egen plan, egen spike mot riktiga tjänster och eget godkännande innan den går live.
 
