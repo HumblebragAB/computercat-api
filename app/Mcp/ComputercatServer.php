@@ -22,6 +22,7 @@ class ComputercatServer extends Server
         Tools\GetProvisioningStatusTool::class,
         Tools\RetryProvisioningTool::class,
         Tools\RequestLiveTool::class,
+        Tools\GetReleaseStatusTool::class,
         Tools\ArchiveGameTool::class,
         Tools\GetBuildGuideTool::class,
         Tools\GetBuildGuideFileTool::class,
