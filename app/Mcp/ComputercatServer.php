@@ -15,6 +15,8 @@ class ComputercatServer extends Server
     protected array $tools = [
         Tools\ListGamesTool::class,
         Tools\CreateGameTool::class,
+        Tools\GetProvisioningStatusTool::class,
+        Tools\RetryProvisioningTool::class,
         Tools\GetBuildGuideTool::class,
         Tools\GetBuildGuideFileTool::class,
         Tools\GetGameTool::class,
