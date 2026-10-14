@@ -72,6 +72,13 @@ class RepoStepTest extends ProvisioningTestCase
         // CLAUDE.md: ny fil, exakt byggguidens, utan sha.
         Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && base64_decode($r['content']) === BuildGuide::claudeMd('v1') && ! isset($r['sha']));
         $this->assertCount(1, Http::recorded(fn ($r) => $r->url() === 'https://'.self::CREATE));
+        // Coolify-appen skapas strax efter dessa commits; utan [skip ci] hinner pushens
+        // webhook fram efter appen och auto-deploy bygger ett repo utan kod (Kattsvep 2026-10-14).
+        $puts = Http::recorded(fn ($r) => $r->method() === 'PUT');
+        $this->assertCount(2, $puts);
+        foreach ($puts as [$request]) {
+            $this->assertStringContainsString('[skip ci]', $request['message']);
+        }
     }
 
     public function test_own_repository_is_adopted_on_retry_and_correct_files_are_not_rewritten(): void

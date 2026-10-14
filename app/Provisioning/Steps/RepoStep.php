@@ -77,10 +77,18 @@ final class RepoStep implements Step
         // Hela README ersätts; ReadmeIdea fallerar (och inget skrivs) om mallens markörer är fel.
         $wanted = ReadmeIdea::insert(BuildGuide::readme($version, (string) $run->name), (string) $run->idea);
         if ($readme['text'] !== $wanted) {
-            $this->github->putFile($run->slug, 'README.md', $wanted, $readme['sha'], "README från byggguide {$version} (run {$run->uuid})");
+            $this->github->putFile($run->slug, 'README.md', $wanted, $readme['sha'], self::commitMessage("README från byggguide {$version}", $run));
         }
 
         return StepResult::wait(0, ['readme_ok' => true]);
+    }
+
+    // [skip ci] hindrar Coolifys auto-deploy: appen skapas strax efter dessa commits,
+    // och pushens webhook kan komma fram efter appen (Kattsvep 2026-10-14). Coolify
+    // hoppar över en push där varje commit har markören (DetectsSkipDeployCommits, v4.4.6).
+    private static function commitMessage(string $subject, ProvisioningRun $run): string
+    {
+        return "{$subject} (run {$run->uuid}) [skip ci]";
     }
 
     private function writeClaudeMd(ProvisioningRun $run, string $version): void
@@ -88,9 +96,9 @@ final class RepoStep implements Step
         $claude = BuildGuide::claudeMd($version);
         $existing = $this->github->getFile($run->slug, 'CLAUDE.md');
         if ($existing === null) {
-            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, null, "CLAUDE.md från byggguide {$version} (run {$run->uuid})");
+            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, null, self::commitMessage("CLAUDE.md från byggguide {$version}", $run));
         } elseif ($existing['text'] !== $claude) {
-            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, $existing['sha'], "CLAUDE.md från byggguide {$version} (run {$run->uuid})");
+            $this->github->putFile($run->slug, 'CLAUDE.md', $claude, $existing['sha'], self::commitMessage("CLAUDE.md från byggguide {$version}", $run));
         }
     }
 
