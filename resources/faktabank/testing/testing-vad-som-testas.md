@@ -25,7 +25,7 @@ Demo deployas automatiskt vid varje push till main. Testerna är det som hindrar
 
 - Lägg spellogik i rena moduler (t.ex. `src/game/`) så att den går att testa utan React.
 - Utgå från grundkodens tester för Computercat-klienten; ändra dem inte, de följer byggguiden.
-- Skriv integrationstestet efter mönstret i `test/integration.test.tsx`: gör spelplanen liten så att en omgång går fort.
+- Skriv integrationstestet efter mönstret i `test/integration.test.tsx`: håll omgången kort och använd `fakeFetch` så att testet går fort och utan nätverk.
 - Test behövs inte för ren layout eller text.
 
 ## Källa

@@ -277,7 +277,8 @@ final class FactBank
     private function assertSources(string $rel, string $text, array $versions): void
     {
         // $text är utan kodblock och har exakt en "## Källa", sist (assertHeadings körs först).
-        $section = substr($text, (int) strpos($text, "## Källa\n"));
+        preg_match('/^## Källa[ \t]*$/m', $text, $h, PREG_OFFSET_CAPTURE);
+        $section = substr($text, $h[0][1] ?? 0);
         preg_match_all('/^- +`?([^`\s]+)`?/m', $section, $m);
         if ($m[1] === []) {
             throw new FactBankInvalid("{$rel}: ## Källa måste ha minst en rad som börjar med \"- \".");

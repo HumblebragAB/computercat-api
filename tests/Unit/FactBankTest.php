@@ -188,6 +188,12 @@ class FactBankTest extends TestCase
         $this->assertInvalid('minst en rad');
     }
 
+    public function test_source_heading_with_trailing_space_only_reads_the_source_section(): void
+    {
+        $this->article('stack', 'blanksteg', [], "## Regel\n- app/Finns/Inte.php\n## Varför\nx\n## Så gör du\nx\n## Källa \n- app/Services/BuildGuide.php\n");
+        $this->assertSame(['blanksteg'], array_column($this->bank()->all(), 'id'));
+    }
+
     public function test_https_source_and_ds_store_are_accepted(): void
     {
         $this->article('practice', 'lank-kalla', [], "## Regel\nx\n## Varför\nx\n## Så gör du\nx\n## Källa\n- https://developer.mozilla.org/\n");
