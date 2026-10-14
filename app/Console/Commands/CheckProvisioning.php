@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Models\ProvisioningRun;
+use App\Models\Release;
+use App\Models\ReleaseSetupStep;
 use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\Clients\GitHubAppClient;
 use App\Provisioning\Clients\SiteOpsClient;
@@ -75,6 +77,7 @@ class CheckProvisioning extends Command
         }
 
         $this->checkStuck();
+        $this->checkReleases();
 
         foreach ($this->deviations as $key => $text) {
             $this->line("AVVIKELSE {$key}: {$text}");
@@ -86,6 +89,33 @@ class CheckProvisioning extends Command
         $this->info(count($this->deviations).' avvikelse(r).');
 
         return $this->deviations === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    // Släppflödet (spec Del 3, "Bevakning"). Kontrollen att produktionswebben serverar den
+    // släppta commiten byggs i etapp 1b, när det finns en produktionsweb.
+    private function checkReleases(): void
+    {
+        // Utgångna släpp avbryts (spärr 7); Erik får veta det eftersom ingen annan märker det.
+        foreach (Release::expireStale() as $release) {
+            $this->deviations["release:{$release->uuid}:expired"] = "Släppet {$release->uuid} ({$release->target}/{$release->stage}, commit {$release->commit_sha}) avbröts: inget beslut eller bygge inom ".config('releases.ttl_days').' dygn.';
+        }
+
+        $cutoff = now()->subMinutes((int) config('releases.stuck_minutes'));
+        foreach (Release::with('game')->whereIn('status', [Release::BUILDING, Release::PROCESSING])->where('updated_at', '<', $cutoff)->get() as $release) {
+            $this->deviations["release:{$release->uuid}:stuck"] = "Släppet {$release->uuid} ({$release->game->slug} {$release->target}/{$release->stage}) har stått i {$release->status} sedan {$release->updated_at}.";
+        }
+
+        $reminderCutoff = now()->subDays((int) config('releases.setup_reminder_days'));
+        $open = ReleaseSetupStep::with('game')->where('status', ReleaseSetupStep::OPEN)->where('created_at', '<', $reminderCutoff)->orderBy('id')->get();
+        foreach ($open->groupBy(fn (ReleaseSetupStep $s) => $s->game_id.':'.$s->target) as $steps) {
+            $game = $steps->first()->game;
+            $target = $steps->first()->target;
+            // Arkiverade spel och steg för ett mål som tagits bort ska inte påminna.
+            if (! $game->is_active || ! in_array($target, $game->releaseTargets(), true)) {
+                continue;
+            }
+            $this->deviations["setup:{$game->slug}:{$target}"] = "Spelet {$game->slug} har haft öppna engångssteg för {$target} i över ".config('releases.setup_reminder_days').' dagar: '.$steps->pluck('key')->implode(', ').'.';
+        }
     }
 
     /** @param list<array{uuid: string, name: string}>|null $apps */
