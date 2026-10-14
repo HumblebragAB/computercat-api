@@ -77,7 +77,7 @@ class CheckProvisioning extends Command
         }
 
         $this->checkStuck();
-        $this->checkReleases();
+        $this->checkReleases((bool) $this->option('dry-run'));
 
         foreach ($this->deviations as $key => $text) {
             $this->line("AVVIKELSE {$key}: {$text}");
@@ -93,28 +93,60 @@ class CheckProvisioning extends Command
 
     // Släppflödet (spec Del 3, "Bevakning"). Kontrollen att produktionswebben serverar den
     // släppta commiten byggs i etapp 1b, när det finns en produktionsweb.
-    private function checkReleases(): void
+    // Varje block körs för sig: ett fel i ett block ska inte stoppa nattkörningen.
+    // Under --dry-run ändras inga släpp; utgångna rapporteras bara som "skulle avbrytas".
+    private function checkReleases(bool $dryRun): void
     {
-        // Utgångna släpp avbryts (spärr 7); Erik får veta det eftersom ingen annan märker det.
-        foreach (Release::expireStale() as $release) {
-            $this->deviations["release:{$release->uuid}:expired"] = "Släppet {$release->uuid} ({$release->target}/{$release->stage}, commit {$release->commit_sha}) avbröts: inget beslut eller bygge inom ".config('releases.ttl_days').' dygn.';
-        }
+        $this->guardReleases('utgångna släpp', function () use ($dryRun) {
+            if ($dryRun) {
+                foreach (Release::expirable()->get() as $release) {
+                    $this->deviations["release:{$release->uuid}:expired"] = "Släppet {$release->uuid} ({$release->target}/{$release->stage}, commit {$release->commit_sha}) skulle avbrytas: inget beslut eller bygge inom ".config('releases.ttl_days').' dygn (--dry-run ändrar inget).';
+                }
 
-        $cutoff = now()->subMinutes((int) config('releases.stuck_minutes'));
-        foreach (Release::with('game')->whereIn('status', [Release::BUILDING, Release::PROCESSING])->where('updated_at', '<', $cutoff)->get() as $release) {
-            $this->deviations["release:{$release->uuid}:stuck"] = "Släppet {$release->uuid} ({$release->game->slug} {$release->target}/{$release->stage}) har stått i {$release->status} sedan {$release->updated_at}.";
-        }
-
-        $reminderCutoff = now()->subDays((int) config('releases.setup_reminder_days'));
-        $open = ReleaseSetupStep::with('game')->where('status', ReleaseSetupStep::OPEN)->where('created_at', '<', $reminderCutoff)->orderBy('id')->get();
-        foreach ($open->groupBy(fn (ReleaseSetupStep $s) => $s->game_id.':'.$s->target) as $steps) {
-            $game = $steps->first()->game;
-            $target = $steps->first()->target;
-            // Arkiverade spel och steg för ett mål som tagits bort ska inte påminna.
-            if (! $game->is_active || ! in_array($target, $game->releaseTargets(), true)) {
-                continue;
+                return;
             }
-            $this->deviations["setup:{$game->slug}:{$target}"] = "Spelet {$game->slug} har haft öppna engångssteg för {$target} i över ".config('releases.setup_reminder_days').' dagar: '.$steps->pluck('key')->implode(', ').'.';
+
+            // Utgångna släpp avbryts (spärr 7); Erik får veta det eftersom ingen annan märker det.
+            foreach (Release::expireStale() as $release) {
+                $this->deviations["release:{$release->uuid}:expired"] = "Släppet {$release->uuid} ({$release->target}/{$release->stage}, commit {$release->commit_sha}) avbröts: inget beslut eller bygge inom ".config('releases.ttl_days').' dygn.';
+            }
+        });
+
+        $this->guardReleases('fastnade byggen', function () {
+            $cutoff = now()->subMinutes((int) config('releases.stuck_minutes'));
+            // Arkiverade spel hoppas över: ingen byggs färdigt där, så larmet skulle upprepas varje dag.
+            $stuck = Release::with('game')
+                ->whereIn('status', [Release::BUILDING, Release::PROCESSING])
+                ->where('updated_at', '<', $cutoff)
+                ->whereHas('game', fn ($q) => $q->where('is_active', true))
+                ->get();
+            foreach ($stuck as $release) {
+                $this->deviations["release:{$release->uuid}:stuck"] = "Släppet {$release->uuid} ({$release->game->slug} {$release->target}/{$release->stage}) har stått i {$release->status} sedan {$release->updated_at}.";
+            }
+        });
+
+        $this->guardReleases('engångssteg', function () {
+            $reminderCutoff = now()->subDays((int) config('releases.setup_reminder_days'));
+            $open = ReleaseSetupStep::with('game')->where('status', ReleaseSetupStep::OPEN)->where('created_at', '<', $reminderCutoff)->orderBy('id')->get();
+            foreach ($open->groupBy(fn (ReleaseSetupStep $s) => $s->game_id.':'.$s->target) as $steps) {
+                $game = $steps->first()->game;
+                $target = $steps->first()->target;
+                // Arkiverade spel och steg för ett mål som tagits bort ska inte påminna.
+                if (! $game->is_active || ! in_array($target, $game->releaseTargets(), true)) {
+                    continue;
+                }
+                $this->deviations["setup:{$game->slug}:{$target}"] = "Spelet {$game->slug} har haft öppna engångssteg för {$target} i över ".config('releases.setup_reminder_days').' dagar: '.$steps->pluck('key')->implode(', ').'.';
+            }
+        });
+    }
+
+    /** Ett fel i ett släppblock blir en avvikelse med bara exception-klassen, aldrig meddelandetexten. */
+    private function guardReleases(string $what, \Closure $block): void
+    {
+        try {
+            $block();
+        } catch (Throwable $e) {
+            $this->deviations['release:check'] = "Kunde inte kontrollera släpp ({$what}): ".get_class($e);
         }
     }
 

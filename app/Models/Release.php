@@ -82,6 +82,19 @@ class Release extends Model
     }
 
     /**
+     * Släpp som spärr 7 avbryter. Delas av expireStale() och nattkontrollens torrkörning,
+     * så att torrkörningen rapporterar exakt de släpp en riktig körning skulle avbryta.
+     *
+     * @return Builder<static>
+     */
+    public static function expirable(): Builder
+    {
+        $cutoff = now()->subDays((int) config('releases.ttl_days'));
+
+        return static::whereIn('status', [self::AWAITING_APPROVAL, self::REQUESTED])->where('updated_at', '<', $cutoff);
+    }
+
+    /**
      * Spärr 7: ett släpp i awaiting_approval eller requested som ingen rört på
      * config('releases.ttl_days') dygn blir cancelled. Anropas före varje
      * kontroll som läser pågående släpp, så att en utgången plats frigörs.
@@ -94,7 +107,7 @@ class Release extends Model
         $cutoff = now()->subDays($days);
         $expired = new Collection;
 
-        $candidates = static::whereIn('status', [self::AWAITING_APPROVAL, self::REQUESTED])->where('updated_at', '<', $cutoff)->pluck('id');
+        $candidates = static::expirable()->pluck('id');
         foreach ($candidates as $id) {
             DB::transaction(function () use ($id, $cutoff, $days, $expired) {
                 // Om statusen hunnit ändras (godkänt, startat) lämnas släppet ifred.
