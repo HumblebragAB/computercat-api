@@ -112,4 +112,15 @@ class FactToolsTest extends McpTestCase
             $this->assertStringContainsString('nyckel', $logged);
         }
     }
+
+    public function test_responses_fit_below_50000_characters_with_the_real_bank(): void
+    {
+        $this->app->instance(FactBank::class, new FactBank);
+        $staff = $this->staffMember();
+
+        $this->assertLessThan(50000, mb_strlen($this->callTool($staff, 'list_facts')['text']));
+        foreach ((new FactBank)->all() as $fact) {
+            $this->assertLessThan(50000, mb_strlen($this->callTool($staff, 'get_fact', ['id' => $fact['id']])['text']));
+        }
+    }
 }
