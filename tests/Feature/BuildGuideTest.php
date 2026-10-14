@@ -46,7 +46,7 @@ class BuildGuideTest extends TestCase
 
         $this->assertSame('22.x', $m['node']);
         $this->assertSame(['vite' => '7.3.7'], $m['overrides']);
-        $this->assertSame('npm ci', $m['commands']['install']);
+        $this->assertSame('npm ci --ignore-scripts', $m['commands']['install']);
         $this->assertSame(
             ['npm run check', 'npm audit --omit=dev --audit-level=high', 'test -f out/index.html'],
             array_column($m['required_checks'], 'command'),
@@ -261,6 +261,22 @@ class BuildGuideTest extends TestCase
                 $this->assertSame('mcp', $file['delivery'], $file['path']);
                 $this->assertNull($file['download_url'], $file['path']);
             }
+        }
+    }
+
+    // Installationsskript körs aldrig: varken i verify, av spelets Claude eller
+    // i Demo-bygget. Varje installationskommando i guidens texter har flaggan.
+    public function test_every_install_command_in_the_guide_ignores_scripts(): void
+    {
+        $texts = [
+            'manifest' => json_encode(BuildGuide::manifest('v1'), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            'CLAUDE.md' => BuildGuide::claudeMd('v1'),
+            'README' => BuildGuide::readme('v1', 'Spel'),
+        ];
+
+        foreach ($texts as $name => $text) {
+            $this->assertStringContainsString('npm ci --ignore-scripts', $text, $name);
+            $this->assertDoesNotMatchRegularExpression('/npm ci(?! --ignore-scripts)/', $text, $name);
         }
     }
 }

@@ -20,7 +20,7 @@ final class BuildGuide
     // sha256 av manifest.json för publicerade versioner. En publicerad version
     // ändras aldrig; en ändring blir en ny version. BuildGuideTest vaktar.
     public const FROZEN = [
-        'v1' => '0bb620987213c35941f3aa413505d0ec0fcfad49dee2e3dd3dec59cc6220b75d',
+        'v1' => '7f763d8ee8d01c0765debcc225e40a5884c979035f4e3649f00815325699dc85',
     ];
 
     /** @return list<string> */

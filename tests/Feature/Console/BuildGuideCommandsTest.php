@@ -41,7 +41,7 @@ class BuildGuideCommandsTest extends TestCase
         $this->artisan('computercat:byggguide:verify v1')->expectsOutputToContain('Byggguide v1: OK')->assertExitCode(0);
 
         $m = BuildGuide::manifest('v1');
-        $this->assertSame([$m['commands']['install'].' --ignore-scripts', ...array_column($m['required_checks'], 'command')], array_column($ran, 'command'));
+        $this->assertSame([$m['commands']['install'], ...array_column($m['required_checks'], 'command')], array_column($ran, 'command'));
         $this->assertCount(1, array_unique(array_column($ran, 'path')));
         $this->assertSame([VerifyBuildGuide::SLUG], array_values(array_unique(array_column($ran, 'game'))));
         $this->assertTrue($checkedFiles);

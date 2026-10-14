@@ -12,7 +12,7 @@ Ett nytt spelrepo innehåller bara `README.md` och den här filen. Gör så här
 2. Filer med `delivery: "mcp"`: hämta med `get_build_guide_file` (`{"path": "<path>", "version": "v1"}`) och skriv `content` **exakt** till `path` i repots rot. Filer med `delivery: "download"` (bland annat `package-lock.json`): `curl -fsS "<download_url>" -o "<path>"`.
 3. Kontrollera varje fil mot manifestet med `sha256sum <path>` (eller `shasum -a 256 <path>`). Avviker en fil: hämta den igen. Ändra den aldrig för hand.
 4. `README.md` finns inte i fillistan; låt den vara. `CLAUDE.md` finns i listan med samma innehåll som den här filen.
-5. Kör `npm ci`, sedan `npm run check` och `npm audit --omit=dev --audit-level=high`. Alla ska gå igenom utan att du ändrat något.
+5. Kör `npm ci --ignore-scripts`, sedan `npm run check` och `npm audit --omit=dev --audit-level=high`. Alla ska gå igenom utan att du ändrat något.
 6. Committa allt med meddelandet `Grundkod från byggguide v1` och pusha direkt till `main` (ingen annan gren). Coolify bygger då Demo för första gången. Följ upp med `get_provisioning_status` tills `demo.state` är `live`; Demo visar då exemplet (klickrace).
 7. Bygg sedan spelet enligt idén och reglerna nedan.
 
@@ -29,7 +29,7 @@ Faller ett steg (verktyget svarar med fel, en kontroll blir röd utan att du än
 ## Köra och testa lokalt
 
 ```bash
-npm ci
+npm ci --ignore-scripts      # installationsskript körs aldrig
 cp .env.example .env.local    # NEXT_PUBLIC_COMPUTERCAT_GAME=<spelets slug>
 npm run dev                    # http://localhost:3000 (localhost är tillåtet i Computercats CORS)
 npm test                       # enhetstester, inget nätverk

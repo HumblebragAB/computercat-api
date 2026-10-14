@@ -35,7 +35,7 @@
         "NEXT_PUBLIC_COMPUTERCAT_URL": "optional, default https://api.computercat.co/api/v1"
     },
     "commands": {
-        "install": "npm ci",
+        "install": "npm ci --ignore-scripts",
         "dev": "npm run dev",
         "test": "npm test",
         "build": "npm run build"
@@ -64,8 +64,8 @@
     "server_templates": {
         "readme": {
             "source": "templates/README.md",
-            "sha256": "1e1e922458d5b46df3f1d3d69c5604e77e7e547839f438c77646d6939b492e7e",
-            "bytes": 3777
+            "sha256": "38b2b160895ebd69f01d7df4a025219c58fea6991d22f720085e94afeeac44f4",
+            "bytes": 3851
         }
     },
     "files": [
@@ -84,8 +84,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "2a3b0d5517404148b468585558cf165fc3e3c776d915f9299d2e511d303f98a1",
-            "bytes": 5394
+            "sha256": "362738dbe114c7814738ff0378e81aac5f501c2e183c5beac98494f20231d208",
+            "bytes": 5468
         },
         {
             "path": "eslint.config.mjs",

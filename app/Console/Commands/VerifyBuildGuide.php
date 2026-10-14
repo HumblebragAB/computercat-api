@@ -61,10 +61,9 @@ class VerifyBuildGuide extends Command
             file_put_contents($dir.'/README.md', BuildGuide::readme($version, 'Byggguide-verifiering'));
 
             $env = self::environment(['NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG]);
-            // Installationsskript körs inte här: bygget behöver dem inte (prebyggda
-            // binärer via optionalDependencies), och de är koden som kör vid installation.
-            $install = $manifest['commands']['install'] === 'npm ci' ? 'npm ci --ignore-scripts' : $manifest['commands']['install'];
-            foreach ([$install, ...array_column($manifest['required_checks'], 'command')] as $command) {
+            // Manifestets install är npm ci --ignore-scripts (BuildGuideTest vaktar):
+            // installationsskript körs aldrig, varken här, i spelet eller i Demo-bygget.
+            foreach ([$manifest['commands']['install'], ...array_column($manifest['required_checks'], 'command')] as $command) {
                 $this->line("> {$command}");
                 $result = Process::path($dir)->env($env)->timeout(900)->run($command, fn (string $type, string $output) => $this->output->write($output));
                 if ($result->failed()) {

@@ -13,7 +13,7 @@ _Idén fylls i av create_game när spelet skapas._
 Saknar repot `package.json` är det nytt: följ steg 1 i `CLAUDE.md`. Grundkoden hämtas med Computercat-verktyget `get_build_guide` och pushas till `main`.
 
 ```bash
-npm ci
+npm ci --ignore-scripts      # installationsskript körs aldrig
 cp .env.example .env.local   # sätt NEXT_PUBLIC_COMPUTERCAT_GAME till spelets slug
 npm run dev                   # http://localhost:3000
 ```
@@ -55,7 +55,7 @@ Kräver spelet bevis (`require_proof`) skickas `metadata.proof` från `createPro
 
 ## Beroenden: `overrides` för vite
 
-`package.json` har `overrides: { "vite": "7.3.7" }`. Utan den drar vitest 4.1.11 in en vite-version som gör att en ren `npm ci` fallerar. Raden tas bort i en senare byggguideversion när vitest har ett vite-intervall som installeras rent.
+`package.json` har `overrides: { "vite": "7.3.7" }`. Utan den drar vitest 4.1.11 in en vite-version som gör att en ren `npm ci --ignore-scripts` fallerar. Raden tas bort i en senare byggguideversion när vitest har ett vite-intervall som installeras rent.
 
 ## Miljövariabler
 
