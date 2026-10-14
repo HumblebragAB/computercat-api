@@ -33,6 +33,13 @@ class ReleaseModelTest extends TestCase
         $this->assertTrue($fresh->releases_enabled);
     }
 
+    public function test_in_memory_game_has_releases_enabled_default_without_fresh(): void
+    {
+        $game = Game::create(['slug' => 'minne', 'name' => 'Minne', 'is_active' => true, 'settings' => []]);
+
+        $this->assertTrue($game->releases_enabled);
+    }
+
     public function test_active_key_follows_status(): void
     {
         $release = $this->release($this->game);

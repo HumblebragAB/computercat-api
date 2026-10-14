@@ -23,7 +23,7 @@ class Game extends Model
     // följa med när en modell serialiseras till ett svar.
     protected $hidden = ['settings'];
 
-    protected $attributes = ['release_targets' => '[]'];
+    protected $attributes = ['release_targets' => '[]', 'releases_enabled' => true];
 
     protected function casts(): array
     {
