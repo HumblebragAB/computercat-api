@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-14-slappflode-design.md` (Del 1, Del 3 "MCP-verktyg", "Godkännande", "Filament", "Bevakning", "Dokumentation", tabellen "Etapper" rad 1a). Läs den före varje task. Bilagan `docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md` får ett nytt avsnitt i Task 1. Spec och plan ligger på grenen `docs/slapp-spec` (worktree `/Users/erik/Web/computercat-api/.claude/worktrees/docs-slapp-spec`) tills den är mergad; läs dem därifrån.
 
-**Beroenden:** Delprojekt 2 (provisionering) är live och är grunden. Faktabanken (`feat/faktabank`, delprojekt 3 etapp A) är inte mergad; Task 11 är skriven så att den fungerar oavsett i vilken ordning grenarna mergas.
+**Beroenden:** Delprojekt 2 (provisionering) är live och är grunden. Faktabanken (delprojekt 3 etapp A: `resources/faktabank`, `App\Services\FactBank`) är mergad till main och finns i denna gren. Specen har ändrats efter första versionen av planen: den har fått Del 2b (förbered App Store och lämna över) och etapperna går nu 1a, 2 (iOS), 1b (webbproduktion), 3 (Android). Etapp 1a:s omfattning är oförändrad; Del 2b och iOS-flödet byggs i etapp 2.
 
 ---
 
@@ -28,7 +28,7 @@
 - Produktionsmål: `web`, `app_store`, `play_store`. Steg: `web` har `demo` och `web_production`; `app_store` har `testflight` och `app_store`; `play_store` har `play_internal` och `play_production`. Demo är gemensamt första steg.
 - `releases.status`: `requested`, `awaiting_approval`, `building`, `processing`, `succeeded`, `failed`, `cancelled`. Pågående status (har `active_key`): `requested`, `awaiting_approval`, `building`, `processing`.
 - Unikt index på `(game_id, target, stage, active_key)`; `active_key` är satt för pågående status och null annars. Befordran sker i en transaktion med `lockForUpdate` på spelets rad; "första släppet" beräknas i samma transaktion.
-- Spärr 3: första produktionssläppet per spel och mål (ingen rad med status `succeeded` för spel, mål och produktionssteg) får status `awaiting_approval` och godkänns av en platform admin i Filament, aldrig via MCP. Godkänner Erik ett släpp han själv begärt loggas det som `self_approved`. Därefter får spelets ägare (`GameAccess::isOwner`) befordra till produktion; Erik får ett Slack-besked.
+- Spärr 3: första produktionssläppet per spel och mål (ingen rad med status `succeeded` för spel, mål och produktionssteg) får status `awaiting_approval` och godkänns av en platform admin i Filament, aldrig via MCP. Godkänner Erik ett släpp han själv begärt loggas det som `self_approved` (kolumn och logg, inget Slack). Därefter får spelets ägare (`GameAccess::isOwner`) befordra till produktion; Erik får ett Slack-besked.
 - Spärr 7: spärr 1 och 2 kontrolleras igen när ett släpp godkänns och när bygget startas. Ett släpp som stått i `awaiting_approval` i 7 dagar blir `cancelled`.
 - Spärr 8: produktionssteg kräver uttrycklig `commit_sha`; standardvalet (senaste commit med lyckat Demo-bygge) gäller bara teststeg.
 - Spärr 9: brytare `releases_enabled` per spel och globalt (konfig). Avslagen brytare stoppar nya befordringar och nya byggstarter.
@@ -36,16 +36,16 @@
 - Godkännande via Slack-knappar är utanför scope. Slack-meddelandet länkar till Filament.
 - Kvittot i `demo_builds` (spel, commit, deployment-uuid, tid) skrivs av `get_provisioning_status`, ett pollningsjobb var femte minut och nattkontrollen.
 - Engångssteg per mål (nycklar och text i Task 2): `app_store`: bundle-id (automatiskt via API, etapp 2), skapa appen (Erik), integritetsuppgifter och åldersgräns (Erik). `play_store`: skapa appen, innehållsklassning/dataskydd/målgrupp/butikstext, Play App Signing. `web`: Erik sätter den publika adressen.
-- Bundle-id och paketnamn: `co.humblebrag.<slug-utan-bindestreck>`, sparas på spelet med unikt index; krockar två slugs vägrar `set_release_targets`.
+- Bundle-id och paketnamn (`co.humblebrag.<slug-utan-bindestreck>`, unikt index, krockkontroll) hör till etapp 2 och ingår inte i 1a.
 
 **Rulings i denna plan (Erik ska känna till dem)**
-- **R1: etapp 1a bygger inget.** `promote_release` för `web_production`, `testflight`, `app_store`, `play_internal` och `play_production` skapar släppraden och stannar i `requested` (efter godkännande, om ett krävdes) eller `awaiting_approval`. `next` säger uttryckligen att bygget kommer i etapp 1b (web), 2 (iOS) eller 3 (Android). Ingen kod i 1a startar GitHub Actions, Coolify-`deploy` eller App Store/Play-anrop. `requested` och `awaiting_approval` som ingen rör inom 7 dagar blir `cancelled` (samma TTL, så att ett släpp utan byggsteg inte blockerar sin plats för alltid).
+- **R1: etapp 1a bygger inget, och produktionsstegen är stängda.** Teststegen `testflight` och `play_internal` kan begäras: `promote_release` skapar släppraden och stannar i `requested`, och `next` säger att bygget kommer i etapp 2 (iOS) eller 3 (Android). Produktionsstegen (`web_production`, `app_store`, `play_production`) kan inte begäras alls i 1a: `promote_release` svarar "Produktion byggs i etapp …" och ingen rad skapas, så Erik aldrig får en godkännandebegäran för något som inte kan byggas. Vilka steg som är öppna styrs av `config('releases.buildable_stages')` (standard `testflight`, `play_internal`); etapp 1b, 2 och 3 lägger till sina produktionssteg. Godkännandekoden och dess tester finns ändå i 1a (de behövs senare) och körs i testerna med produktionsstegen öppnade via den konfigen. Ingen kod i 1a startar GitHub Actions, Coolify-`deploy` eller App Store/Play-anrop. `requested` och `awaiting_approval` som ingen rör inom 7 dagar blir `cancelled` (samma TTL, så att ett släpp utan byggsteg inte blockerar sin plats för alltid).
 - **R2: alla befordringar kräver ägare** (`GameAccess::isOwner`), inte bara produktionssteg. Medlemmar läser status.
 - **R3: `request_live` skrev aldrig något till databasen** (bara Slack med dygnsdeduplicering i cachen). Det enda beständiga spåret är `mcp_audit_logs` (rader med `tool = request_live`, `outcome = ok`, `game_id`). Backfillen sätter `release_targets` till `["web"]` (sammanslaget med befintliga mål) för exakt de spelen och skapar det öppna engångssteget `web_public_address`. Följd: backfillen ger ingen produktionsrätt; spelet kan inte befordras förrän Erik satt adressen, och första produktionssläppet kräver hans godkännande ändå. Finns inga sådana loggrader händer ingenting.
 - **R4: brytaren.** Globalt: miljövariabeln `RELEASES_ENABLED` (läses via `config('releases.enabled')`; allt utom ett sant värde stänger, så en felstavning stänger i stället för att öppna). Att slå av kräver `.env`-ändring och `config:cache` på prod men ingen kod-deploy. Per spel: kolumnen `games.releases_enabled`, som platform admin växlar på Filament-sidan utan deploy.
 - **R5: språk.** `next`-texter och engångsstegens `instruction` är på svenska (specens exempel, och samma språk som faktabankens artiklar som testet jämför dem mot). Övriga verktygssvar och fel är engelska.
 - **R6: `targets` är en kommaseparerad sträng** (`"web,app_store"`, tom sträng = inga mål), inte en lista, eftersom `AuditLogger::summarize` bara loggar "[list: N items]" för listor och revisionsloggen då inte skulle visa vilka mål som sattes.
-- **R7: bundle-id-kolumnen (`games.bundle_id`, unik) skapas i 1a** och sätts av `set_release_targets` när `app_store` eller `play_store` väljs. Formatet bekräftas i etapp 2; ändras det då, ändras bara en funktion (`SetReleaseTargetsTool::bundleIdFor`). Krocktest mot andra spels sparade id, inte mot hypotetiska id.
+- **R7: inget bundle-id i 1a.** Ingen kolumn `games.bundle_id` och ingen krockkontroll; formatet och kolumnen beslutas i etapp 2. 1a har bara engångsstegens nycklar (`appstore_bundle_id` ingår som steg som Computercat själv bockar av i etapp 2; det går inte att bocka av för hand i Filament).
 - **R8: Coolifys `commit`.** Spiken (Task 1) ska bekräfta att `commit` i bygglistan är ett fullständigt 40-tecken-SHA för webhook-byggen. Koden i Task 3 förutsätter det: ett kvitto skrivs bara för `status = finished` med ett `commit` som matchar `^[0-9a-f]{40}$` (efter `strtolower`); annat (`HEAD`, kort hash, `null`) ignoreras och loggas en gång. Visar spiken att webhook-byggen har kort hash eller `HEAD`: stanna och fråga Erik.
 - **R9: det som inte byggs i 1a** (och varför): kontrollen att produktionswebben serverar den släppta commiten (ingen produktionsweb finns, etapp 1b), "vilken version av släppflödet som kördes" i revisionsloggen (inget flöde körs, etapp 2/3), `CLAUDE.md` i ny byggguideversion (delprojekt 3 etapp B), och engångssteget `play_first_aab` (skapas först om etapp 3:s spike bekräftar kravet).
 - **R10: Filament-sidan är bara för platform admin** (inte alla staff). Spelets medlemmar läser samma information via `get_release_status`.
@@ -69,7 +69,7 @@ De fem fel som specen innebär men som lätt passerar oupptäckta. Varje rad har
 4. **Brytaren stängs mitt i flödet, eller spelet arkiveras/ändras medan ett släpp väntar.** Brytaren ska stoppa godkännande och byggstart, inte bara nya begäran; ett arkiverat spel (`is_active = false`) och ett mål som tagits bort får inte släppas fram. Test: `ReleaseGateTest::test_switch_off_blocks_everything` och `test_archived_game_is_refused` (Task 4), `SetReleaseTargetsToolTest::test_removing_a_target_with_a_pending_release_is_refused` (Task 7).
 5. **Godkännande av fel person eller efter TTL.** En icke-admin ska aldrig kunna godkänna (varken via MCP, som saknar vägen, eller Filament-anrop), godkännande efter 7 dagar ska avbryta släppet, och `self_approved` ska sättas exakt när godkännaren är den som begärde. Test: `ReleaseServiceTest::test_only_platform_admin_can_approve`, `test_approval_after_ttl_cancels_the_release`, `test_self_approval_is_flagged` (Task 5), `GameReleasesPageTest::test_non_admin_staff_gets_403` (Task 9).
 
-Dessutom pinnas två gränsfall i sina tasks: ett `commit` från Coolify som inte är 40 hex skapar inget kvitto (Task 3), och backfillen rör bara spel med en `ok`-rad för `request_live` och går att köra två gånger (Task 8).
+Dessutom pinnas gränsfall i sina tasks: ett `commit` från Coolify som inte är 40 hex skapar inget kvitto (Task 3), produktionsstegen är stängda i 1a (Task 4 och 7), en nyare Demo-commit startar om butiksflödet (Task 6), och backfillen rör bara aktiva spel med en `ok`-rad för `request_live` och går att köra två gånger (Task 8).
 
 ---
 
@@ -134,6 +134,7 @@ foreach ([20, 100, 1000] as $take) {
 }
 $r = Illuminate\Support\Facades\Http::withToken(config('provisioning.coolify.token'))->acceptJson()->get($base, ['skip' => 0, 'take' => 20]);
 echo 'fields='.implode(',', array_keys($r->json('deployments.0') ?? []))."\n";
+echo 'statuses='.implode(',', array_unique(array_column($r->json('deployments') ?? [], 'status')))."\n";
 foreach ($r->json('deployments') ?? [] as $d) {
     $c = $d['commit'] ?? null;
     echo $d['deployment_uuid'].' '.$d['status'].' '.$d['created_at'].' commit='.var_export($c, true).' len='.strlen((string) $c).' hex40='.var_export(is_string($c) && preg_match('/^[0-9a-f]{40}$/', $c) === 1, true)."\n";
@@ -147,7 +148,7 @@ B64=$(base64 < $SCRATCH/s26.php | tr -d '\n')
 ~/.claude/bin/ssh-claude --via-home forge@46.246.48.182 "cd /home/computercat/api.computercat.co/current && echo $B64 | base64 -d | sudo -n -u computercat php8.4 artisan tinker --execute=\"\$(cat)\""
 ```
 
-Förväntat: tre rader `take=… status=200 …`, en rad `fields=…` som innehåller `deployment_uuid`, `status`, `created_at` och `commit`, och en rad per bygge. Anteckna: (S27) vilka `take` som gav 200 och hur många poster som kom (kräver `take=20` att ge 200; ger `take=1000` 4xx eller en tyst avkortning, anteckna gränsen), (S28) fältlistan, (S26) om alla `finished`-byggen har `hex40=true`.
+Förväntat: tre rader `take=… status=200 …`, en rad `fields=…` som innehåller `deployment_uuid`, `status`, `created_at` och `commit`, och en rad per bygge. Anteckna: (S27) vilka `take` som gav 200 och hur många poster som kom (kräver `take=20` att ge 200; ger `take=1000` 4xx eller en tyst avkortning, anteckna gränsen), (S28) fältlistan och vilka `status`-värden som förekommer, (S26) om alla `finished`-byggen har `hex40=true`.
 
 - [ ] **Steg 4: Läs retention och commit-format i Coolifys databas (SELECT).**
 
@@ -168,7 +169,7 @@ Läsning från Forge-servern med prodtoken (read+write) och SELECT i Coolifys da
 
 - S26: `commit` i `GET /deployments/applications/{uuid}` är <fyll i verkligt utfall, t.ex. "ett fullständigt 40-tecken-SHA i gemener för varje bygge som kom från en push; manuella omstarter har <värde>">.
 - S27: `take=20` ger 200 med <N> poster; `take=100` ger <utfall>; `take=1000` ger <utfall>.
-- S28: fälten i en post är: <ordagrann fältlista från steg 3>.
+- S28: fälten i en post är: <ordagrann fältlista från steg 3>. Status som förekommer i listan: <distinkta värden från steg 3 och 4>.
 - S29: äldsta bygget i databasen är från <datum> (<N> dagar), totalt <N> rader; <anteckning om gallring om någon syns>.
 ```
 
@@ -195,15 +196,15 @@ cd $WT && git add docs/superpowers/specs/bilagor/2026-10-13-coolify-api.md && gi
 
 **Interfaces:**
 - Produces:
-  - `config('releases.enabled'|'ttl_days'|'stuck_minutes'|'setup_reminder_days'|'demo_poll_take')`.
-  - `Game::releaseTargets(): array<int,string>`, `Game::releases(): HasMany`, `Game::setupSteps(): HasMany`, `Game::demoBuilds(): HasMany`; kolumnerna `release_targets` (array-cast), `releases_enabled` (bool), `bundle_id` (?string).
+  - `config('releases.enabled'|'ttl_days'|'stuck_minutes'|'setup_reminder_days'|'demo_poll_take'|'buildable_stages')`.
+  - `Game::releaseTargets(): array<int,string>`, `Game::releases(): HasMany`, `Game::setupSteps(): HasMany`, `Game::demoBuilds(): HasMany`; kolumnerna `release_targets` (array-cast) och `releases_enabled` (bool).
   - `Release` med konstanterna `REQUESTED`, `AWAITING_APPROVAL`, `BUILDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `CANCELLED`, `ACTIVE` (lista), `isActive(): bool`, `scopeActive()`, `static expireStale(): Illuminate\Database\Eloquent\Collection` (avbryter och returnerar släpp som stått för länge), relationerna `game()`, `requester()`, `approver()`.
   - `DemoBuild` med `static latestFor(Game $game): ?DemoBuild`.
   - `ReleaseSetupStep` med `OPEN = 'open'`, `DONE = 'done'`, relationerna `game()`, `doneBy()`.
-  - `ReleaseCatalog::TARGETS`, `::PROMOTABLE_STAGES`, `::STAGES`, `::BUILD_ETAPP`, `::testStage(string $target): string`, `::productionStage(string $target): string`, `::isPromotable(string $target, string $stage): bool`, `::isProduction(string $target, string $stage): bool`, `::isCommit(string $value): bool`.
-  - `SetupSteps::DEFINITIONS` (target => key => instruction), `SetupSteps::sync(Game $game): void`.
+  - `ReleaseCatalog::TARGETS`, `::PROMOTABLE_STAGES`, `::STAGES`, `::BUILD_ETAPP`, `::testStage(string $target): string`, `::productionStage(string $target): string`, `::isPromotable(string $target, string $stage): bool`, `::isProduction(string $target, string $stage): bool`, `::isBuildable(string $stage): bool`, `::isCommit(string $value): bool`.
+  - `SetupSteps::DEFINITIONS` (target => key => instruction), `SetupSteps::AUTOMATIC` (nycklar som Computercat själv bockar av och som aldrig kan bockas av för hand), `SetupSteps::sync(Game $game): void`.
   - `ReleaseSwitch::disabledReason(Game $game): ?string`.
-  - Testhjälparen `Tests\Support\CreatesReleases`: `sha(string $char = 'a'): string`, `demoBuild(Game, ?string $sha = null, $deployedAt = null): DemoBuild`, `release(Game, array $attrs = []): Release`, `releasableGame(string $slug = 'kattsvep', array $targets = ['web']): Game`, `ownerOf(Game): User`, `adminUser(): User`.
+  - Testhjälparen `Tests\Support\CreatesReleases` (importerar `ReleaseCatalog`): `sha(string $char = 'a'): string`, `demoBuild(Game, ?string $sha = null, $deployedAt = null): DemoBuild`, `release(Game, array $attrs = []): Release`, `releasableGame(string $slug = 'kattsvep', array $targets = ['web']): Game`, `openProductionStages(): void`, `ownerOf(Game): User`, `adminUser(): User`.
 
 - [ ] **Steg 1: Skriv testerna.** Skapa `tests/Support/CreatesReleases.php`:
 
@@ -217,6 +218,7 @@ use App\Models\Game;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use App\Releases\ReleaseCatalog;
 use App\Releases\SetupSteps;
 use Illuminate\Support\Str;
 
@@ -258,6 +260,12 @@ trait CreatesReleases
         ReleaseSetupStep::where('game_id', $game->id)->update(['status' => ReleaseSetupStep::DONE]);
 
         return $game->fresh();
+    }
+
+    /** Produktionsstegen är stängda i 1a (R1); tester av godkännande och spärrar öppnar dem via konfigen. */
+    protected function openProductionStages(): void
+    {
+        config(['releases.buildable_stages' => ReleaseCatalog::PROMOTABLE_STAGES]);
     }
 
     protected function ownerOf(Game $game): User
@@ -311,7 +319,6 @@ class ReleaseModelTest extends TestCase
 
         $this->assertSame([], $fresh->releaseTargets());
         $this->assertTrue($fresh->releases_enabled);
-        $this->assertNull($fresh->bundle_id);
     }
 
     public function test_active_key_follows_status(): void
@@ -438,6 +445,10 @@ return [
 
     // Hur många byggen pollningen läser per spel (Coolifys lista visar bara de senaste).
     'demo_poll_take' => 20,
+
+    // Steg som promote_release får skapa släpp för (R1). Produktionsstegen är stängda i 1a:
+    // etapp 1b lägger till web_production, etapp 2 app_store, etapp 3 play_production.
+    'buildable_stages' => ['testflight', 'play_internal'],
 ];
 ```
 
@@ -459,7 +470,6 @@ return new class extends Migration
             // JSON kan inte ha ett litteralt standardvärde i MySQL; modellen sätter [] för nya spel.
             $table->json('release_targets')->nullable()->after('is_listed');
             $table->boolean('releases_enabled')->default(true)->after('release_targets');
-            $table->string('bundle_id', 80)->nullable()->unique()->after('releases_enabled');
         });
 
         // Befintliga spel får en tom lista, aldrig null, så att koden inte behöver skilja på de två.
@@ -469,10 +479,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('games', function (Blueprint $table) {
-            $table->dropUnique(['bundle_id']);
-        });
-        Schema::table('games', function (Blueprint $table) {
-            $table->dropColumn(['release_targets', 'releases_enabled', 'bundle_id']);
+            $table->dropColumn(['release_targets', 'releases_enabled']);
         });
     }
 };
@@ -828,6 +835,12 @@ final class ReleaseCatalog
         return isset(self::STAGES[$target]) && self::STAGES[$target]['production'] === $stage;
     }
 
+    /** Är stegets bygge öppet för begäran? Styrs av config('releases.buildable_stages') (R1). */
+    public static function isBuildable(string $stage): bool
+    {
+        return in_array($stage, (array) config('releases.buildable_stages'), true);
+    }
+
     /** Fullständigt SHA i gemener. \z, inte $, så att en avslutande radbrytning inte släpps igenom. */
     public static function isCommit(string $value): bool
     {
@@ -866,6 +879,9 @@ final class SetupSteps
             'play_app_signing' => 'Erik aktiverar Play App Signing för appen i Play Console.',
         ],
     ];
+
+    /** Steg som Computercat själv sätter som klara (etapp 2). De kan inte bockas av för hand i Filament. */
+    public const AUTOMATIC = ['appstore_bundle_id'];
 
     /** Skapar saknade steg för spelets mål. Klara och öppna steg lämnas orörda; inget raderas. */
     public static function sync(Game $game): void
@@ -933,12 +949,12 @@ final class ReleaseSwitch
     }
 ```
 
-`release_targets`, `releases_enabled` och `bundle_id` läggs medvetet **inte** i `$fillable`; de skrivs med `forceFill` av tjänsterna.
+`release_targets` och `releases_enabled` läggs medvetet **inte** i `$fillable`; de skrivs med `forceFill` av tjänsterna.
 
 - [ ] **Steg 5: Kör testerna.**
 
 Run: `cd $WT && php artisan test --filter=ReleaseModelTest`
-Expected: PASS (9 tester).
+Expected: PASS (10 tester).
 
 - [ ] **Steg 6: Kör hela sviten för regressioner i `Game`.**
 
@@ -968,7 +984,7 @@ cd $WT && git add config/releases.php database/migrations app/Models app/Release
 **Interfaces:**
 - Consumes: `DemoBuild`, `ReleaseCatalog::isCommit()` (Task 2), `ProvisioningRun`, `CoolifyClient::assertKnown` (privat, finns).
 - Produces:
-  - `CoolifyClient::recentDeployments(string $uuid, int $take = 10): array` med poster `array{deployment_uuid: string, status: string, created_at: string, commit: ?string}`, nyast först; kastar `ExternalApiException` vid fel form och `CoolifyGuardException` för okänt uuid (samma spärr som `latestDeployment`).
+  - `CoolifyClient::recentDeployments(string $uuid, int $take = 10): array` med poster `array{deployment_uuid: string, status: string, created_at: string, commit: ?string}`, nyast först; kastar `ExternalApiException` vid fel form hos `finished`-poster (andra poster returneras med bara sin status) och `CoolifyGuardException` för okänt uuid (samma spärr som `latestDeployment`).
   - `DemoBuildRecorder::recordForRun(ProvisioningRun $run): int` (antal nya kvitton), `DemoBuildRecorder::recordAll(): array{recorded: int, failed: array<string, string>}` (slug => redigerat felmeddelande).
   - Kommandot `computercat:poll-demo-builds` (exitkod 1 om något spel inte kunde läsas).
   - `ProvisioningFakes::coolifyDeployments(array $deployments)` tar poster `[deployment_uuid, status, created_at?, commit?]`; `commit` är som standard 40 `a`.
@@ -1024,6 +1040,12 @@ class DemoBuildRecorderTest extends ProvisioningTestCase
 
     private ProvisioningRun $run;
 
+    // Ett enda Http::fake i setUp (ett andra efter setUp ignoreras: första träffen vinner). Testerna styr
+    // svaren genom egenskaperna; Http::swap används inte eftersom det tar bort transaktionsvaktens middleware.
+    private array $listBody = [];
+
+    private int $app2Status = 500;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -1032,11 +1054,16 @@ class DemoBuildRecorderTest extends ProvisioningTestCase
             'slug' => 'kattsvep', 'game_id' => $this->game->id, 'status' => ProvisioningRun::SUCCEEDED,
             'coolify_app_uuid' => 'app-1', 'demo_url' => 'https://kattsvep.apps.humblebrag.se',
         ]);
+        Http::fake([
+            self::LIST_URL => fn () => Http::response($this->listBody),
+            'coolify.test/api/v1/deployments/applications/app-2*' => fn () => Http::response(['message' => 'boom'], $this->app2Status),
+            ProvisioningFakes::SLACK => Http::response('ok'),
+        ]);
     }
 
     private function fakeList(array $rows): void
     {
-        Http::fake([self::LIST_URL => Http::response(ProvisioningFakes::coolifyDeployments($rows)), ProvisioningFakes::SLACK => Http::response('ok')]);
+        $this->listBody = ProvisioningFakes::coolifyDeployments($rows);
     }
 
     private function recorder(): DemoBuildRecorder
@@ -1046,14 +1073,19 @@ class DemoBuildRecorderTest extends ProvisioningTestCase
 
     public function test_client_returns_commit_and_validates_its_type(): void
     {
-        $this->fakeList([['dep-2', 'finished', '2026-10-14T09:00:00.000000Z', $this->sha('b')], ['dep-1', 'in_progress']]);
+        $this->fakeList([['dep-2', 'finished', '2026-10-14T09:00:00.000000Z', $this->sha('b')], ['dep-1', 'in_progress'], ['dep-0', 'some-future-status']]);
 
         $rows = app(CoolifyClient::class)->recentDeployments('app-1', 20);
 
         $this->assertSame(['deployment_uuid' => 'dep-2', 'status' => 'finished', 'created_at' => '2026-10-14T09:00:00.000000Z', 'commit' => $this->sha('b')], $rows[0]);
         Http::assertSent(fn ($r) => $r->url() === 'https://coolify.test/api/v1/deployments/applications/app-1?skip=0&take=20');
 
-        Http::fake([self::LIST_URL => Http::response(['count' => 1, 'deployments' => [['deployment_uuid' => 'd', 'status' => 'finished', 'created_at' => 'x', 'commit' => 123]]])]);
+        // Okända status på icke-finished-poster fäller inte läsningen (S28).
+        $this->assertSame('some-future-status', $rows[2]['status']);
+        $this->assertNull($rows[2]['commit']);
+
+        // Ett finished-bygge med fel form fäller.
+        $this->listBody = ['count' => 1, 'deployments' => [['deployment_uuid' => 'd', 'status' => 'finished', 'created_at' => 'x', 'commit' => 123]]];
         $this->expectException(ExternalApiException::class);
         app(CoolifyClient::class)->recentDeployments('app-1');
     }
@@ -1111,11 +1143,7 @@ class DemoBuildRecorderTest extends ProvisioningTestCase
     {
         $other = Game::create(['slug' => 'ordjakt', 'name' => 'Ordjakt', 'is_active' => true, 'settings' => []]);
         $this->provisioningRun(['slug' => 'ordjakt', 'game_id' => $other->id, 'status' => ProvisioningRun::SUCCEEDED, 'coolify_app_uuid' => 'app-2', 'demo_url' => 'https://ordjakt.apps.humblebrag.se']);
-        Http::fake([
-            self::LIST_URL => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished']])),
-            'coolify.test/api/v1/deployments/applications/app-2*' => Http::response(['message' => 'boom'], 500),
-            ProvisioningFakes::SLACK => Http::response('ok'),
-        ]);
+        $this->fakeList([['dep-1', 'finished']]);
 
         $this->artisan('computercat:poll-demo-builds')->assertExitCode(1);
         $this->artisan('computercat:poll-demo-builds')->assertExitCode(1);
@@ -1205,8 +1233,8 @@ Expected: FAIL (metoden och klassen finns inte).
 
 ```php
     /**
-     * De senaste byggena, nyast först, med commit (S26-S28 i bilaga A). Samma spärr
-     * och samma formkontroll som latestDeployment; commit är string eller null.
+     * De senaste byggena, nyast först, med commit (S26-S28 i bilaga A). Samma spärr som
+     * latestDeployment. Bara finished-byggen formkontrolleras fullt ut; commit är string eller null.
      * Coolifys lista visar bara de senaste byggena (S29), därför sparas kvitton.
      *
      * @return list<array{deployment_uuid: string, status: string, created_at: string, commit: ?string}>
@@ -1226,15 +1254,29 @@ Expected: FAIL (metoden och klassen finns inte).
                 throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment entry is not an object');
             }
             $status = $deployment['status'] ?? null;
-            if (! in_array($status, self::DEPLOYMENT_STATUSES, true)) {
-                throw new ExternalApiException('Coolify', 'GET', $path, 200, 'unknown deployment status: '.(is_scalar($status) ? (string) $status : gettype($status)));
+            if (! is_string($status)) {
+                throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment status is not a string');
             }
+
+            // Bara byggen som kan bli kvitton (finished) valideras fullt ut. En okänd status eller ett
+            // konstigt format på ett pågående eller misslyckat bygge får inte fälla läsningen av resten (S28 listar de status som setts).
+            if ($status !== 'finished') {
+                $out[] = [
+                    'deployment_uuid' => is_string($deployment['deployment_uuid'] ?? null) ? $deployment['deployment_uuid'] : '',
+                    'status' => $status,
+                    'created_at' => is_string($deployment['created_at'] ?? null) ? $deployment['created_at'] : '',
+                    'commit' => null,
+                ];
+
+                continue;
+            }
+
             foreach (['deployment_uuid', 'created_at'] as $field) {
                 if (! is_string($deployment[$field] ?? null) || $deployment[$field] === '') {
                     throw new ExternalApiException('Coolify', 'GET', $path, 200, "deployment lacks {$field}");
                 }
             }
-            $commit = $deployment['commit'] ?? null;
+            $commit =            $commit = $deployment['commit'] ?? null;
             if ($commit !== null && ! is_string($commit)) {
                 throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment commit is not a string');
             }
@@ -1474,6 +1516,7 @@ class ReleaseGateTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->openProductionStages();
         $this->game = $this->releasableGame('kattsvep', ['web', 'app_store']);
     }
 
@@ -1511,6 +1554,18 @@ class ReleaseGateTest extends TestCase
 
         $this->assertStringContainsString('not enabled', (string) $this->check('play_store', 'play_internal', $this->sha()));
         $this->assertStringContainsString('not enabled', (string) $this->check('nonsense', 'testflight', $this->sha()));
+    }
+
+    public function test_production_stages_are_closed_by_default(): void // R1
+    {
+        $this->demoBuild($this->game);
+        $this->release($this->game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::SUCCEEDED]);
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]);
+
+        $this->assertStringContainsString('Produktion byggs i etapp 1b', (string) $this->check('web', 'web_production', $this->sha()));
+        $this->assertStringContainsString('Produktion byggs i etapp 2', (string) $this->check('app_store', 'app_store', $this->sha()));
+        // Teststegen är öppna.
+        $this->assertNull($this->check('app_store', 'testflight', $this->sha()));
     }
 
     public function test_stage_must_belong_to_the_target(): void
@@ -1656,6 +1711,12 @@ final class ReleaseGate
             return "Stage {$stage} cannot be promoted for target {$target}.";
         }
 
+        // R1: produktionsstegen är stängda tills deras bygge finns, så att Erik aldrig får en
+        // godkännandebegäran för något som inte kan byggas.
+        if (! ReleaseCatalog::isBuildable($stage)) {
+            return 'Produktion byggs i etapp '.(ReleaseCatalog::BUILD_ETAPP[$stage] ?? '?')."; {$stage} cannot be requested yet.";
+        }
+
         $open = ReleaseSetupStep::where('game_id', $game->id)->where('target', $target)
             ->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->first();
         if ($open !== null) { // 6
@@ -1695,7 +1756,7 @@ final class ReleaseGate
 - [ ] **Steg 5: Kör testerna.**
 
 Run: `cd $WT && php artisan test --filter=ReleaseGateTest`
-Expected: PASS (13 tester).
+Expected: PASS.
 
 - [ ] **Steg 6: Commit.**
 
@@ -1717,7 +1778,7 @@ cd $WT && git add app/Releases/ReleaseGate.php tests/Feature/Releases/ReleaseGat
   - `final class ReleaseRefused extends \RuntimeException` (meddelandet är engelskt och får visas för anroparen).
   - `ReleaseService::promote(Game $game, User $user, string $target, string $stage, ?string $commit): Release` — kastar `ReleaseRefused`. Skapar släppet med status `awaiting_approval` (första produktionssläppet) eller `requested`.
   - `ReleaseService::approve(Release $release, User $admin): Release`, `::reject(Release $release, User $admin): Release`, `::assertCanStart(Release $release): void` (alla kastar `ReleaseRefused`).
-  - `ReleaseNotifier::afterPromote(Release $release): ?string` (SlackAlert-konstant eller null för teststeg), `::afterApprove(Release $release): ?string` (bara för `self_approved`), `::approvalUrl(Game $game): string`.
+  - `ReleaseNotifier::afterPromote(Release $release): ?string` (SlackAlert-konstant eller null för teststeg), `::approvalUrl(Game $game): string`. `self_approved` loggas (kolumn och `Log::notice`), inget Slack-meddelande.
 
 - [ ] **Steg 1: Skriv testerna.** `tests/Feature/Releases/ReleaseServiceTest.php`:
 
@@ -1746,6 +1807,7 @@ class ReleaseServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->openProductionStages();
         $this->game = $this->releasableGame('kattsvep', ['web', 'app_store']);
         $this->owner = $this->ownerOf($this->game);
     }
@@ -1823,6 +1885,15 @@ class ReleaseServiceTest extends TestCase
         $this->release($this->game, ['status' => Release::CANCELLED]);
 
         $this->assertSame(Release::AWAITING_APPROVAL, $this->promote('web', 'web_production', $this->sha())->status);
+    }
+
+    public function test_closed_production_stage_creates_no_release(): void // R1
+    {
+        $this->demoBuild($this->game);
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]);
+
+        $this->assertRefused(fn () => $this->promote('web', 'web_production', $this->sha()), 'Produktion byggs i etapp 1b');
+        $this->assertSame(0, Release::count());
     }
 
     public function test_a_succeeded_release_on_another_target_or_stage_does_not_count_as_first(): void
@@ -2038,12 +2109,17 @@ class ReleaseNotifierTest extends TestCase
 {
     use AssertsNoHttpInTransaction, CreatesReleases, RefreshDatabase;
 
+    // Ett enda stub-anrop: ett andra Http::fake efter setUp skulle ignoreras (första träffen vinner),
+    // och Http::swap skulle ta bort transaktionsvaktens middleware.
+    private int $slackStatus = 200;
+
     protected function setUp(): void
     {
         parent::setUp();
+        $this->openProductionStages();
         ProvisioningFakes::configure();
         $this->startHttpTransactionGuard();
-        Http::fake([ProvisioningFakes::SLACK => Http::response('ok')]);
+        Http::fake([ProvisioningFakes::SLACK => fn () => Http::response('ok', $this->slackStatus)]);
     }
 
     protected function tearDown(): void
@@ -2092,31 +2168,12 @@ class ReleaseNotifierTest extends TestCase
 
     public function test_slack_failure_is_reported_not_thrown(): void
     {
-        Http::fake([ProvisioningFakes::SLACK => Http::response('nope', 500)]);
+        $this->slackStatus = 500;
         $game = $this->releasableGame('kattsvep');
         $this->demoBuild($game);
         $release = app(ReleaseService::class)->promote($game, $this->ownerOf($game), 'web', 'web_production', $this->sha());
 
         $this->assertSame(SlackAlert::FAILED, app(ReleaseNotifier::class)->afterPromote($release));
-    }
-
-    public function test_only_self_approval_notifies(): void
-    {
-        $game = $this->releasableGame();
-        $this->demoBuild($game);
-        $admin = $this->adminUser();
-        $release = app(ReleaseService::class)->promote($game, $admin, 'web', 'web_production', $this->sha());
-        $approved = app(ReleaseService::class)->approve($release, $admin);
-
-        $this->assertSame(SlackAlert::SENT, app(ReleaseNotifier::class)->afterApprove($approved));
-        Http::assertSent(fn ($r) => str_contains($r['text'], 'self_approved'));
-
-        $other = $this->releasableGame('ordjakt');
-        $this->demoBuild($other);
-        $second = app(ReleaseService::class)->promote($other, $this->ownerOf($other), 'web', 'web_production', $this->sha());
-        $approvedByOther = app(ReleaseService::class)->approve($second, $this->adminUser());
-
-        $this->assertNull(app(ReleaseNotifier::class)->afterApprove($approvedByOther));
     }
 }
 ```
@@ -2329,18 +2386,6 @@ final class ReleaseNotifier
 
         return $this->slack->send("release-requested:{$release->uuid}", $text);
     }
-
-    /** Bara om godkännaren är den som begärde släppet. */
-    public function afterApprove(Release $release): ?string
-    {
-        if (! $release->self_approved) {
-            return null;
-        }
-
-        $game = $release->game;
-
-        return $this->slack->send("release-approved:{$release->uuid}", 'Släpp godkänt av samma person som begärde det (self_approved): `'.SlackAlert::escape($game->slug).'` '.SlackAlert::escape($release->target).'/'.SlackAlert::escape($release->stage).', commit '.SlackAlert::escape($release->commit_sha).'.');
-    }
 }
 ```
 
@@ -2371,7 +2416,7 @@ cd $WT && git add app/Releases tests/Feature/Releases && git commit -m "Släppfl
   - `ReleaseStatus::forGame(Game $game): array` (`game`, `releases_enabled`, `release_targets`, `demo`, `targets`, `next`), `ReleaseStatus::describe(Release $release): array{state: string, next: string}` (för `promote_release`).
   - MCP-verktyget `get_release_status`.
 
-Tillstånden (`state`) är: `releases_disabled`, `no_targets`, `no_demo_build`, `setup_open`, `ready_for_test`, `ready_for_production`, `awaiting_approval`, `queued_for_build`, `in_progress`, `succeeded`, `failed`, `cancelled`.
+Tillstånden (`state`) är: `releases_disabled`, `no_targets`, `no_demo_build`, `setup_open`, `ready_for_test`, `ready_for_production`, `production_not_open`, `awaiting_approval`, `queued_for_build`, `in_progress`, `succeeded`, `failed`, `cancelled`.
 
 - [ ] **Steg 1: Skriv testerna.** `tests/Feature/Releases/ReleaseStatusTest.php`:
 
@@ -2393,7 +2438,13 @@ class ReleaseStatusTest extends TestCase
 {
     use CreatesReleases, RefreshDatabase;
 
-    private function status(Game $game): array
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->openProductionStages();
+    }
+
+    private function statusOf(Game $game): array
     {
         return ReleaseStatus::forGame($game->fresh());
     }
@@ -2402,7 +2453,7 @@ class ReleaseStatusTest extends TestCase
     {
         $game = Game::create(['slug' => 'g', 'name' => 'G', 'is_active' => true, 'settings' => []]);
 
-        $status = $this->status($game);
+        $status = $this->statusOf($game);
 
         $this->assertSame([], $status['release_targets']);
         $this->assertSame(ReleaseNext::for('no_targets'), $status['next']);
@@ -2415,7 +2466,7 @@ class ReleaseStatusTest extends TestCase
         $this->demoBuild($game);
         $game->forceFill(['releases_enabled' => false])->save();
 
-        $status = $this->status($game);
+        $status = $this->statusOf($game);
 
         $this->assertFalse($status['releases_enabled']);
         $this->assertSame(ReleaseNext::for('releases_disabled'), $status['next']);
@@ -2428,7 +2479,7 @@ class ReleaseStatusTest extends TestCase
         ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->update(['status' => 'open']);
         $this->demoBuild($game);
 
-        $target = $this->status($game)['targets']['app_store'];
+        $target = $this->statusOf($game)['targets']['app_store'];
 
         $this->assertSame('setup_open', $target['state']);
         $this->assertStringContainsString('skapar appen i App Store Connect', $target['next']);
@@ -2439,7 +2490,7 @@ class ReleaseStatusTest extends TestCase
     {
         $game = $this->releasableGame();
 
-        $this->assertSame('no_demo_build', $this->status($game)['targets']['web']['state']);
+        $this->assertSame('no_demo_build', $this->statusOf($game)['targets']['web']['state']);
     }
 
     public function test_web_goes_straight_from_demo_to_production(): void
@@ -2447,7 +2498,7 @@ class ReleaseStatusTest extends TestCase
         $game = $this->releasableGame();
         $this->demoBuild($game, $this->sha('b'));
 
-        $target = $this->status($game)['targets']['web'];
+        $target = $this->statusOf($game)['targets']['web'];
 
         $this->assertSame('ready_for_production', $target['state']);
         $this->assertStringContainsString('Commit '.$this->sha('b').' är testad i Demo', $target['next']);
@@ -2459,16 +2510,44 @@ class ReleaseStatusTest extends TestCase
         $game = $this->releasableGame('kattsvep', ['app_store']);
         $this->demoBuild($game, $this->sha('b'));
 
-        $this->assertSame('ready_for_test', $this->status($game)['targets']['app_store']['state']);
-        $this->assertStringContainsString('promote_release(target: app_store, stage: testflight)', $this->status($game)['targets']['app_store']['next']);
+        $this->assertSame('ready_for_test', $this->statusOf($game)['targets']['app_store']['state']);
+        $this->assertStringContainsString('promote_release(target: app_store, stage: testflight)', $this->statusOf($game)['targets']['app_store']['next']);
 
         $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'commit_sha' => $this->sha('b'), 'status' => Release::SUCCEEDED]);
-        $target = $this->status($game)['targets']['app_store'];
+        $target = $this->statusOf($game)['targets']['app_store'];
         $this->assertSame('ready_for_production', $target['state']);
         $this->assertStringContainsString('testad i testflight', $target['next']);
 
         $this->release($game, ['target' => 'app_store', 'stage' => 'app_store', 'commit_sha' => $this->sha('b'), 'status' => Release::SUCCEEDED]);
-        $this->assertSame('succeeded', $this->status($game)['targets']['app_store']['state']);
+        $this->assertSame('succeeded', $this->statusOf($game)['targets']['app_store']['state']);
+    }
+
+    public function test_closed_production_says_so_instead_of_offering_it(): void // R1
+    {
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]);
+        $game = $this->releasableGame();
+        $this->demoBuild($game, $this->sha('b'));
+
+        $target = $this->statusOf($game)['targets']['web'];
+
+        $this->assertSame('production_not_open', $target['state']);
+        $this->assertStringContainsString('etapp 1b', $target['next']);
+        $this->assertStringNotContainsString('promote_release', $target['next']);
+    }
+
+    public function test_a_newer_demo_commit_restarts_the_store_flow(): void
+    {
+        $game = $this->releasableGame('kattsvep', ['app_store']);
+        $this->demoBuild($game, $this->sha('a'), now()->subHour());
+        $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'commit_sha' => $this->sha('a'), 'status' => Release::SUCCEEDED]);
+        $this->release($game, ['target' => 'app_store', 'stage' => 'app_store', 'commit_sha' => $this->sha('a'), 'status' => Release::SUCCEEDED]);
+        $this->assertSame('succeeded', $this->statusOf($game)['targets']['app_store']['state']);
+
+        $this->demoBuild($game, $this->sha('b'), now());
+
+        $target = $this->statusOf($game)['targets']['app_store'];
+        $this->assertSame('ready_for_test', $target['state']);
+        $this->assertStringContainsString('Commit '.$this->sha('b').' är testad i Demo', $target['next']);
     }
 
     public function test_release_states_map_to_texts(): void
@@ -2483,7 +2562,7 @@ class ReleaseStatusTest extends TestCase
         ];
         foreach ($cases as [$status, $state, $text]) {
             $release = $this->release($game, ['commit_sha' => $this->sha('b'), 'status' => $status]);
-            $target = $this->status($game)['targets']['web'];
+            $target = $this->statusOf($game)['targets']['web'];
             $this->assertSame($state, $target['state'], $status);
             $this->assertStringContainsString($text, $target['next'], $status);
             $this->assertStringContainsString($release->uuid, $target['next']);
@@ -2497,12 +2576,12 @@ class ReleaseStatusTest extends TestCase
         $this->demoBuild($game, $this->sha('b'));
         $this->release($game, ['commit_sha' => $this->sha('b'), 'status' => Release::FAILED, 'last_error' => 'build exploded']);
 
-        $target = $this->status($game)['targets']['web'];
+        $target = $this->statusOf($game)['targets']['web'];
         $this->assertSame('failed', $target['state']);
         $this->assertStringContainsString('build exploded.', $target['next']);
 
         $this->release($game, ['commit_sha' => $this->sha('b'), 'status' => Release::CANCELLED]);
-        $this->assertSame('cancelled', $this->status($game)['targets']['web']['state']);
+        $this->assertSame('cancelled', $this->statusOf($game)['targets']['web']['state']);
     }
 
     public function test_status_exposes_demo_and_releases_without_internal_ids(): void
@@ -2511,7 +2590,7 @@ class ReleaseStatusTest extends TestCase
         $this->demoBuild($game, $this->sha('b'));
         $release = $this->release($game, ['commit_sha' => $this->sha('b'), 'status' => Release::AWAITING_APPROVAL]);
 
-        $status = $this->status($game);
+        $status = $this->statusOf($game);
 
         $this->assertSame($this->sha('b'), $status['demo']['commit_sha']);
         $latest = $status['targets']['web']['stages']['web_production']['latest_release'];
@@ -2557,6 +2636,12 @@ use Tests\Support\CreatesReleases;
 class GetReleaseStatusToolTest extends McpTestCase
 {
     use CreatesReleases;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->openProductionStages();
+    }
 
     public function test_member_reads_status_with_next(): void
     {
@@ -2611,6 +2696,7 @@ final class ReleaseNext
         'setup_open' => 'Väntar på ett engångssteg: {instruction}',
         'ready_for_test' => 'Commit {commit} är testad i Demo. Be om {stage} med promote_release(target: {target}, stage: {stage}).',
         'ready_for_production' => 'Commit {commit} är testad i {test_stage}. Be om produktion med promote_release(target: {target}, stage: {stage}, commit_sha: {commit}).',
+        'production_not_open' => 'Commit {commit} är testad i {test_stage}. Produktion byggs först i etapp {etapp}; inget mer att göra nu.',
         'awaiting_approval' => 'Väntar på Erik: släppet {release} av commit {commit} ska godkännas i Filament.',
         'queued_for_build' => 'Släppet {release} av commit {commit} är registrerat, men bygget för {stage} byggs först i etapp {etapp}. Inget mer att göra nu.',
         'in_progress' => 'Släppet {release} av commit {commit} pågår ({status}). Fråga igen med get_release_status.',
@@ -2725,25 +2811,29 @@ final class ReleaseStatus
             }
         }
 
-        // Webbens teststeg är Demo-bygget; för butikerna är det senaste lyckade släppet i teststeget.
-        $tested = $test === 'demo'
-            ? $demo->commit_sha
-            : Release::where('game_id', $game->id)->where('target', $target)->where('stage', $test)
-                ->where('status', Release::SUCCEEDED)->orderByDesc('id')->value('commit_sha');
-
-        if ($tested === null) {
-            if ($testRelease !== null) { // misslyckat eller avbrutet
-                return self::releaseState($testRelease);
+        // Allt räknas mot Demo-bygget som gäller nu: kommer en nyare commit i Demo börjar flödet om för den.
+        $commit = $demo->commit_sha;
+        if ($test !== 'demo') {
+            $testForCommit = self::latest($game, $target, $test, $commit);
+            if ($testForCommit === null) {
+                return ['ready_for_test', ['commit' => $commit, 'stage' => $test, 'target' => $target]];
             }
-
-            return ['ready_for_test', ['commit' => $demo->commit_sha, 'stage' => $test, 'target' => $target]];
+            if ($testForCommit->status !== Release::SUCCEEDED) { // misslyckat eller avbrutet
+                return self::releaseState($testForCommit);
+            }
         }
 
-        if ($prodRelease !== null && $prodRelease->commit_sha === $tested) {
-            return self::releaseState($prodRelease);
+        $prodForCommit = self::latest($game, $target, $prod, $commit);
+        if ($prodForCommit !== null) {
+            return self::releaseState($prodForCommit);
         }
 
-        return ['ready_for_production', ['commit' => $tested, 'test_stage' => $test === 'demo' ? 'Demo' : $test, 'target' => $target, 'stage' => $prod]];
+        $testLabel = $test === 'demo' ? 'Demo' : $test;
+        if (! ReleaseCatalog::isBuildable($prod)) { // R1
+            return ['production_not_open', ['commit' => $commit, 'test_stage' => $testLabel, 'etapp' => ReleaseCatalog::BUILD_ETAPP[$prod] ?? '?']];
+        }
+
+        return ['ready_for_production', ['commit' => $commit, 'test_stage' => $testLabel, 'target' => $target, 'stage' => $prod]];
     }
 
     /** @return array{0: string, 1: array<string, string>} */
@@ -2769,9 +2859,10 @@ final class ReleaseStatus
         ]];
     }
 
-    private static function latest(Game $game, string $target, string $stage): ?Release
+    private static function latest(Game $game, string $target, string $stage, ?string $commit = null): ?Release
     {
-        return Release::where('game_id', $game->id)->where('target', $target)->where('stage', $stage)->orderByDesc('id')->first();
+        return Release::where('game_id', $game->id)->where('target', $target)->where('stage', $stage)
+            ->when($commit !== null, fn ($q) => $q->where('commit_sha', $commit))->orderByDesc('id')->first();
     }
 
     private static function present(?Release $release): ?array
@@ -2854,7 +2945,7 @@ cd $WT && git add app/Releases app/Mcp tests && git commit -m "Släppflöde 1a: 
 
 **Interfaces:**
 - Consumes: `ReleaseService::promote`, `ReleaseNotifier::afterPromote`, `ReleaseStatus::describe`/`forGame`, `SetupSteps::sync`, `ReleaseCatalog`, `ReleaseRefused` (Task 4–6).
-- Produces: MCP-verktygen `promote_release(game, target, stage, commit_sha?)` och `set_release_targets(game, targets)` (kommaseparerad sträng, R6). `SetReleaseTargetsTool::bundleIdFor(Game $game): string` (publik statisk).
+- Produces: MCP-verktygen `promote_release(game, target, stage, commit_sha?)` och `set_release_targets(game, targets)` (kommaseparerad sträng, R6).
 
 - [ ] **Steg 1: Skriv testerna.** `tests/Feature/Mcp/PromoteReleaseToolTest.php`:
 
@@ -2874,6 +2965,9 @@ class PromoteReleaseToolTest extends McpTestCase
 {
     use AssertsNoHttpInTransaction, CreatesReleases;
 
+    // Ett enda stub-anrop (ett andra Http::fake efter setUp ignoreras; Http::swap tar bort transaktionsvakten).
+    private int $slackStatus = 200;
+
     private \App\Models\Game $game;
 
     private \App\Models\User $owner;
@@ -2881,9 +2975,10 @@ class PromoteReleaseToolTest extends McpTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->openProductionStages();
         ProvisioningFakes::configure();
         $this->startHttpTransactionGuard();
-        Http::fake([ProvisioningFakes::SLACK => Http::response('ok')]);
+        Http::fake([ProvisioningFakes::SLACK => fn () => Http::response('ok', $this->slackStatus)]);
         $this->game = $this->releasableGame('kattsvep', ['web', 'app_store']);
         $this->owner = $this->ownerOf($this->game);
     }
@@ -2945,9 +3040,22 @@ class PromoteReleaseToolTest extends McpTestCase
         Http::assertSent(fn ($r) => str_contains($r['text'], 'Produktionssläpp begärt'));
     }
 
+    public function test_production_is_closed_in_this_version(): void // R1
+    {
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]);
+        $this->demoBuild($this->game, $this->sha('b'));
+
+        $result = $this->promote(['target' => 'web', 'stage' => 'web_production', 'commit_sha' => $this->sha('b')]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('Produktion byggs i etapp 1b', $result['text']);
+        $this->assertSame(0, Release::count());
+        Http::assertNothingSent();
+    }
+
     public function test_slack_failure_does_not_fail_the_promotion_but_is_visible(): void
     {
-        Http::fake([ProvisioningFakes::SLACK => Http::response('nope', 500)]);
+        $this->slackStatus = 500;
         $this->demoBuild($this->game, $this->sha('b'));
 
         $result = $this->promote(['target' => 'web', 'stage' => 'web_production', 'commit_sha' => $this->sha('b')]);
@@ -3078,26 +3186,17 @@ class SetReleaseTargetsToolTest extends McpTestCase
         return $this->callTool($user ?? $this->admin, 'set_release_targets', ['game' => $slug, 'targets' => $targets]);
     }
 
-    public function test_admin_sets_targets_and_gets_setup_steps_and_a_bundle_id(): void
+    public function test_admin_sets_targets_and_gets_setup_steps(): void
     {
         $result = $this->set('web,app_store');
 
         $this->assertTrue($result['ok'], $result['text']);
         $json = json_decode($result['text'], true);
         $this->assertSame(['web', 'app_store'], $json['release_targets']);
-        $this->assertSame('co.humblebrag.kattsvep', $json['bundle_id']);
         $this->assertContains('web_public_address', array_column($json['open_setup_steps'], 'key'));
         $this->assertContains('appstore_create_app', array_column($json['open_setup_steps'], 'key'));
         $this->assertStringContainsString('Väntar på ett engångssteg', $json['next']);
         $this->assertSame(['web', 'app_store'], $this->game->fresh()->releaseTargets());
-        $this->assertSame('co.humblebrag.kattsvep', $this->game->fresh()->bundle_id);
-    }
-
-    public function test_web_only_sets_no_bundle_id(): void
-    {
-        $this->set('web');
-
-        $this->assertNull($this->game->fresh()->bundle_id);
     }
 
     public function test_audit_log_keeps_the_targets(): void
@@ -3166,25 +3265,11 @@ class SetReleaseTargetsToolTest extends McpTestCase
         $this->assertStringContainsString('pending release', $result['text']);
         $this->assertSame(['web', 'app_store'], $this->game->fresh()->releaseTargets());
 
-        // En avslutad release hindrar inte.
-        Release::query()->update(['status' => Release::CANCELLED]);
+        // En avslutad release hindrar inte. Status ändras alltid via modellen (active_key sätts i saving-kroken).
+        Release::where('game_id', $this->game->id)->get()->each->update(['status' => Release::CANCELLED]);
         $this->assertTrue($this->set('web')['ok']);
     }
 
-    public function test_colliding_bundle_ids_are_refused(): void
-    {
-        $this->set('app_store');
-        $this->game('kattsv-ep');
-
-        $result = $this->set('play_store', null, 'kattsv-ep');
-
-        $this->assertFalse($result['ok']);
-        $this->assertStringContainsString('bundle id', $result['text']);
-        $this->assertSame([], Game::where('slug', 'kattsv-ep')->first()->releaseTargets());
-        $this->assertNull(Game::where('slug', 'kattsv-ep')->value('bundle_id'));
-        // Spelet utan mobila mål krockar inte.
-        $this->assertTrue($this->set('web', null, 'kattsv-ep')['ok']);
-    }
 }
 ```
 
@@ -3218,7 +3303,7 @@ class PromoteReleaseTool extends GameTool
 {
     protected string $name = 'promote_release';
 
-    protected string $description = 'Promote an exact commit to the next release stage: testflight or play_internal (test), or web_production, app_store or play_production (production). Test stages default to the latest commit with a successful Demo build; production stages need an explicit commit_sha that already succeeded in the test stage. The first production release per game and target must be approved by Erik in Filament. Only the game owner. In this version the release is registered but not built yet; the answer says when building arrives. Check get_release_status first.';
+    protected string $description = 'Promote an exact commit to the next release stage: testflight or play_internal (test), or web_production, app_store or play_production (production). Test stages default to the latest commit with a successful Demo build; production stages need an explicit commit_sha that already succeeded in the test stage. The first production release per game and target must be approved by Erik in Filament. Only the game owner. In this version a test-stage release is only registered, not built yet, and production stages are refused until their build exists (etapp 1b, 2, 3); the answer says so. Check get_release_status first.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -3298,7 +3383,7 @@ class SetReleaseTargetsTool extends GameTool
 {
     protected string $name = 'set_release_targets';
 
-    protected string $description = 'Set which production targets a game has: any of web, app_store, play_store, as a comma-separated string ("web,app_store"; empty string = none). Creates the one-time setup steps for each target and, for app_store/play_store, the game\'s bundle id (co.humblebrag.<slug without hyphens>). Only a platform admin. Removing a target that has a pending release is refused.';
+    protected string $description = 'Set which production targets a game has: any of web, app_store, play_store, as a comma-separated string ("web,app_store"; empty string = none). Creates the one-time setup steps for each target. Only a platform admin. Removing a target that has a pending release is refused.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -3307,11 +3392,6 @@ class SetReleaseTargetsTool extends GameTool
             // En sträng, inte en lista: revisionsloggen visar bara "[list: N items]" för listor (R6).
             'targets' => $schema->string()->description('Comma-separated targets: web, app_store, play_store. Empty string clears all targets.')->required(),
         ];
-    }
-
-    public static function bundleIdFor(Game $game): string
-    {
-        return 'co.humblebrag.'.str_replace('-', '', $game->slug);
     }
 
     protected function run(Game $game, array $args, User $user): Response
@@ -3324,6 +3404,10 @@ class SetReleaseTargetsTool extends GameTool
         if ($validator->fails()) {
             return $this->validationFailed($validator->errors()->toArray());
         }
+
+        // Verktyget körs i en transaktion: spelets rad låses, samma lås som ReleaseService::promote tar,
+        // så att målen inte ändras mitt under en befordran.
+        $game = Game::query()->whereKey($game->getKey())->lockForUpdate()->firstOrFail();
 
         $targets = array_values(array_unique(array_filter(array_map('trim', explode(',', $validator->validated()['targets'])), fn (string $t) => $t !== '')));
         $unknown = array_values(array_diff($targets, ReleaseCatalog::TARGETS));
@@ -3338,16 +3422,7 @@ class SetReleaseTargetsTool extends GameTool
             }
         }
 
-        $needsBundleId = array_intersect($targets, ['app_store', 'play_store']) !== [];
-        $bundleId = null;
-        if ($needsBundleId && $game->bundle_id === null) {
-            $bundleId = self::bundleIdFor($game);
-            if (Game::where('bundle_id', $bundleId)->whereKeyNot($game->id)->exists()) {
-                return Response::error("The bundle id {$bundleId} is already used by another game (slugs that differ only by hyphens collide). Ask Erik to pick a different id.");
-            }
-        }
-
-        $game->forceFill(['release_targets' => $targets] + ($bundleId !== null ? ['bundle_id' => $bundleId] : []))->save();
+        $game->forceFill(['release_targets' => $targets])->save();
         SetupSteps::sync($game);
 
         $game = $game->fresh();
@@ -3356,7 +3431,6 @@ class SetReleaseTargetsTool extends GameTool
         return $this->json([
             'saved' => true,
             'release_targets' => $game->releaseTargets(),
-            'bundle_id' => $game->bundle_id,
             'open_setup_steps' => ReleaseSetupStep::where('game_id', $game->id)->whereIn('target', $targets)
                 ->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->get(['target', 'key', 'instruction'])->toArray(),
             'next' => $status['next'],
@@ -3479,9 +3553,9 @@ class BackfillLiveRequestsTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function log(Game $game, string $tool, string $outcome): void
+    private function log(Game $game, string $tool, string $outcome, array $arguments = []): void
     {
-        McpAuditLog::create(['user_id' => null, 'game_id' => $game->id, 'tool' => $tool, 'arguments' => [], 'outcome' => $outcome]);
+        McpAuditLog::create(['user_id' => null, 'game_id' => $game->id, 'tool' => $tool, 'arguments' => $arguments, 'outcome' => $outcome]);
     }
 
     private function migrate(): void
@@ -3513,6 +3587,44 @@ class BackfillLiveRequestsTest extends TestCase
             $this->assertSame([], $game->fresh()->releaseTargets(), $game->slug);
             $this->assertSame(0, ReleaseSetupStep::where('game_id', $game->id)->count(), $game->slug);
         }
+    }
+
+    public function test_archived_games_are_skipped(): void
+    {
+        $archived = $this->newGame('archived', ['is_active' => false]);
+        $this->log($archived, 'request_live', 'ok');
+
+        $this->migrate();
+
+        $this->assertSame([], $archived->fresh()->releaseTargets());
+        $this->assertSame(0, ReleaseSetupStep::count());
+    }
+
+    public function test_the_requested_domain_ends_up_in_the_setup_step(): void
+    {
+        $game = $this->newGame('asked');
+        $this->log($game, 'request_live', 'ok', ['game' => 'asked', 'domain' => 'gammal.se']);
+        $this->log($game, 'request_live', 'ok', ['game' => 'asked', 'domain' => 'Kattsvep.se']);
+
+        $this->migrate();
+
+        $instruction = ReleaseSetupStep::where('game_id', $game->id)->value('instruction');
+        $this->assertStringContainsString('Önskad adress enligt Live-förfrågan: kattsvep.se.', $instruction);
+        $this->assertStringNotContainsString('gammal.se', $instruction);
+    }
+
+    public function test_an_invalid_logged_domain_is_ignored(): void
+    {
+        $game = $this->newGame('asked');
+        $this->log($game, 'request_live', 'ok', ['domain' => 'https://x.se/path']);
+        $this->log($game, 'request_live', 'ok', ['domain' => '<!channel>']);
+        $this->log($game, 'request_live', 'ok', ['domain' => ['x.se']]);
+
+        $this->migrate();
+
+        $instruction = ReleaseSetupStep::where('game_id', $game->id)->value('instruction');
+        $this->assertStringNotContainsString('Önskad adress', $instruction);
+        $this->assertSame(['web'], $game->fresh()->releaseTargets());
     }
 
     public function test_it_merges_with_existing_targets_and_can_run_twice(): void
@@ -3605,8 +3717,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
 // request_live skrev aldrig något till databasen (bara Slack). Det enda beständiga spåret
-// är revisionsloggen. Spel med en lyckad request_live får målet web och det öppna
-// engångssteget web_public_address (plan 2026-10-14-slappflode-1a, R3). Ingen produktionsrätt
+// är revisionsloggen. Aktiva spel med en lyckad request_live får målet web och det öppna
+// engångssteget web_public_address (med den önskade domänen ur loggen, om den fanns) (plan 2026-10-14-slappflode-1a, R3). Ingen produktionsrätt
 // följer av det: adressen måste sättas och första produktionssläppet godkännas av Erik.
 // Texten i steget är en ögonblicksbild av SetupSteps::DEFINITIONS['web'] vid skrivtillfället;
 // migrationer läser aldrig appens klasser.
@@ -3618,11 +3730,28 @@ return new class extends Migration
 
     public function up(): void
     {
-        $gameIds = DB::table('mcp_audit_logs')->where('tool', 'request_live')->where('outcome', 'ok')
-            ->whereNotNull('game_id')->distinct()->pluck('game_id');
+        // Nyast först: den senaste angivna domänen per spel vinner.
+        $rows = DB::table('mcp_audit_logs')->where('tool', 'request_live')->where('outcome', 'ok')
+            ->whereNotNull('game_id')->orderByDesc('id')->get(['game_id', 'arguments']);
 
-        foreach ($gameIds as $gameId) {
-            $game = DB::table('games')->where('id', $gameId)->first(['id', 'release_targets']);
+        $gameIds = [];
+        $domains = [];
+        foreach ($rows as $row) {
+            $gameIds[$row->game_id] = true;
+            if (isset($domains[$row->game_id])) {
+                continue;
+            }
+            $arguments = json_decode((string) $row->arguments, true);
+            $domain = is_array($arguments) && is_string($arguments['domain'] ?? null) ? strtolower(trim($arguments['domain'])) : '';
+            // Samma slags värde som request_live accepterade: ett värdnamn, inget schema, ingen sökväg.
+            if (preg_match('/^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/', $domain) === 1) {
+                $domains[$row->game_id] = $domain;
+            }
+        }
+
+        foreach (array_keys($gameIds) as $gameId) {
+            // Arkiverade (inaktiva) spel får inget mål.
+            $game = DB::table('games')->where('id', $gameId)->where('is_active', true)->first(['id', 'release_targets']);
             if ($game === null) {
                 continue;
             }
@@ -3640,7 +3769,7 @@ return new class extends Migration
                 'target' => 'web',
                 'key' => self::WEB_STEP_KEY,
                 'status' => 'open',
-                'instruction' => self::WEB_STEP_TEXT,
+                'instruction' => self::WEB_STEP_TEXT.(isset($domains[$gameId]) ? ' Önskad adress enligt Live-förfrågan: '.$domains[$gameId].'.' : ''),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -3678,8 +3807,8 @@ cd $WT && git add app/Mcp/Tools/RequestLiveTool.php database/migrations tests &&
 - Test: `tests/Feature/Filament/GameReleasesPageTest.php`
 
 **Interfaces:**
-- Consumes: `ReleaseService::approve/reject`, `ReleaseNotifier::afterApprove`, `ReleaseRefused` (Task 5), `Game::releases()/setupSteps()` (Task 2), `ReleaseStatus::forGame` (Task 6).
-- Produces: Filament-sidan `GameResource::getUrl('releases', ['record' => $game])` med Livewire-metoderna `approve(int $releaseId)`, `reject(int $releaseId)`, `markStepDone(int $stepId)`, `toggleGameSwitch()`. Alla kräver platform admin.
+- Consumes: `ReleaseService::approve/reject`, `ReleaseRefused` (Task 5), `Game::releases()/setupSteps()` (Task 2), `ReleaseStatus::forGame` (Task 6).
+- Produces: Filament-sidan `GameResource::getUrl('releases', ['record' => $game])` med Livewire-metoderna `approve(int $releaseId)`, `reject(int $releaseId)`, `markStepDone(int $stepId)` (vägrar `SetupSteps::AUTOMATIC`), `toggleGameSwitch()` och `disableAllGames()` (global nödbroms: `releases_enabled = false` för alla spel). Alla kräver platform admin.
 
 - [ ] **Steg 1: Skriv testerna.** `tests/Feature/Filament/GameReleasesPageTest.php`:
 
@@ -3710,6 +3839,7 @@ class GameReleasesPageTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->openProductionStages();
         ProvisioningFakes::configure();
         Http::fake([ProvisioningFakes::SLACK => Http::response('ok')]);
         $this->game = $this->releasableGame('kattsvep', ['web']);
@@ -3773,7 +3903,7 @@ class GameReleasesPageTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_approving_your_own_request_is_flagged_and_reported(): void
+    public function test_approving_your_own_request_is_flagged_and_logged_without_slack(): void
     {
         $admin = $this->adminUser();
         $release = $this->awaiting($admin);
@@ -3781,7 +3911,7 @@ class GameReleasesPageTest extends TestCase
         $this->page($admin)->call('approve', $release->id);
 
         $this->assertTrue($release->fresh()->self_approved);
-        Http::assertSent(fn ($r) => str_contains($r['text'], 'self_approved'));
+        Http::assertNothingSent();
     }
 
     public function test_a_refused_approval_changes_nothing_and_does_not_crash(): void
@@ -3833,6 +3963,28 @@ class GameReleasesPageTest extends TestCase
         $this->assertSame('open', $theirs->fresh()->status);
     }
 
+    public function test_the_automatic_bundle_id_step_cannot_be_checked_off_by_hand(): void
+    {
+        $game = $this->releasableGame('ordjakt', ['app_store']);
+        $step = ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_bundle_id')->first();
+        $step->update(['status' => 'open']);
+
+        $this->actingAs($this->adminUser());
+        Livewire::test(GameReleases::class, ['record' => $game->getKey()])->call('markStepDone', $step->id);
+
+        $this->assertSame('open', $step->fresh()->status);
+    }
+
+    public function test_admin_disables_releases_for_all_games(): void
+    {
+        $other = $this->releasableGame('ordjakt', ['web']);
+
+        $this->page($this->adminUser())->call('disableAllGames');
+
+        $this->assertFalse($this->game->fresh()->releases_enabled);
+        $this->assertFalse($other->fresh()->releases_enabled);
+    }
+
     public function test_admin_toggles_the_game_switch(): void
     {
         $page = $this->page($this->adminUser());
@@ -3859,12 +4011,13 @@ Expected: FAIL (sidan och routen finns inte).
 namespace App\Filament\Resources\GameResource\Pages;
 
 use App\Filament\Resources\GameResource;
+use App\Models\Game;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
-use App\Releases\ReleaseNotifier;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use App\Releases\ReleaseStatus;
+use App\Releases\SetupSteps;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
@@ -3918,14 +4071,13 @@ class GameReleases extends Page
         }
 
         try {
-            $approved = app(ReleaseService::class)->approve($release, $admin);
+            app(ReleaseService::class)->approve($release, $admin);
         } catch (ReleaseRefused $e) {
             Notification::make()->danger()->title($e->getMessage())->send();
 
             return;
         }
 
-        app(ReleaseNotifier::class)->afterApprove($approved);
         Notification::make()->success()->title('Släppet är godkänt.')->send();
     }
 
@@ -3960,6 +4112,13 @@ class GameReleases extends Page
             return;
         }
 
+        // Steg som Computercat själv sätter (etapp 2) kan inte bockas av för hand.
+        if (in_array($step->key, SetupSteps::AUTOMATIC, true)) {
+            Notification::make()->danger()->title('Det här steget sätts av Computercat och kan inte bockas av för hand.')->send();
+
+            return;
+        }
+
         $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => $admin->id, 'done_at' => now()]);
         Notification::make()->success()->title('Engångssteget är avbockat.')->send();
     }
@@ -3969,6 +4128,15 @@ class GameReleases extends Page
         $this->admin();
         $game = $this->getRecord();
         $game->forceFill(['releases_enabled' => ! $game->releases_enabled])->save();
+    }
+
+    // Global nödbroms utöver miljövariabeln RELEASES_ENABLED: stänger släpp för alla spel.
+    // Envägs: varje spel slås på igen för sig med toggleGameSwitch.
+    public function disableAllGames(): void
+    {
+        $this->admin();
+        Game::query()->update(['releases_enabled' => false]);
+        Notification::make()->success()->title('Släpp är avstängda för alla spel.')->send();
     }
 
     private function admin(): User
@@ -4000,6 +4168,9 @@ class GameReleases extends Page
                 <x-filament::button color="gray" wire:click="toggleGameSwitch" wire:confirm="Slå om brytaren för det här spelet?">
                     {{ $record->releases_enabled ? 'Stäng av släpp för spelet' : 'Slå på släpp för spelet' }}
                 </x-filament::button>
+                <x-filament::button color="danger" wire:click="disableAllGames" wire:confirm="Stäng av släpp för ALLA spel? Varje spel slås på igen för sig.">
+                    Stäng av släpp för alla spel
+                </x-filament::button>
             </div>
         </x-filament::section>
 
@@ -4015,8 +4186,10 @@ class GameReleases extends Page
                             <div class="text-xs text-gray-500">{{ $step->done_at?->toDateTimeString() }} av {{ $step->doneBy?->email ?? 'okänd' }}</div>
                         @endif
                     </div>
-                    @if ($step->status === 'open')
+                    @if ($step->status === 'open' && ! in_array($step->key, \App\Releases\SetupSteps::AUTOMATIC, true))
                         <x-filament::button size="sm" wire:click="markStepDone({{ $step->id }})" wire:confirm="Har steget gjorts?">Bocka av</x-filament::button>
+                    @elseif ($step->status === 'open')
+                        <span class="text-xs">Sätts av Computercat</span>
                     @endif
                 </div>
             @empty
@@ -4237,6 +4410,7 @@ cd $WT && git add app/Console/Commands/CheckProvisioning.php tests/Feature/Conso
 ### Task 11: Faktabanksartiklar och testet som jämför dem med `next`
 
 **Files:**
+- Modify: `resources/faktabank/process/process-ide-till-live.md` (steg 4, sammanfattning)
 - Create: `resources/faktabank/process/process-slappflode.md`, `resources/faktabank/process/process-slapp-engangssteg.md`
 - Test: `tests/Feature/ReleaseFactbankSyncTest.php`
 
@@ -4244,7 +4418,7 @@ cd $WT && git add app/Console/Commands/CheckProvisioning.php tests/Feature/Conso
 - Consumes: `ReleaseNext::TEMPLATES` (Task 6), `SetupSteps::DEFINITIONS` (Task 2).
 - Produces: två artiklar som citerar varje `next`-mall och varje engångssteg ordagrant, och ett test som fäller sviten om de glider isär.
 
-Faktabanken finns på `feat/faktabank` och är inte mergad. Artiklarna följer dess format (front matter, H2-rubrikerna `Regel`, `Varför`, `Så gör du`, `Källa` i den ordningen, `updated` citerad, källrader som finns i repot). Testet läser filerna direkt och är därför oberoende av `FactBank`-klassen; en andra test använder `FactBank` bara om klassen finns. Katalogen `resources/faktabank/process/` skapas av denna task om den inte finns, och merge mot `feat/faktabank` kolliderar inte (andra filnamn).
+Faktabanken är mergad (`App\Services\FactBank`, `resources/faktabank/process/process-ide-till-live.md` finns). Artiklarna följer dess format (front matter, H2-rubrikerna `Regel`, `Varför`, `Så gör du`, `Källa` i den ordningen, `updated` citerad, källrader som finns i repot). Testet läser filerna direkt för jämförelsen med `next`, och använder `FactBank` för valideringen. Den gamla artikeln `process-ide-till-live` uppdateras i steg 3b: steg 4 pekar på `get_release_status` och `promote_release` i stället för `request_live`, men taggen `request_live` behålls så att `FactBankContentTest` (sökningen `request_live` ska ge den artikeln först) fortfarande är grön.
 
 - [ ] **Steg 1: Skriv testet.** `tests/Feature/ReleaseFactbankSyncTest.php`:
 
@@ -4258,8 +4432,7 @@ use App\Releases\SetupSteps;
 use Tests\TestCase;
 
 // Spec Del 1: "Texterna för next finns i en enda klass så att faktabankens artiklar och
-// API:t inte glider isär; ett test jämför dem." Testet läser filerna direkt, så det
-// fungerar både före och efter att faktabanken (feat/faktabank) är mergad.
+// API:t inte glider isär; ett test jämför dem." Testet läser artikelfilerna direkt.
 class ReleaseFactbankSyncTest extends TestCase
 {
     private function processArticles(): array
@@ -4314,29 +4487,27 @@ class ReleaseFactbankSyncTest extends TestCase
         }
     }
 
-    // Hänvisningen får inte peka på det ersatta verktyget som sättet att gå live. Artikeln
-    // process-ide-till-live finns bara om faktabanken är mergad; då ska den ha uppdaterats.
-    public function test_the_old_go_live_article_does_not_send_claude_to_the_replaced_tool(): void
+    // Den gamla artikeln får inte peka på det ersatta verktyget som sättet att gå live.
+    public function test_the_old_go_live_article_points_to_the_release_tools(): void
     {
-        $path = resource_path('faktabank/process/process-ide-till-live.md');
-        if (! is_file($path)) {
-            $this->markTestSkipped('process-ide-till-live.md finns inte (feat/faktabank är inte mergad).');
-        }
+        $text = (string) file_get_contents(resource_path('faktabank/process/process-ide-till-live.md'));
 
-        $this->assertStringContainsString('promote_release', (string) file_get_contents($path), 'Uppdatera steg 4 i process-ide-till-live: Live går via promote_release.');
+        $this->assertStringContainsString('get_release_status', $text);
+        $this->assertStringContainsString('promote_release', $text);
+        $this->assertDoesNotMatchRegularExpression('/\d\. När spelet är klart för riktiga spelare: `request_live`/', $text);
     }
 
-    // Faktabankens egen validering (front matter, rubriker, källrader) gäller bara om klassen finns.
-    public function test_articles_pass_the_factbank_validation_when_it_exists(): void
+    // Faktabankens egen validering (front matter, rubriker, källrader) och sökningen.
+    public function test_articles_pass_the_factbank_validation_and_are_searchable(): void
     {
-        if (! class_exists(\App\Services\FactBank::class)) {
-            $this->markTestSkipped('FactBank finns inte (feat/faktabank är inte mergad).');
-        }
-
-        $ids = array_column((new \App\Services\FactBank)->all('process'), 'id');
+        $bank = new \App\Services\FactBank;
+        $ids = array_column($bank->all('process'), 'id');
 
         $this->assertContains('process-slappflode', $ids);
         $this->assertContains('process-slapp-engangssteg', $ids);
+        $this->assertSame('process-slappflode', $bank->search('get_release_status promote_release')[0]['id']);
+        // Sökningen som FactBankContentTest kräver får inte ha flyttat sig.
+        $this->assertSame('process-ide-till-live', $bank->search('request_live')[0]['id']);
     }
 }
 ```
@@ -4344,9 +4515,9 @@ class ReleaseFactbankSyncTest extends TestCase
 - [ ] **Steg 2: Kör och se att det faller.**
 
 Run: `cd $WT && php artisan test --filter=ReleaseFactbankSyncTest`
-Expected: FAIL (katalogen saknar artiklar). De två `markTestSkipped` visas som skipped.
+Expected: FAIL (artiklarna saknas och den gamla artikeln pekar fortfarande på `request_live`).
 
-- [ ] **Steg 3: Skriv artiklarna.** Nämn inte verktyget för Live-förfrågan vid namn och använd inte ordet "request_live" (faktabankens sökning rankar artikeln `process-ide-till-live` på det; `FactBankContentTest` på `feat/faktabank` förväntar sig den artikeln först för den frågan). Varje mall står på en egen rad, ordagrant, utan radbrytning mitt i.
+- [ ] **Steg 3: Skriv artiklarna.** Nämn inte verktyget för Live-förfrågan vid namn i de nya artiklarna och använd inte ordet "request_live" där (faktabankens sökning rankar artikeln `process-ide-till-live` på det; `FactBankContentTest` förväntar sig den artikeln först för den frågan). Varje mall står på en egen rad, ordagrant, utan radbrytning mitt i.
 
 `resources/faktabank/process/process-slappflode.md`:
 
@@ -4367,6 +4538,7 @@ updated: "2026-10-14"
 3. Teststeg (`testflight`, `play_internal`) tar som standard senaste commit med lyckat Demo-bygge. Produktionssteg (`web_production`, `app_store`, `play_production`) kräver att du anger `commit_sha`, och den commiten måste ha lyckats i teststeget (för webben: ha ett lyckat Demo-bygge).
 4. Det första produktionssläppet per spel och mål godkänns av Erik i Filament. Du kan inte godkänna det själv och ska inte försöka. Därefter kan ägaren släppa utan nytt godkännande.
 5. Mål (`web`, `app_store`, `play_store`) och engångssteg sätts av Erik. Ett mål med öppna engångssteg kan inte befordras.
+6. Produktionsstegen öppnas etapp för etapp. Så länge `get_release_status` säger `production_not_open` går det inte att begära produktion, och du ska inte försöka.
 
 ## Varför
 
@@ -4382,6 +4554,7 @@ Tillstånden i `get_release_status` och vad `next` säger i varje (texten är or
 - `setup_open`: Väntar på ett engångssteg: {instruction}
 - `ready_for_test`: Commit {commit} är testad i Demo. Be om {stage} med promote_release(target: {target}, stage: {stage}).
 - `ready_for_production`: Commit {commit} är testad i {test_stage}. Be om produktion med promote_release(target: {target}, stage: {stage}, commit_sha: {commit}).
+- `production_not_open`: Commit {commit} är testad i {test_stage}. Produktion byggs först i etapp {etapp}; inget mer att göra nu.
 - `awaiting_approval`: Väntar på Erik: släppet {release} av commit {commit} ska godkännas i Filament.
 - `queued_for_build`: Släppet {release} av commit {commit} är registrerat, men bygget för {stage} byggs först i etapp {etapp}. Inget mer att göra nu.
 - `in_progress`: Släppet {release} av commit {commit} pågår ({status}). Fråga igen med get_release_status.
@@ -4433,7 +4606,6 @@ Stegen per mål och deras text (ordagrant som i `get_release_status`):
 - `play_store_listing`: Erik fyller i innehållsklassning, dataskydd, målgrupp och butikstext i Play Console.
 - `play_app_signing`: Erik aktiverar Play App Signing för appen i Play Console.
 
-Bundle-id och paketnamn är `co.humblebrag.` följt av spelets slug utan bindestreck.
 
 ## Källa
 
@@ -4442,17 +4614,33 @@ Bundle-id och paketnamn är `co.humblebrag.` följt av spelets slug utan bindest
 - app/Mcp/Tools/GetReleaseStatusTool.php
 ````
 
-Om faktabankens validering (efter merge) avvisar något i artiklarna (tagg-längd, sammanfattning över 200 tecken, `updated`-format): rätta artikeln, inte valideringen.
+- [ ] **Steg 3b: Uppdatera `process-ide-till-live.md`.** Ändra tre ställen i `resources/faktabank/process/process-ide-till-live.md` (taggen `request_live` på rad `tags:` lämnas orörd):
+
+Sammanfattningen (`summary:`, högst 200 tecken) blir:
+
+```yaml
+summary: create_game ger repo och Demo, varje push till main bygger Demo. Live-förfrågan (request_live) är ersatt av get_release_status och promote_release. Följ upp med get_provisioning_status.
+```
+
+Regel 4 blir:
+
+```markdown
+4. När spelet är klart för riktiga spelare: fråga `get_release_status` (den säger vad som gäller och vad nästa steg är) och be om produktion med `promote_release`. Erik godkänner det första produktionssläppet per mål; inget går live automatiskt. Se `process-slappflode`. Produktion kan ännu inte begäras i den här versionen.
+```
+
+Och i `## Källa` läggs raden `- app/Mcp/Tools/PromoteReleaseTool.php` till efter `- app/Mcp/Tools/RequestLiveTool.php`. Kontrollera efteråt: `cd $WT && grep -c "request_live" resources/faktabank/process/process-ide-till-live.md` ska ge minst 2 (taggen och sammanfattningen).
+
+Om faktabankens validering avvisar något i artiklarna (tagg-längd, sammanfattning över 200 tecken, `updated`-format): rätta artikeln, inte valideringen.
 
 - [ ] **Steg 4: Kör testerna.**
 
 Run: `cd $WT && php artisan test --filter=ReleaseFactbankSyncTest`
-Expected: PASS (de två faktabank-beroende testerna skipped om `feat/faktabank` inte är mergad).
+Expected: PASS.
 
-- [ ] **Steg 5 (om faktabanken är mergad till main när du når hit): kör faktabankens egna tester.**
+- [ ] **Steg 5: Kör faktabankens egna tester.**
 
-Run: `cd $WT && git merge-base --is-ancestor feat/faktabank main && php artisan test --filter='FactBank|FactTools'`
-Expected: PASS, inklusive `FactBankContentTest::test_common_questions_find_the_right_article` (`request_live` ska fortfarande ge `process-ide-till-live` först). Är grenen inte mergad: hoppa över steget och skriv i commit-meddelandet att `process-ide-till-live` steg 4 måste uppdateras vid merge (testet `test_the_old_go_live_article_…` fäller då, med avsikt).
+Run: `cd $WT && php artisan test --filter='FactBank|FactTools'`
+Expected: PASS, inklusive `FactBankContentTest::test_common_questions_find_the_right_article` (`request_live` ska fortfarande ge `process-ide-till-live` först, tack vare taggen) och `test_all_articles_are_valid`. Faller något på de nya artiklarna eller den ändrade: rätta artikeln, inte valideringen.
 
 - [ ] **Steg 6: Commit.**
 
@@ -4472,8 +4660,56 @@ cd $WT && git add resources/faktabank tests/Feature/ReleaseFactbankSyncTest.php 
 
 - [ ] **Steg 1: Hela sviten och stilen.**
 
-Run: `cd $WT && php artisan test && vendor/bin/pint --test`
-Expected: PASS, och pint utan avvikelser. Avvikelser: `vendor/bin/pint` på de ändrade filerna och commita som `Stil: pint`.
+Run: `cd $WT && php artisan test`
+Expected: PASS.
+
+Stilen körs bara på de filer grenen ändrat (inte på hela repot):
+
+```bash
+cd $WT && git diff --name-only --diff-filter=AM main...HEAD -- '*.php' | xargs vendor/bin/pint
+cd $WT && git status --short
+```
+
+Ändrade filer efter pint committas som `Stil: pint` och sviten körs om.
+
+- [ ] **Steg 1b: Förbjud massuppdatering av `releases`.** `active_key` sätts bara i `saving`-kroken på modellen, så en `Release::where(...)->update([...])` i appen skulle lämna `active_key` fel och antingen låsa en plats för alltid eller släppa igenom två pågående släpp. Skapa `tests/Feature/Releases/ReleaseWritesTest.php`:
+
+```php
+<?php
+
+namespace Tests\Feature\Releases;
+
+use Symfony\Component\Finder\Finder;
+use Tests\TestCase;
+
+// Status på ett släpp ändras alltid via modellen (saving-kroken håller active_key i takt med status).
+class ReleaseWritesTest extends TestCase
+{
+    public function test_app_code_never_mass_updates_or_deletes_releases(): void
+    {
+        $offenders = [];
+        foreach ((new Finder)->files()->in(app_path())->name('*.php') as $file) {
+            $code = $file->getContents();
+            if (preg_match('/\bRelease::[^;]*->(update|delete|forceDelete|truncate|increment|decrement)\(/s', $code) === 1
+                || preg_match('/DB::table\(\s*[\'"]releases[\'"]\s*\)/', $code) === 1) {
+                $offenders[] = $file->getRelativePathname();
+            }
+        }
+
+        $this->assertSame([], $offenders, 'Massuppdatering av releases går förbi active_key-kroken; uppdatera via modellen.');
+    }
+
+    public function test_the_guard_actually_matches_a_mass_update(): void
+    {
+        $bad = 'Release::where("game_id", 1)->update(["status" => "cancelled"]);';
+
+        $this->assertSame(1, preg_match('/\bRelease::[^;]*->(update|delete|forceDelete|truncate|increment|decrement)\(/s', $bad));
+    }
+}
+```
+
+Run: `cd $WT && php artisan test --filter=ReleaseWritesTest`
+Expected: PASS. Faller första testet: skriv om raden i den filen som anges så att den går via modellen (`->get()->each->update(...)` eller en enskild modell), annars har invarianten ingen mening. Commit: `git add tests/Feature/Releases/ReleaseWritesTest.php && git commit -m "Släppflöde 1a: förbjud massuppdatering av releases"`.
 
 - [ ] **Steg 2: Klass-svep (syskon).** Kör och läs resultatet:
 
@@ -4483,13 +4719,13 @@ cd $WT && grep -rn "Release::create\|Release::.*update(\|->status = " app | grep
 cd $WT && grep -rn "request_live" app resources docs/superpowers/specs | grep -v "^docs/superpowers/specs/2026-10-14-slappflode-design.md"
 ```
 
-Förväntat: (1) kvittoskrivarna är exakt tre (statusverktyget, `PollDemoBuilds`/`DemoBuildRecorder`, `CheckProvisioning`); (2) ingen skrivning av `Release.status` utanför `ReleaseService`, `Release::expireStale` och testerna (annars kan en väg gå förbi spärrarna); (3) kvarvarande hänvisningar till `request_live` i spec-dokument eller artiklar som beskriver det som sättet att gå live. Allt som avviker: fixa i den task som äger koden, eller ställ en AskUserQuestion om det inte går att fixa direkt.
+Förväntat: (1) kvittoskrivarna är exakt tre (statusverktyget, `PollDemoBuilds`/`DemoBuildRecorder`, `CheckProvisioning`); (2) ingen skrivning av `Release.status` utanför `ReleaseService`, `Release::expireStale` och testerna (annars kan en väg gå förbi spärrarna; `ReleaseWritesTest` håller det); (3) kvarvarande hänvisningar till `request_live` i spec-dokument eller artiklar som beskriver det som sättet att gå live. Allt som avviker: fixa i den task som äger koden, eller ställ en AskUserQuestion om det inte går att fixa direkt.
 
 - [ ] **Steg 3: Säkerhetsgranskning.** Invokera `security-first-mindset` och kör dess review gate på hela diffen (`cd $WT && git diff main...HEAD`) med en angripares ögon. Frågor som ska besvaras mot koden, inte mot minnet: Kan en medlem utan ägarroll skapa ett släpp (nej, `ReleaseService::promote`)? Kan någon utom en platform admin godkänna (nej, `assertAdmin` och Filament-sidans `canAccess` plus `admin()` i varje metod; MCP saknar vägen)? Kan `commit_sha` från ett annat spel slinka igenom (nej, kvitton och släpp filtreras på `game_id`)? Läcker `last_error` eller Slack-texter hemligheter (nej: `Redactor` i `saving`-kroken, `SlackAlert::escape` och `scrubSecrets`)? Skickas något HTTP i en transaktion (nej: `AssertsNoHttpInTransaction` i alla klasser som når HTTP)? Startar något ett bygge eller en deploy (nej: `test_client_cannot_start_a_build` i `CoolifyClientTest` gäller fortfarande, och inget i planen lägger till en sådan metod)?
 
 - [ ] **Steg 4: `completion-gate`.** Invokera `completion-gate` mot specen (etapp 1a-raden) och denna plan. Blockerande findings stoppar. Icke-blockerande buntas till **en** AskUserQuestion till Erik före överlämning.
 
-- [ ] **Steg 5: Överlämning.** Rapportera till Erik (en sammanfattning på högst ett stycke): vad som finns och att inget går live; att deploy av 1a (migrationer, backfill, ny schemalagd pollning) är ett eget beslut som kräver hans OK; att spikens S26–S29 står i bilagan; att faktabankens artikel `process-ide-till-live` måste uppdateras när `feat/faktabank` mergas (testet fäller annars, med avsikt). Merge sker med `~/.claude/bin/wt-finish $WT` först när Erik sagt till; ingen push eller deploy görs av planen.
+- [ ] **Steg 5: Överlämning.** Rapportera till Erik (en sammanfattning på högst ett stycke): vad som finns och att inget går live; att deploy av 1a (migrationer, backfill, ny schemalagd pollning) är ett eget beslut som kräver hans OK; att spikens S26–S29 står i bilagan; att produktionsstegen är stängda i 1a (`config('releases.buildable_stages')`) och öppnas av etapp 1b, 2 och 3. Merge sker med `~/.claude/bin/wt-finish $WT` först när Erik sagt till; ingen push eller deploy görs av planen.
 
 ---
 
@@ -4497,7 +4733,7 @@ Förväntat: (1) kvittoskrivarna är exakt tre (statusverktyget, `PollDemoBuilds
 
 | Specens krav (etapp 1a) | Task |
 |---|---|
-| `release_targets`, `releases_enabled`, bundle-id | 2, 7 |
+| `release_targets`, `releases_enabled` (bundle-id: etapp 2) | 2, 7 |
 | `releases`, `demo_builds`, `release_setup_steps` | 2 |
 | Kvitton: `get_provisioning_status`, femminuterspoll, nattkontroll | 3 |
 | Spärr 1, 2, 5, 6, 8, 9 | 4 |
