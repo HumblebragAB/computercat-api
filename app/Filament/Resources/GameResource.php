@@ -44,8 +44,9 @@ class GameResource extends Resource
      */
     public const ANTI_CHEAT_PRESETS = [
         'none' => [
-            'label' => 'None — no validation',
-            'description' => 'Scores are accepted as-is. Use for casual games without competitive leaderboards.',
+            'label' => 'None — default bounds only',
+            // Samma beteende som ett spel utan inställningar (AntiCheatService:s standardvärden).
+            'description' => 'No preset: default bounds apply (score 0–86400). A proof, if sent, is still checked as a time in milliseconds. Use for casual games without competitive leaderboards.',
             'config' => [],
         ],
         'time_ms' => [
