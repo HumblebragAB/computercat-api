@@ -172,6 +172,12 @@ Med en engångsapp som städas på sparade id:n (samma mönster som spiken i del
 
 Faller en punkt: stanna och fråga Erik.
 
+### Underlag till byggguide v3 (Eriks beslut 2026-10-14: samlas, v2 går ut som den är)
+
+- Lint: `const { env } = process; env.X` och `self['process'].env.X` passerar eslint-reglerna i `src/`. Kräver avsiktlig omväg; Next bakar inte in de formerna, och `cc-gate.mjs` skannar ändå `out/` efter hemligheter.
+- jsdom (dev-beroende för vitest) kräver Node >=22.22.2; Coolifys nixpacks kör 22.14. Bara en engine-varning vid `npm ci`, bygget påverkas inte.
+- `CLAUDE.md` säger att bygget ska klara sig utan nätverk, men `npm run check` kör `npm audit` och behöver nätverk. Formulera om.
+
 ## Säkerhet
 
 - Faktabanken innehåller inga hemligheter och inget kundspecifikt. Verktygen är bara läsande och bara för staff. `get_fact` slår upp id i ett index byggt från `resources/faktabank`, och id valideras mot mönstret i schemat innan uppslag.
