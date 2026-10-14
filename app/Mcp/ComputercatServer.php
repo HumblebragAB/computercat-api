@@ -12,11 +12,16 @@ class ComputercatServer extends Server
 
     protected string $instructions = 'Configure Computercat games: leaderboards, achievements, content pools, remote config, events and allowed origins. Create new Demo games with create_game and follow them with get_provisioning_status. A new game repo gets its base code from the build guide (get_build_guide, get_build_guide_file). Only games you are a member of are visible.';
 
+    // Standardsidan är 15 verktyg; klienter som struntar i nextCursor ska se alla.
+    public int $defaultPaginationLength = 50;
+
     protected array $tools = [
         Tools\ListGamesTool::class,
         Tools\CreateGameTool::class,
         Tools\GetProvisioningStatusTool::class,
         Tools\RetryProvisioningTool::class,
+        Tools\RequestLiveTool::class,
+        Tools\ArchiveGameTool::class,
         Tools\GetBuildGuideTool::class,
         Tools\GetBuildGuideFileTool::class,
         Tools\GetGameTool::class,
