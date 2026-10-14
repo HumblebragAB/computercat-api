@@ -61,4 +61,21 @@ class BuildGuideV2Test extends TestCase
             $this->assertStringContainsString($text, $docs);
         }
     }
+
+    // Spec punkt 1, 2 och 6: säkerhetsskriptet finns, körs sist i npm run check och testas i guiden.
+    public function test_security_script_is_in_the_guide_and_runs_last_in_check(): void
+    {
+        $paths = array_column(BuildGuide::manifest('v2')['files'], 'path');
+
+        foreach (['scripts/cc-gate.mjs', 'src/lib/computercat/csp.ts', 'src/lib/computercat/csp.test.ts', 'test/security.test.ts'] as $path) {
+            $this->assertContains($path, $paths);
+        }
+        $this->assertSame(
+            'npm run typecheck && npm run lint && npm test && NEXT_TELEMETRY_DISABLED=1 npm run build && node scripts/check-export.mjs && node scripts/cc-gate.mjs',
+            $this->package()['scripts']['check'],
+        );
+        $layout = BuildGuide::file('v2', 'src/app/layout.tsx')['content'];
+        $this->assertStringContainsString('contentSecurityPolicy(process.env.NEXT_PUBLIC_COMPUTERCAT_URL)', $layout);
+        $this->assertStringContainsString("process.env.NODE_ENV === 'production'", $layout);
+    }
 }

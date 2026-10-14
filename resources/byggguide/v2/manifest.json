@@ -108,14 +108,20 @@
         {
             "path": "package.json",
             "source": "files/package.json",
-            "sha256": "d508ee27685eeedbb402a8fdc1196fdff8cbd788e0ca94e969b871cb2e3bcfad",
-            "bytes": 1075
+            "sha256": "6d2404a2828f534ead5f53bf3c7dea82063fe378045da5b2fd04348922d17b79",
+            "bytes": 1103
         },
         {
             "path": "postcss.config.mjs",
             "source": "files/postcss.config.mjs",
             "sha256": "9ca55411b62b2c9cc5631a3e6c631d80c8b8171c7b9ea1e19f83400f4100e910",
             "bytes": 94
+        },
+        {
+            "path": "scripts/cc-gate.mjs",
+            "source": "files/scripts/cc-gate.mjs",
+            "sha256": "1e76599319e04f6f4ef3cc812904558eaf4d7b38c5e0a15b351a6650704afd3e",
+            "bytes": 5482
         },
         {
             "path": "scripts/check-export.mjs",
@@ -132,8 +138,8 @@
         {
             "path": "src/app/layout.tsx",
             "source": "files/src/app/layout.tsx",
-            "sha256": "3d8467191d67fc778fd9e3711bac91aa21ffdffa929d216d1d2c6ec0672989e4",
-            "bytes": 657
+            "sha256": "febea97c39436a381b3021c52a3f9d5518332cb0d97563f402432b9d3e4dea32",
+            "bytes": 1231
         },
         {
             "path": "src/app/page.tsx",
@@ -224,6 +230,18 @@
             "source": "files/src/lib/computercat/config.ts",
             "sha256": "8e0658af3a1feb1c8288e224c5cc0fc0606fab90f65c14138fd27389e5af9546",
             "bytes": 1642
+        },
+        {
+            "path": "src/lib/computercat/csp.test.ts",
+            "source": "files/src/lib/computercat/csp.test.ts",
+            "sha256": "41616983620849477654ba966d9b773f8a83fd777cb9ded047539477916fc5a9",
+            "bytes": 1024
+        },
+        {
+            "path": "src/lib/computercat/csp.ts",
+            "source": "files/src/lib/computercat/csp.ts",
+            "sha256": "998a36c6795ef7119ae03a457e077646864f71d4edd51e2ace3c9dfeab62e963",
+            "bytes": 994
         },
         {
             "path": "src/lib/computercat/errors.test.ts",
@@ -344,6 +362,12 @@
             "source": "files/test/integration.test.tsx",
             "sha256": "509b5a76c60ef5ede61fd46e81df2df44e8c022ba038ceb766680f5bd6bd5a6f",
             "bytes": 6500
+        },
+        {
+            "path": "test/security.test.ts",
+            "source": "files/test/security.test.ts",
+            "sha256": "91b50e3e62d825739a49fa49f6db07448fa84fc48c54c5d4a9e8c6d65bea8a01",
+            "bytes": 6682
         },
         {
             "path": "tsconfig.json",
