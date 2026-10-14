@@ -9,7 +9,7 @@ namespace App\Services;
 // det som serveras alltid är det som verifierades (computercat:byggguide:verify).
 final class BuildGuide
 {
-    public const LATEST = 'v1';
+    public const LATEST = 'v2';
 
     public const VERSION_PATTERN = '/^v[1-9][0-9]{0,2}\z/';
 
@@ -21,6 +21,7 @@ final class BuildGuide
     // ändras aldrig; en ändring blir en ny version. BuildGuideTest vaktar.
     public const FROZEN = [
         'v1' => '7f763d8ee8d01c0765debcc225e40a5884c979035f4e3649f00815325699dc85',
+        'v2' => '777cdc1e42f16ca26a7daa4a2634f60cea9898d3345e27b062c0668be5e29503',
     ];
 
     // Bara låsta versioner syns (spec delprojekt 3, "Versioner"). En katalog under

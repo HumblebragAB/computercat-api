@@ -19,6 +19,7 @@ class BuildGuideTest extends TestCase
     // commit som den låses (test_every_published_version_has_expectations vaktar).
     private const EXPECTED = [
         'v1' => ['overrides' => ['vite' => '7.3.7']],
+        'v2' => ['overrides' => ['vite' => '7.3.7']],
     ];
 
     private ?string $tempRoot = null;

@@ -35,9 +35,9 @@ class RepoStepTest extends ProvisioningTestCase
         return $this->provisioningRun(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'idea' => 'Minröj där katter letar bajs.']);
     }
 
-    private function wantedReadme(): string
+    private function wantedReadme(string $version = BuildGuide::LATEST): string
     {
-        return ReadmeIdea::insert(BuildGuide::readme('v1', 'Kattsvep'), 'Minröj där katter letar bajs.');
+        return ReadmeIdea::insert(BuildGuide::readme($version, 'Kattsvep'), 'Minröj där katter letar bajs.');
     }
 
     public function test_creates_repo_waits_for_readme_then_writes_readme_and_claude_md(): void
@@ -67,12 +67,12 @@ class RepoStepTest extends ProvisioningTestCase
         $this->assertSame([StepResult::WAIT, 0], [$readme->outcome, $readme->seconds]);
         $this->assertSame(StepResult::DONE, $second->outcome);
         $this->assertSame('HumblebragAB/kattsvep', $run->fresh()->github_repo);
-        $this->assertSame('v1', $run->steps()->where('step', 'repo')->first()->detail['build_guide']);
+        $this->assertSame(BuildGuide::LATEST, $run->steps()->where('step', 'repo')->first()->detail['build_guide']);
         Http::assertSent(fn ($r) => $r->url() === 'https://'.self::CREATE && $r['private'] === true && $r['auto_init'] === true && $r['description'] === "Computercat-spel kattsvep (run {$run->uuid})");
         // README: hela filen ersätts av mallen med namn och idé, med auto_init-filens sha.
         Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/README.md') && base64_decode($r['content']) === $this->wantedReadme() && $r['sha'] === 'readme-sha-1');
         // CLAUDE.md: ny fil, exakt byggguidens, utan sha.
-        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && base64_decode($r['content']) === BuildGuide::claudeMd('v1') && ! isset($r['sha']));
+        Http::assertSent(fn ($r) => $r->method() === 'PUT' && str_ends_with($r->url(), '/CLAUDE.md') && base64_decode($r['content']) === BuildGuide::claudeMd(BuildGuide::LATEST) && ! isset($r['sha']));
         $this->assertCount(1, Http::recorded(fn ($r) => $r->url() === 'https://'.self::CREATE));
         // Coolify-appen skapas strax efter dessa commits; utan [skip ci] hinner pushens
         // webhook fram efter appen och auto-deploy bygger ett repo utan kod (Kattsvep 2026-10-14).
@@ -90,7 +90,7 @@ class RepoStepTest extends ProvisioningTestCase
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
             self::REPO => Http::response(ProvisioningFakes::githubRepo('kattsvep', $run->uuid)),
             self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
-            self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'), 'claude-sha')),
+            self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd(BuildGuide::LATEST), 'claude-sha')),
         ]);
 
         $this->assertSame(StepResult::DONE, $this->runToEnd($run)->outcome);
@@ -186,7 +186,7 @@ class RepoStepTest extends ProvisioningTestCase
         $this->stepRow($run, 'repo')->update(['detail' => ['repo_ok' => true, 'readme_wait_started_at' => now()->toIso8601String(), 'build_guide' => 'v1']]);
         Http::fake([
             self::TOKEN => Http::response(ProvisioningFakes::githubToken(), 201),
-            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme())),
+            self::README => Http::response(ProvisioningFakes::githubContent($this->wantedReadme('v1'))),
             self::CLAUDE => Http::response(ProvisioningFakes::githubContent(BuildGuide::claudeMd('v1'))),
         ]);
 
