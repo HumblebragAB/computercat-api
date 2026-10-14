@@ -4,8 +4,10 @@ namespace Tests\Feature\Provisioning;
 
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\ReadmeIdea;
 use App\Provisioning\Saga;
+use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 use App\Provisioning\Steps\RepoStep;
 use App\Services\BuildGuide;
@@ -173,7 +175,7 @@ class RepoStepTest extends ProvisioningTestCase
             self::CREATE => Http::response(['message' => 'Validation failed, or the endpoint has been spammed.'], 422),
         ]);
 
-        $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
+        $this->expectException(ExternalApiException::class);
         $this->runStep(RepoStep::class, $run, 'repo');
     }
 
@@ -205,7 +207,7 @@ class RepoStepTest extends ProvisioningTestCase
         $this->assertSame(10, $this->runStep(RepoStep::class, $run, 'repo')->seconds);
         $this->travel(4)->minutes();
 
-        $this->expectException(\App\Provisioning\StepFailed::class);
+        $this->expectException(StepFailed::class);
         $this->runStep(RepoStep::class, $run, 'repo');
     }
 
@@ -227,7 +229,7 @@ class RepoStepTest extends ProvisioningTestCase
         try {
             $this->runStep(RepoStep::class, $run, 'repo');
             $this->fail('Timeouten uteblev.');
-        } catch (\App\Provisioning\StepFailed) {
+        } catch (StepFailed) {
             $this->stepRow($run, 'repo')->update(['status' => ProvisioningStep::FAILED]);
             $run->update(['status' => ProvisioningRun::FAILED]);
         }
