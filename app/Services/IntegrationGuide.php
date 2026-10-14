@@ -298,17 +298,23 @@ class IntegrationGuide
             $lines[] = '';
         }
 
-        if (in_array('achievements', $features) && $game->achievementDefinitions->count()) {
+        // Begärs achievements uttryckligen visas avsnittet också utan definitioner, så att ett nytt
+        // spel vet hur det fungerar. Standardvalet (defaultFeatures) tar bara med det när definitioner finns.
+        if (in_array('achievements', $features)) {
             $lines[] = '## Achievements';
             $lines[] = '';
             $lines[] = 'Evaluated **client-side**. Server stores unlock state for cross-device sync.';
             $lines[] = '';
             $lines[] = '### Definitions';
-            $lines[] = '| Slug | Name | Description | Icon |';
-            $lines[] = '|------|------|-------------|------|';
-            foreach ($game->achievementDefinitions->sortBy('sort_order') as $a) {
-                $s = $a->is_secret ? ' (secret)' : '';
-                $lines[] = '| `'.self::code($a->slug).'` | '.self::inline($a->name).$s.' | '.self::inline($a->description).' | '.self::inline($a->icon).' |';
+            if ($game->achievementDefinitions->count()) {
+                $lines[] = '| Slug | Name | Description | Icon |';
+                $lines[] = '|------|------|-------------|------|';
+                foreach ($game->achievementDefinitions->sortBy('sort_order') as $a) {
+                    $s = $a->is_secret ? ' (secret)' : '';
+                    $lines[] = '| `'.self::code($a->slug).'` | '.self::inline($a->name).$s.' | '.self::inline($a->description).' | '.self::inline($a->icon).' |';
+                }
+            } else {
+                $lines[] = 'None yet. Create them with the Computercat connector tool `upsert_achievement` (slug, name, description, icon).';
             }
             $lines[] = '';
             $lines[] = '### Report unlocks';
@@ -319,7 +325,13 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '{"slugs": ["first-win", "speed-demon"]}';
             $lines[] = '```';
-            $lines[] = 'Idempotent — already-unlocked slugs are ignored. Fire-and-forget.';
+            $lines[] = 'Response `201`:';
+            $lines[] = '```';
+            $lines[] = '{"unlocked": [{"slug": "first-win", "name": "...", "description": "...", "icon": "...", "unlocked_at": "..."}], "already_unlocked": 1, "unknown": ["typo-slug"], "rejected": ["solve_100"]}';
+            $lines[] = '```';
+            $lines[] = '- Idempotent: an already-unlocked slug is counted in `already_unlocked` (an integer) and not unlocked again.';
+            $lines[] = '- `unknown`: slugs with no active definition. Show them (a typo in the game never fixes itself).';
+            $lines[] = '- `rejected`: refused by a plausibility threshold (minimum number of `progress.results` in the cloud save `main`). Thresholds are set by Computercat on request, not by the game. Save before reporting, and report the full local list at launch so a rejected unlock is retried.';
             $lines[] = '';
             $lines[] = '### Get my achievements';
             $lines[] = '```';

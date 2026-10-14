@@ -160,4 +160,27 @@ class IntegrationGuideTest extends McpTestCase
         $this->assertStringNotContainsString('lb`x', $manual);
         $this->assertStringContainsString("/games/evil'slug\\|x/leaderboards/lb'x", $manual);
     }
+
+    public function test_achievements_asked_for_explicitly_show_up_without_definitions(): void
+    {
+        $game = $this->game();
+
+        $manual = IntegrationGuide::manual($game, ['achievements']);
+
+        $this->assertStringContainsString('## Achievements', $manual);
+        $this->assertStringContainsString('upsert_achievement', $manual);
+        $this->assertStringNotContainsString('| Slug | Name |', $manual);
+        $this->assertStringContainsString('"unknown"', $manual);
+        $this->assertStringContainsString('"rejected"', $manual);
+        $this->assertStringContainsString('`already_unlocked` (an integer)', $manual);
+    }
+
+    public function test_default_features_leave_achievements_out_without_definitions(): void
+    {
+        $game = $this->game();
+
+        $manual = IntegrationGuide::manual($game, IntegrationGuide::defaultFeatures($game));
+
+        $this->assertStringNotContainsString('## Achievements', $manual);
+    }
 }

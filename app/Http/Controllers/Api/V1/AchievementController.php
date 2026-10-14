@@ -45,37 +45,36 @@ class AchievementController extends Controller
             'slugs' => 'required|array|min:1|max:10',
             'slugs.*' => 'required|string|max:100',
         ]);
+        $requested = array_values(array_unique($validated['slugs']));
 
-        // Plausibility check: cross-reference with cloud save data
+        // Rimlighetskontroll: bara mot trösklar i spelets settings, och bara när molnsparningen
+        // har en lista med resultat. Allt annat (ingen sparning, annan form) ger ingen kontroll.
         $save = GameSave::where('user_id', $request->user()->id)
             ->where('game_id', $game->id)
             ->where('save_key', 'main')
             ->first();
-
-        $progressResults = [];
-        if ($save && isset($save->data['progress']['results'])) {
-            $progressResults = $save->data['progress']['results'];
-        }
-
-        // Rate limit: max 10 new achievements per request, max existing already checked by validation
-        $alreadyUnlocked = UserAchievement::where('user_id', $request->user()->id)
-            ->whereHas('achievementDefinition', fn ($q) => $q->where('game_id', $game->id))
-            ->count();
+        $results = $save?->data['progress']['results'] ?? null;
+        $completed = is_array($results) && $results !== [] ? count($results) : null;
+        $thresholds = $this->thresholds($game);
 
         $definitions = AchievementDefinition::where('game_id', $game->id)
-            ->whereIn('slug', $validated['slugs'])
+            ->whereIn('slug', $requested)
             ->where('is_active', true)
-            ->get();
+            ->get()
+            ->keyBy('slug');
 
         $unlocked = [];
-        foreach ($definitions as $definition) {
-            // Plausibility: if game has save data, check basic conditions
-            if (! empty($progressResults)) {
-                $totalCompleted = count($progressResults);
-                $skip = $this->checkAchievementPlausibility($definition->slug, $totalCompleted, $progressResults, $game);
-                if ($skip) {
-                    continue;
-                }
+        $rejected = [];
+        $already = 0;
+        foreach ($requested as $slug) {
+            $definition = $definitions->get($slug);
+            if ($definition === null) {
+                continue;
+            }
+            if ($completed !== null && isset($thresholds[$slug]) && $completed < $thresholds[$slug]) {
+                $rejected[] = $slug;
+
+                continue;
             }
 
             $achievement = UserAchievement::firstOrCreate(
@@ -92,40 +91,41 @@ class AchievementController extends Controller
             if ($achievement->wasRecentlyCreated) {
                 $achievement->load('achievementDefinition');
                 $unlocked[] = new UserAchievementResource($achievement);
+            } else {
+                $already++;
             }
         }
 
         return response()->json([
             'unlocked' => $unlocked,
-            'already_unlocked' => count($definitions) - count($unlocked),
+            'already_unlocked' => $already,
+            // Okända eller inaktiva slugs, och de som rimlighetskontrollen avvisade: synliga för spelet.
+            'unknown' => array_values(array_filter($requested, fn (string $slug) => ! $definitions->has($slug))),
+            'rejected' => $rejected,
         ], 201);
     }
 
     /**
-     * Generic plausibility check: reject achievements that clearly don't match progress.
-     * Returns true if the achievement should be SKIPPED (implausible).
+     * Trösklar (minsta antal resultat i molnsparningen) per slug, ur settings.achievement_thresholds.
+     * Bara heltal > 0 gäller; en trasig post ger ingen kontroll för den sluggen, aldrig ett fel.
      *
-     * Uses a simple heuristic: if the slug contains a number pattern (e.g., "fifty_puzzles",
-     * "100_wins"), extract it and compare against total completed items in the save.
-     * Games can also define explicit thresholds in settings.achievement_thresholds.
+     * @return array<string, int>
      */
-    private function checkAchievementPlausibility(string $slug, int $totalCompleted, array $results, Game $game): bool
+    private function thresholds(Game $game): array
     {
-        // Check game-configured thresholds first (settings.achievement_thresholds)
-        $thresholds = $game->settings['achievement_thresholds'] ?? [];
-        if (isset($thresholds[$slug])) {
-            return $totalCompleted < (int) $thresholds[$slug];
+        $raw = $game->settings['achievement_thresholds'] ?? null;
+        if (! is_array($raw)) {
+            return [];
         }
-
-        // Heuristic: extract number from slug (e.g., "complete_100" → 100)
-        if (preg_match('/(\d+)/', $slug, $m)) {
-            $threshold = (int) $m[1];
-            // Only apply if the number seems like a count threshold (1-10000)
-            if ($threshold > 0 && $threshold <= 10000 && $totalCompleted < $threshold) {
-                return true;
+        $out = [];
+        foreach ($raw as $slug => $value) {
+            if (is_int($value) && $value > 0) {
+                $out[(string) $slug] = $value;
+            } elseif (is_string($value) && ctype_digit($value) && (int) $value > 0) {
+                $out[(string) $slug] = (int) $value;
             }
         }
 
-        return false;
+        return $out;
     }
 }

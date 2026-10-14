@@ -4,10 +4,12 @@ namespace Tests\Feature\Api\V1;
 
 use App\Models\AchievementDefinition;
 use App\Models\Game;
+use App\Models\GameSave;
 use App\Models\User;
 use App\Models\UserAchievement;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class AchievementTest extends TestCase
@@ -327,5 +329,147 @@ class AchievementTest extends TestCase
         $response = $this->getJson('/api/v1/games/nonexistent-game/achievements');
 
         $response->assertStatus(404);
+    }
+    // -------------------------------------------------------
+    // Synliga svar och trösklar ur settings
+    // -------------------------------------------------------
+
+    private function define(string $slug, bool $active = true): AchievementDefinition
+    {
+        return AchievementDefinition::create([
+            'game_id' => $this->game->id,
+            'slug' => $slug,
+            'name' => $slug,
+            'description' => $slug,
+            'icon' => 'x',
+            'sort_order' => 1,
+            'is_secret' => false,
+            'is_active' => $active,
+        ]);
+    }
+
+    private function saveWithResults(mixed $results): void
+    {
+        GameSave::create([
+            'user_id' => $this->user->id,
+            'game_id' => $this->game->id,
+            'save_key' => 'main',
+            'data' => ['progress' => ['results' => $results]],
+            'version' => 1,
+            'saved_at' => now(),
+        ]);
+    }
+
+    private function thresholds(mixed $thresholds): void
+    {
+        $this->game->update(['settings' => ['achievement_thresholds' => $thresholds]]);
+    }
+
+    public function test_a_threshold_in_settings_rejects_and_lets_through(): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('solve_5');
+        $this->define('solve_2');
+        $this->thresholds(['solve_5' => 5, 'solve_2' => 2]);
+        $this->saveWithResults([1, 2, 3]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['solve_5', 'solve_2']])
+            ->assertStatus(201)
+            ->assertJsonPath('unlocked.0.slug', 'solve_2')
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('rejected', ['solve_5'])
+            ->assertJsonPath('already_unlocked', 0)
+            ->assertJsonPath('unknown', []);
+    }
+
+    public function test_a_number_in_the_slug_is_no_threshold(): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('first_12x12');
+        $this->saveWithResults([1]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['first_12x12']])
+            ->assertStatus(201)
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('rejected', []);
+    }
+
+    public static function brokenThresholds(): array
+    {
+        return [
+            'text' => [['solve_5' => 'abc']],
+            'null' => [['solve_5' => null]],
+            'list' => [['solve_5' => []]],
+            'decimal' => [['solve_5' => 5.7]],
+            'zero' => [['solve_5' => 0]],
+            'not a list' => ['solve_5'],
+        ];
+    }
+
+    #[DataProvider('brokenThresholds')]
+    public function test_a_broken_threshold_means_no_check(mixed $thresholds): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('solve_5');
+        $this->thresholds($thresholds);
+        $this->saveWithResults([1]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['solve_5']])
+            ->assertStatus(201)
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('rejected', []);
+    }
+
+    public function test_a_threshold_as_a_digit_string_counts(): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('solve_5');
+        $this->thresholds(['solve_5' => '5']);
+        $this->saveWithResults([1]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['solve_5']])
+            ->assertStatus(201)
+            ->assertJsonPath('rejected', ['solve_5']);
+    }
+
+    public static function oddResults(): array
+    {
+        return ['text' => ['abc'], 'number' => [7], 'empty list' => [[]]];
+    }
+
+    #[DataProvider('oddResults')]
+    public function test_a_save_of_another_shape_is_no_check_and_no_500(mixed $results): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('solve_5');
+        $this->thresholds(['solve_5' => 5]);
+        $this->saveWithResults($results);
+
+        $this->postJson('/api/v1/games/tocco/achievements', ['slugs' => ['solve_5']])
+            ->assertStatus(201)
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('rejected', []);
+    }
+
+    public function test_a_mixed_batch_says_what_happened_to_each_slug(): void
+    {
+        Sanctum::actingAs($this->user);
+        $this->define('new-one');
+        $old = $this->define('old-one');
+        $this->define('retired', active: false);
+        $this->define('solve_100');
+        $this->thresholds(['solve_100' => 100]);
+        $this->saveWithResults([1, 2]);
+        UserAchievement::create(['user_id' => $this->user->id, 'achievement_definition_id' => $old->id, 'unlocked_at' => now(), 'created_at' => now()]);
+
+        $this->postJson('/api/v1/games/tocco/achievements', [
+            'slugs' => ['new-one', 'old-one', 'retired', 'typo', 'solve_100', 'typo'],
+        ])
+            ->assertStatus(201)
+            ->assertJsonCount(1, 'unlocked')
+            ->assertJsonPath('unlocked.0.slug', 'new-one')
+            ->assertJsonPath('already_unlocked', 1)
+            ->assertJsonPath('unknown', ['retired', 'typo'])
+            ->assertJsonPath('rejected', ['solve_100']);
     }
 }
