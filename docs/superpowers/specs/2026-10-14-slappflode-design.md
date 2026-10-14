@@ -1,6 +1,6 @@
 # Delprojekt 4: släppflöde från Demo till TestFlight, Google Play och produktion
 
-Datum: 2026-10-14. Status: utkast för Eriks granskning.
+Datum: 2026-10-14. Status: utkast, reviderat efter subagentgranskning. **Ett öppet beslut** (var signeringsnycklarna bor, se Del 2) ska tas av Erik innan etapp 2 planeras.
 
 ## Syfte
 
@@ -13,7 +13,7 @@ Mattias (eller Erik) pratar med spelets Claude och bygger ny funktionalitet. Den
 3. **Godkännande till produktion**: Erik godkänner första produktionssläppet per spel och mål; därefter får spelets ägare släppa själv.
 4. **Android ingår i modellen** från början.
 5. **Upplägg A**: Computercat styr. Byggen körs i GitHub Actions i spelrepot, startade av Computercat.
-6. **Vidgade behörigheter godkända**: GitHub-appen får Actions read/write och Organization secrets write; Coolify-token får `deploy`.
+6. **Vidgade behörigheter godkända**: GitHub-appen får Actions read/write och Organization secrets write; Coolify-token får `deploy`. (Med alternativ 1 i Del 2 behövs inte Organization secrets write.)
 
 ## Fakta som styr designen
 
@@ -55,10 +55,13 @@ Ny tabell `releases`:
 
 ### Spärrar (kontrolleras i Computercat, med test för varje)
 
-1. Teststeg (`testflight`, `play_internal`) kräver att `commit_sha` har ett lyckat Demo-bygge (Coolify-bygget med samma commit har status `finished`).
+1. Teststeg (`testflight`, `play_internal`) kräver att `commit_sha` har ett lyckat Demo-bygge. Computercat sparar själv ett kvitto per lyckat Demo-bygge i tabellen `demo_builds` (spel, commit, deployment-uuid, tid), skrivet av `get_provisioning_status`, ett pollningsjobb var femte minut och nattkontrollen, eftersom Coolifys bygglista bara visar de senaste byggena. Spärren kontrolleras mot kvittot. Hur Coolifys `commit` ser ut (hel eller kort hash) bekräftas i spiken.
 2. Produktionssteg kräver ett `succeeded`-släpp i målets teststeg för samma commit (för `web`: lyckat Demo-bygge).
-3. Första produktionssläppet per spel och mål får status `awaiting_approval` och kräver Eriks godkännande. Därefter får spelets ägare (`GameAccess::isOwner`) befordra till produktion; Erik får ett Slack-besked.
-4. Högst ett pågående släpp per spel, mål och steg.
+3. Första produktionssläppet per spel och mål (ingen rad med status `succeeded` för spel, mål och produktionssteg) får status `awaiting_approval` och kräver godkännande av en platform admin i Filament (inte via MCP). Godkänner Erik ett släpp han själv begärt loggas det som `self_approved`. Därefter får spelets ägare (`GameAccess::isOwner`) befordra till produktion; Erik får ett Slack-besked.
+4. Högst ett pågående släpp per spel, mål och steg: ett unikt index på `(game_id, target, stage, active_key)` där `active_key` är satt för pågående status och null annars, och befordran sker i en transaktion med `lockForUpdate` på spelets rad. "Första släppet" beräknas i samma transaktion.
+7. Spärr 1 och 2 kontrolleras igen när ett släpp godkänns och när bygget startas, inte bara när det skapas. Ett släpp som stått i `awaiting_approval` i 7 dagar blir `cancelled`.
+8. Produktionssteg kräver uttrycklig `commit_sha`; standardvalet (senaste commit med lyckat Demo-bygge) gäller bara teststeg.
+9. Brytare: `releases_enabled` per spel och globalt (konfig), som Erik kan slå av utan deploy. Avslagen brytare stoppar nya befordringar och nya byggstarter.
 5. Mål som inte finns i `release_targets` kan inte befordras.
 6. Ett spel med öppna engångssteg för målet kan inte befordras dit (se nedan).
 
@@ -68,9 +71,11 @@ Tabell `release_setup_steps` (spel, mål, nyckel, status `open`/`done`, `done_by
 
 - `app_store`: registrera bundle-id (automatiskt via API), skapa appen i App Store Connect med det bundle-id:t (Erik, manuellt), fyll i appens integritetsuppgifter och åldersgräns (Erik, manuellt; vilka som krävs före första inskick bekräftas i etapp 2).
 - `play_store`: skapa appen i Play Console med paketnamnet, fyll i innehållsklassning, dataskydd, målgrupp och butikstext, aktivera Play App Signing, och (om spiken bekräftar kravet) ladda upp första AAB manuellt.
-- `web`: välj den publika adressen (`request_live` finns redan och larmar Erik; Erik sätter domänen).
+- `web`: Erik sätter den publika adressen.
 
-Bundle-id och paketnamn: `co.humblebrag.<slug-utan-bindestreck>` (formatet bekräftas i etapp 2; Apple tillåter bindestreck, Android inte, därför samma form för båda).
+`request_live` (delprojekt 2) ersätts av `promote_release(target: web, stage: web_production)`: verktyget finns kvar som tunn väg in som svarar med hänvisning till `promote_release`, och migrationen sätter `release_targets = ["web"]` för spel som redan bett om Live, så att inget befintligt flöde slutar fungera.
+
+Bundle-id och paketnamn: `co.humblebrag.<slug-utan-bindestreck>` (formatet bekräftas i etapp 2; Apple tillåter bindestreck, Android inte, därför samma form för båda). Värdet sparas på spelet med unikt index; krockar två slugs (`ab-c` och `abc`) vägrar `set_release_targets` och Erik väljer ett annat id.
 
 ### `next` i varje svar
 
@@ -78,37 +83,42 @@ Bundle-id och paketnamn: `co.humblebrag.<slug-utan-bindestreck>` (formatet bekr�
 
 ## Del 2: byggen och hemligheter
 
-### Byggflöden i spelrepot
+### Öppet beslut: var signeringsnycklarna bor
 
-En ny byggguideversion lägger till `.github/workflows/release-ios.yml`, `.github/workflows/release-android.yml`, `ios/`- och `android/`-projekten (Capacitor) och fastlane-konfiguration. Flödena:
+Ett iOS- eller Android-bygge kör spelrepots egen kod (npm-skript, Capacitor-konfiguration, Gradle, fastlane, Podfile). Ligger signeringsnycklarna i samma jobb kan den koden läsa och skicka iväg dem, av misstag, via ett skadligt paket eller via en kapad session. App Store Connect-nyckeln gäller hela teamet. Att kontrollera flödesfilens sha256 skyddar inte mot det, och `workflow_dispatch` kör flödesfilen från den gren eller tagg som anges, inte från den kontrollerade commiten.
 
-- startas bara med `workflow_dispatch` och indata `commit_sha` och `release_uuid`, checkar ut exakt den commiten, och kör `npm ci --ignore-scripts` och samma säkerhetskontroll som Coolify (delprojekt 3) innan något byggs;
-- iOS: `macos`-runner, fastlane `beta` (som Tocco), uppladdning till TestFlight; byggnummer sätts från släppet;
-- Android: Linux-runner, `bundleRelease`, uppladdning till spåret `qa` via API;
-- rapporterar inte själva till Computercat; Computercat läser körningens status via GitHub API och butikernas status via Apples och Googles API.
+| Alternativ | Hur | För | Mot |
+|---|---|---|---|
+| **1. Centralt släpprepo** (rekommenderas) | Repot `HumblebragAB/spelstudio-release` är det enda med nycklar. Computercat startar dess flöde med spel, commit och släpp-id. Jobb 1 checkar ut spelets commit och bygger osignerat utan nycklar och laddar upp artefakten. Jobb 2 hämtar bara artefakten och signerar och laddar upp med kod som ligger i släpprepot. | Spelrepon får inga nycklar; Computercat behöver inte Organization secrets write; flödet kan inte bytas ut från spelrepot. | iOS måste kunna byggas osignerat och signeras i ett separat steg (`xcodebuild archive` utan signering, sedan `-exportArchive` med signering); måste bevisas i spike. |
+| **2. Nycklar i spelrepon, manuell spärr** | Som Tocco, men nycklarna ligger i en GitHub-miljö med obligatorisk granskare; Erik klickar godkänn per bygge. | Enkelt, beprövat. | Erik blir mellanhand vid varje TestFlight-bygge; godkännandet skyddar inte mot ett skadligt paket i samma bygge. |
+| **3. Nycklar per spel** | Android: egen uppladdningsnyckel och ett servicekonto med rätt bara till spelets app. | Begränsar skadan för Android. | Apples API-nyckel kan inte begränsas till en app; löser inte iOS ensamt. |
 
-Före varje start kontrollerar Computercat att flödesfilen i repot på den commiten har byggguidens sha256 (via Contents API). Avviker den vägrar Computercat starta och släppet blir `failed` med orsak. Spelrepot kan alltså inte byta ut släppflödet.
+Rekommendation: 1, kombinerat med 3 för Android. Beslutet tas av Erik innan etapp 2 planeras. Resten av Del 2 beskriver alternativ 1.
 
-Workflow-filer skrivs av spelets Claude (CLAUDE.md steg 1), inte av Computercat. Computercat behöver därför inte GitHub-behörigheten Workflows.
+### Byggflöden (alternativ 1)
 
-### Hemligheter
+- **Släpprepot** innehåller `release-ios.yml` och `release-android.yml`, ändras bara via granskad PR och har nycklarna som repo- eller miljöhemligheter. Computercat startar flödet med `workflow_dispatch` på släpprepots egen huvudgren, med indata spel, `commit_sha` och `release_uuid`, och hittar körningen genom att `release_uuid` står i körningens namn (`run-name`).
+- **Jobb 1 (utan hemligheter):** checkar ut spelrepot på `commit_sha` med en läsbehörighet som bara gäller det repot, kör `npm ci --ignore-scripts`, Computercats säkerhetskontroll (skriptet hämtas och sha256-kontrolleras som i delprojekt 3; hashen står i släpprepots flöde), bygger webbexporten, kör `npx cap sync` och bygger osignerat (iOS: `xcarchive`, Android: osignerad AAB). Artefakten laddas upp.
+- **Jobb 2 (med hemligheter):** checkar inte ut spelrepot. Hämtar artefakten, signerar och laddar upp med verktyg som ligger i släpprepot (fastlane/Gradle-konfiguration där), och skriver resultatet (byggnummer, versionskod) i jobbets utdata.
+- **Spelrepot** behöver bara Capacitor-projekten (`ios/`, `android/`) från byggguiden. Inga flödesfiler för släpp och inga hemligheter.
 
-Organisationshemligheter i GitHub med synlighet "selected repositories":
+### Hemligheter (alternativ 1)
 
-| Hemlighet | Innehåll |
+| Hemlighet (i släpprepot) | Innehåll |
 |---|---|
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8_BASE64` | App Store Connect API-nyckel (teamnivå, roll App Manager eller den roll spiken visar krävs) |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8_BASE64` | App Store Connect API-nyckel (lägsta roll som spiken visar räcker) |
 | `IOS_DIST_CERT_P12_BASE64`, `IOS_DIST_CERT_PASSWORD` | distributionscertifikat |
-| `PLAY_SERVICE_ACCOUNT_JSON` | Googles servicekonto |
-| `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS` | en gemensam uppladdningsnyckel för alla spel (Play App Signing äger den riktiga signeringsnyckeln) |
+| Android per spel (alternativ 3) | uppladdningsnyckel och servicekonto med rätt bara till spelets app, eller ett gemensamt om Erik väljer det |
 
-Originalen ligger i 1Password-valvet (Erik lägger in dem; Claude läser aldrig värdena). Erik skapar organisationshemligheterna en gång; Computercat lägger bara till nya spelrepon i listan över repon som får läsa dem. Computercat behöver också App Store Connect-nyckeln och Googles servicekonto för att läsa status och skicka in för granskning: de ligger i prod som filer i `storage/app/private/` (läge 600), som GitHub-nyckeln i delprojekt 2.
+Originalen ligger i 1Password-valvet (Erik lägger in dem; Claude läser aldrig värdena). Computercat behöver App Store Connect-nyckeln och Googles servicekonto för att läsa status och skicka in för granskning: de ligger i prod som filer i `storage/app/private/` (läge 600), som GitHub-nyckeln i delprojekt 2. Befintlig per-spel-konfiguration för App Store Connect (`games.settings.app_store_connect`, används för köp i appen) påverkas inte. Actions-loggar kopieras aldrig in i Computercat.
 
-Befintlig per-spel-konfiguration för App Store Connect (`games.settings.app_store_connect`, används för köp i appen) påverkas inte.
+### Statusläsning
+
+Ett köat jobb (`AdvanceRelease`, samma mönster som `AdvanceProvisioningRun`) pollar: GitHub-körningen var 30:e sekund tills den är klar, sedan Apples bearbetning eller Plays spår var 2:a minut. Tidsgränser: GitHub-körning 60 min, Apples bearbetning 90 min, Coolify-bygge 30 min; därefter `failed` med orsak och Slack-larm. En körning som avbryts utanför Computercat (manuellt, slut på Actions-minuter) blir `failed` med körningens slutstatus som orsak.
 
 ### Publik webb
 
-En andra Coolify-app per spel, `spel-<slug>-prod`, i ett eget Coolify-projekt "Spel produktion", utan basic auth, med `is_auto_deploy_enabled: false`, samma byggkommando och säkerhetsspärr som Demo, och domänen Erik satt. Vid befordran sätter Computercat appens commit till den befordrade och startar ett bygge (kräver token-förmågan `deploy`). Coolify-spärren från delprojekt 2 utökas: muterande anrop bara mot appar i Demo- eller produktionsprojektet som Computercat själv skapat.
+En andra Coolify-app per spel, `spel-<slug>-prod`, i ett eget Coolify-projekt "Spel produktion", utan basic auth, med `is_auto_deploy_enabled: false`, samma byggkommando och säkerhetsspärr som Demo, och domänen Erik satt. Vid befordran sätter Computercat appens commit till den befordrade och startar ett bygge (kräver token-förmågan `deploy`). Coolify-spärren från delprojekt 2 utökas med en egen kontroll för produktionsprojektet (`assertInProductionProject`) och en egen kolumn för produktionsappens uuid, med egna tester: muterande anrop bara mot appar som Computercat själv skapat i respektive projekt. Att Coolify kan låsa en app till en commit (`git_commit_sha` via PATCH), att `POST /deploy` bygger den commiten, och att `is_auto_deploy_enabled: false` verkligen stoppar webhooken verifieras i spiken. Token måste skapas om med `write` och `deploy` (Coolifys UI nollställer valet när `deploy` kryssas) och vara team-begränsad, utan `root`. Ett produktionsbygge delar kö med Demo-byggena (`concurrent_builds = 1`); fastnar det i kön gäller tidsgränsen ovan.
 
 ## Del 3: verktyg, godkännande och dokumentation
 
@@ -142,16 +152,19 @@ Faktabanken får artiklar under ämnet `process`: ett per steg och ett om engån
 
 | Etapp | Innehåll | Spike före bygge |
 |---|---|---|
-| **1. Modell och webbproduktion** | `release_targets`, `releases`, `release_setup_steps`, spärrar, tre MCP-verktyg, Filament, godkännande, publik Coolify-app, bevakning, faktabanksartiklar | Coolify: låsa en app till en commit och starta bygge med `deploy`-token; nytt projekt; att Demo-bygget för en commit kan slås upp |
-| **2. iOS** | byggguide med Capacitor iOS och `release-ios.yml`, bundle-id via API, organisationshemligheter, TestFlight-status, inskick till App Store | App Store Connect: nyckelns roll, bundle-id, profil, uppladdning, status för bearbetning, krav före första inskick (en engångsapp i App Store Connect som Erik skapar) |
-| **3. Android** | Capacitor Android och `release-android.yml`, Play-uppladdning, befordran till produktion | Play: kontotyp och testkrav, första uppladdning, servicekontots behörigheter |
+| **1a. Modell** | `release_targets`, `releases`, `demo_builds`, `release_setup_steps`, spärrar, lås, brytare, tre MCP-verktyg, `request_live` som hänvisning, Filament-godkännande, bevakning, faktabanksartiklar | Coolify: hur `commit` står i bygglistan och hur länge byggen syns |
+| **1b. Webbproduktion** | produktionsprojekt och -app i Coolify, låst commit, bygge med `deploy`-token, utökad spärr | Coolify: `git_commit_sha` via PATCH, `POST /deploy`, att auto-deploy av verkligen stoppar webhooken, kö och tidsgräns |
+| **Beslut** | Eriks val av alternativ för nycklarna (Del 2) | |
+| **2. iOS** | släpprepo eller alternativ 2, Capacitor iOS i byggguiden, bundle-id via API, TestFlight-status, inskick | GitHub: dispatch, `run-name`-korrelation, utcheckning av annat repo med begränsad token. Apple: nyckelns roll, osignerad arkivering och signering i separat steg, profiler via API, certifikat (CSR), byggnummer, exportkrav (`ITSAppUsesNonExemptEncryption`), interna testare och vem som lägger till dem, krav före första inskick, kontoägare (Humblebrag AB) |
+| **3. Android** | Capacitor Android, uppladdning till `qa`, befordran till produktion | Play: kontotyp och testkrav, första uppladdning, servicekonto per app (bjuds in i Play Console, ett engångssteg per spel), versionskod, kvoter för `edits`, krav för spel som riktar sig till barn |
 
 Varje etapp får egen plan, egen spike mot riktiga tjänster och eget godkännande innan den går live.
 
 ## Säkerhet
 
-- Spelrepot kan inte byta ut släppflödet (sha256-kontroll före start) eller hoppa över säkerhetskontrollen (den hämtas från Computercat).
-- Signeringsnycklar finns bara som GitHub-organisationshemligheter för spelrepon och i 1Password. Computercat läser dem aldrig; det lägger bara till repon i listan.
+- Med alternativ 1 når spelrepots kod aldrig signeringsnycklarna: den körs bara i jobb 1, som saknar hemligheter. Med alternativ 2 skyddar bara Eriks godkännande per bygge, och inte mot ett skadligt paket i samma bygge. Det är skälet till rekommendationen.
+- Säkerhetskontrollen hämtas från Computercat och kontrolleras mot en sha256 som inte står i spelrepot.
+- Revisionsloggen för varje befordran anger `commit_sha` och vilken version av släppflödet som kördes.
 - Produktionsspärren ligger i Computercat, inte i spelrepot. En kapad staff-session kan bara befordra egna spel och bara till produktion efter Eriks första godkännande.
 - Coolify-token med `deploy` begränsas i kod till appar som Computercat skapat i de två projekten.
 
