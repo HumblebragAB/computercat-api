@@ -15,12 +15,14 @@ return [
     |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
+    // Bara API:ts egen värd. Spelens frontends skickar bearer-token och kör
+    // lokalt på t.ex. http://localhost:3000; räknades localhost som stateful
+    // fick de session och CSRF-kontroll, och varje POST blev 419. Tomma poster
+    // filtreras bort, så en tom lista aldrig blir [''].
+    'stateful' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+        'SANCTUM_STATEFUL_DOMAINS',
         Sanctum::currentApplicationUrlWithPort(),
-        // Sanctum::currentRequestHost(),
-    ))),
+    ))))),
 
     /*
     |--------------------------------------------------------------------------
