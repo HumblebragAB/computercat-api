@@ -5,6 +5,7 @@ namespace App\Mcp;
 use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\User;
+use App\Provisioning\Http\Redactor;
 
 class AuditLogger
 {
@@ -53,6 +54,9 @@ class AuditLogger
         if (! mb_check_encoding($value, 'UTF-8')) {
             $value = mb_convert_encoding($value, 'UTF-8', 'UTF-8');
         }
+
+        // Claude kan klistra in en nyckel i ett fritextfält (t.ex. search_facts query).
+        $value = Redactor::scrubSecrets($value);
 
         return mb_strlen($value) > self::MAX_STRING ? mb_substr($value, 0, self::MAX_STRING).'…' : $value;
     }

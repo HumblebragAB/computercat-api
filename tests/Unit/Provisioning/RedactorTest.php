@@ -4,6 +4,11 @@ namespace Tests\Unit\Provisioning;
 
 use App\Provisioning\Http\Redactor;
 use Illuminate\Support\Facades\Log;
+use Lcobucci\JWT\Encoding\ChainedFormatter;
+use Lcobucci\JWT\Encoding\JoseEncoder;
+use Lcobucci\JWT\Signer\Key\InMemory;
+use Lcobucci\JWT\Signer\Rsa\Sha256;
+use Lcobucci\JWT\Token\Builder;
 use PHPUnit\Framework\Attributes\Depends;
 use Tests\Support\ProvisioningFakes;
 use Tests\TestCase;
@@ -54,11 +59,11 @@ class RedactorTest extends TestCase
         ProvisioningFakes::configure();
         $pem = ProvisioningFakes::keyPair()['private'];
         // Samma form som GitHubAppClient::jwt() (Task 9), byggd direkt med lcobucci.
-        $jwt = \Lcobucci\JWT\Token\Builder::new(new \Lcobucci\JWT\Encoding\JoseEncoder, \Lcobucci\JWT\Encoding\ChainedFormatter::withUnixTimestampDates())
+        $jwt = Builder::new(new JoseEncoder, ChainedFormatter::withUnixTimestampDates())
             ->issuedBy('Iv23testclientid')
             ->issuedAt(new \DateTimeImmutable('-60 seconds'))
             ->expiresAt(new \DateTimeImmutable('+9 minutes'))
-            ->getToken(new \Lcobucci\JWT\Signer\Rsa\Sha256, \Lcobucci\JWT\Signer\Key\InMemory::plainText($pem))
+            ->getToken(new Sha256, InMemory::plainText($pem))
             ->toString();
 
         $text = Redactor::scrubSecrets("Authorization: Bearer {$jwt}\n{$pem}\nslut");
@@ -129,6 +134,13 @@ class RedactorTest extends TestCase
         Redactor::registerSecret('lackage-test-hemlighet-1');
 
         $this->assertSame('a [REDACTED]', Redactor::scrubSecrets('a lackage-test-hemlighet-1'));
+    }
+
+    public function test_stripe_aws_and_slack_tokens_are_scrubbed(): void
+    {
+        foreach (['sk_'.'live_'.str_repeat('a', 24), 'AKIA'.str_repeat('B', 16), 'xox'.'b-'.str_repeat('1', 12)] as $secret) {
+            $this->assertStringNotContainsString($secret, Redactor::scrubSecrets("x {$secret} y"), $secret);
+        }
     }
 
     // Statiskt tillstånd får inte följa med till nästa test.
