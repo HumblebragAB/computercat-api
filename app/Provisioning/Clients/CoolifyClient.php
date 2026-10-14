@@ -6,6 +6,7 @@ use App\Models\ProvisioningRun;
 use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\Http\SendsApiRequests;
 use App\Provisioning\ProvisioningConfig;
+use App\Services\BuildGuide;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -61,10 +62,15 @@ class CoolifyClient
         return $matches[0] ?? null;
     }
 
-    public function createApplication(string $slug): string
+    // $version är byggguideversionen som repo-steget frös. Versioner med säkerhetsskripten
+    // (v2 och senare) får Computercats byggkommando; v1 bygger som förut (spec delprojekt 3).
+    public function createApplication(string $slug, string $version): string
     {
+        // Före anropet: en olåst version eller en trasig guide ger fel utan att något skapas.
+        $buildCommand = BuildGuide::coolifyBuildCommand($version);
+
         $path = '/applications/private-github-app';
-        $response = $this->coolify('POST', $path, [
+        $body = [
             'project_uuid' => (string) config('provisioning.coolify.project_uuid'),
             'server_uuid' => (string) config('provisioning.coolify.server_uuid'),
             'environment_name' => (string) config('provisioning.coolify.environment_name'),
@@ -83,12 +89,20 @@ class CoolifyClient
             // Bilaga A S:793. Samma installation som byggguiden (BuildGuideTest och
             // CoolifyClientTest vaktar): installationsskript körs aldrig i Demo-bygget.
             'install_command' => 'npm ci --ignore-scripts',
+        ];
+        if ($buildCommand !== null) {
+            // Bilaga A S:796; spike etapp B (S10, S1): sparas och körs oförändrat i nixpacks.
+            $body['build_command'] = $buildCommand;
+        }
+        $body += [
             'is_auto_deploy_enabled' => true,
             'instant_deploy' => false,
             'is_http_basic_auth_enabled' => true,
             'http_basic_auth_username' => (string) config('provisioning.demo.basic_auth_user'),
             'http_basic_auth_password' => (string) config('provisioning.demo.basic_auth_password'),
-        ], [409]);
+        ];
+
+        $response = $this->coolify('POST', $path, $body, [409]);
 
         if ($response->status() === 409) {
             throw new CoolifyConflictException('Coolify reports a domain conflict for '.ProvisioningConfig::demoUrl($slug).'.');

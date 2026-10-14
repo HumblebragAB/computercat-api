@@ -5,6 +5,7 @@ namespace Tests\Feature\Provisioning;
 use App\Provisioning\Clients\CoolifyClient;
 use App\Provisioning\Clients\CoolifyConflictException;
 use App\Provisioning\Clients\CoolifyGuardException;
+use App\Services\BuildGuide;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Tests\Support\ProvisioningFakes;
@@ -22,7 +23,7 @@ class CoolifyClientTest extends ProvisioningTestCase
     {
         Http::fake(['coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201)]);
 
-        $this->assertSame('app-1', $this->client()->createApplication('kattsvep'));
+        $this->assertSame('app-1', $this->client()->createApplication('kattsvep', 'v1'));
 
         Http::assertSent(fn ($r) => $r->method() === 'POST'
             && $r->header('Authorization')[0] === 'Bearer '.ProvisioningFakes::COOLIFY_TOKEN
@@ -40,7 +41,7 @@ class CoolifyClientTest extends ProvisioningTestCase
                 'is_static' => true,
                 'static_image' => 'nginx:alpine',
                 'publish_directory' => '/out',
-                // Bilaga A S:793. Demo-bygget kör inga installationsskript (byggguide v1).
+                // Bilaga A S:793. Demo-bygget kör inga installationsskript. v1: inget build_command (exakt body).
                 'install_command' => 'npm ci --ignore-scripts',
                 'is_auto_deploy_enabled' => true,
                 'instant_deploy' => false,
@@ -55,7 +56,7 @@ class CoolifyClientTest extends ProvisioningTestCase
         Http::fake(['coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyConflict(), 409)]);
 
         $this->expectException(CoolifyConflictException::class);
-        $this->client()->createApplication('kattsvep');
+        $this->client()->createApplication('kattsvep', 'v1');
     }
 
     public function test_failed_create_logs_redacted_request_and_response(): void
@@ -68,7 +69,7 @@ class CoolifyClientTest extends ProvisioningTestCase
         });
 
         try {
-            $this->client()->createApplication('kattsvep');
+            $this->client()->createApplication('kattsvep', 'v1');
             $this->fail('422 kastade inte.');
         } catch (\App\Provisioning\Http\ExternalApiException $e) {
             $this->assertStringContainsString('Coolify POST /applications/private-github-app returned 422', $e->getMessage());
@@ -193,9 +194,9 @@ class CoolifyClientTest extends ProvisioningTestCase
     {
         Http::fake(['coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201)]);
 
-        $this->client()->createApplication('kattsvep');
+        $this->client()->createApplication('kattsvep', BuildGuide::LATEST);
 
-        $install = \App\Services\BuildGuide::manifest(\App\Services\BuildGuide::LATEST)['commands']['install'];
+        $install = BuildGuide::manifest(BuildGuide::LATEST)['commands']['install'];
         Http::assertSent(fn ($r) => ($r->data()['install_command'] ?? null) === $install);
     }
 
@@ -276,5 +277,42 @@ class CoolifyClientTest extends ProvisioningTestCase
         } catch (\App\Provisioning\Http\ExternalApiException $e) {
             $this->assertStringContainsString($expected, $e->getMessage());
         }
+    }
+
+    // Spec delprojekt 3: v2 bygger med Computercats kommando, direkt efter installationen i bodyn.
+    public function test_v2_sends_the_build_command(): void
+    {
+        Http::fake(['coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201)]);
+
+        $this->client()->createApplication('kattsvep', 'v2');
+
+        Http::assertSent(function ($r) {
+            $keys = array_keys($r->data());
+
+            return ($r->data()['build_command'] ?? null) === BuildGuide::coolifyBuildCommand('v2')
+                && $keys[array_search('install_command', $keys, true) + 1] === 'build_command';
+        });
+    }
+
+    public function test_v1_sends_no_build_command(): void
+    {
+        Http::fake(['coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201)]);
+
+        $this->client()->createApplication('kattsvep', 'v1');
+
+        Http::assertSent(fn ($r) => ! array_key_exists('build_command', $r->data()));
+    }
+
+    public function test_unknown_version_is_refused_without_any_request(): void
+    {
+        Http::fake();
+
+        try {
+            $this->client()->createApplication('kattsvep', 'v9');
+            $this->fail('En okänd version släpptes igenom.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('är inte publicerad', $e->getMessage());
+        }
+        Http::assertNothingSent();
     }
 }

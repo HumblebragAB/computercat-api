@@ -10,6 +10,7 @@ use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
+use App\Services\BuildGuide;
 
 // Coolify-appen spel-<slug> i Demo-projektet. uuid:t sparas direkt efter 201
 // så att en omkörning aldrig skapar en andra app.
@@ -38,13 +39,23 @@ final class CoolifyAppStep implements Step
             return StepResult::done(['adopted' => true]);
         }
 
+        // Samma guideversion som repo-steget frös (spec delprojekt 3, "Versioner"). Kommandot
+        // räknas fram före markören, så att en olåst version eller en trasig guide stoppar
+        // steget utan att Coolify anropas och utan en markör som senare kunde adoptera en app (R13).
+        $version = self::buildGuideVersion($run);
+        try {
+            BuildGuide::coolifyBuildCommand($version);
+        } catch (\RuntimeException $e) {
+            throw new StepFailed("Build guide {$version} cannot produce the Coolify build command; nothing was created in Coolify.", 0, $e);
+        }
+
         // Markören sparas före anropet, så att en omkörning efter ett avbrott vet
         // att appen kan vara vår.
         $step->update(['detail' => [...$detail, 'create_requested_at' => now()->toIso8601String()]]);
 
         // 409 (domänkonflikt) kastar CoolifyConflictException och stoppar sagan.
         try {
-            $run->update(['coolify_app_uuid' => $this->coolify->createApplication($run->slug)]);
+            $run->update(['coolify_app_uuid' => $this->coolify->createApplication($run->slug, $version)]);
         } catch (CoolifyConflictException|ExternalApiException $e) {
             // Ett definitivt avslag (4xx) betyder att ingen app skapades: markören
             // rensas, så att en app någon skapar för hand med samma namn aldrig
@@ -58,6 +69,17 @@ final class CoolifyAppStep implements Step
         }
 
         return StepResult::done();
+    }
+
+    // Alla runs sedan delprojekt 2 har värdet; saknas det är något fel, och ingen version gissas.
+    private static function buildGuideVersion(ProvisioningRun $run): string
+    {
+        $version = $run->steps()->where('step', 'repo')->first()?->detail['build_guide'] ?? null;
+        if (! is_string($version) || $version === '') {
+            throw new StepFailed('The repo step has not recorded a build guide version, so the Coolify build command cannot be chosen.');
+        }
+
+        return $version;
     }
 
     private static function isDefiniteRejection(int $status): bool

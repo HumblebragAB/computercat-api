@@ -56,11 +56,11 @@ class BuildGuideTest extends TestCase
         return $this->tempRoot;
     }
 
-    /** v1 kopierad till en olåst version i en temporär guide. */
-    private function unpublishedCopy(string $version): string
+    /** En låst version kopierad till en olåst, i en temporär guide. */
+    private function unpublishedCopy(string $version, string $from = 'v1'): string
     {
         $root = $this->tempGuide();
-        File::copyDirectory("{$root}/v1", "{$root}/{$version}");
+        File::copyDirectory("{$root}/{$from}", "{$root}/{$version}");
         $manifest = json_decode(file_get_contents("{$root}/{$version}/manifest.json"), true);
         $manifest['version'] = $version;
         file_put_contents("{$root}/{$version}/manifest.json", json_encode($manifest));
@@ -337,5 +337,57 @@ class BuildGuideTest extends TestCase
             $this->assertStringContainsString('npm ci --ignore-scripts', $text, $name);
             $this->assertDoesNotMatchRegularExpression('/npm ci(?! --ignore-scripts)/', $text, $name);
         }
+    }
+
+    // Spec delprojekt 3, "Coolify kör spärren": bara versioner med cc-gate.mjs (v2 och senare).
+    public function test_only_versions_with_the_gate_script_run_it_in_the_build(): void
+    {
+        $this->assertFalse(BuildGuide::runsSecurityChecksInBuild('v1'));
+        $this->assertTrue(BuildGuide::runsSecurityChecksInBuild('v2'));
+        foreach (['v9', 'x1', ''] as $version) {
+            $this->assertFalse(BuildGuide::runsSecurityChecksInBuild($version), $version);
+        }
+        $this->assertNull(BuildGuide::coolifyBuildCommand('v1'));
+    }
+
+    public function test_build_command_is_the_specs_line(): void
+    {
+        config(['app.url' => 'https://api.computercat.co']);
+
+        $this->assertSame(
+            'npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v2/files/scripts/cc-gate.mjs -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs',
+            BuildGuide::coolifyBuildCommand('v2'),
+        );
+    }
+
+    // Spike A (S10): Coolify sparar build_command i varchar(255) (längre ger 500 och ingen app) och
+    // godkänner bara SHELL_SAFE_COMMAND_PATTERN (inga | ; > < $). Planens mönster är strängare.
+    public function test_build_command_fits_coolify(): void
+    {
+        config(['app.url' => 'https://api.computercat.co']);
+        $command = (string) BuildGuide::coolifyBuildCommand('v2');
+
+        $this->assertLessThanOrEqual(255, strlen($command));
+        $this->assertMatchesRegularExpression('/\A[A-Za-z0-9._\/=:@,+ -]+\z/', str_replace(' && ', ' ', $command));
+        $this->assertDoesNotMatchRegularExpression('/[|;><$`\'"\\\\\n]/', $command);
+    }
+
+    public function test_too_long_command_is_refused_before_coolify(): void
+    {
+        config(['app.url' => 'https://'.str_repeat('a', 200).'.example']);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('255');
+        BuildGuide::coolifyBuildCommand('v2');
+    }
+
+    public function test_build_command_requires_a_published_version(): void
+    {
+        $this->unpublishedCopy('v99', 'v2');
+        $this->assertTrue(BuildGuide::runsSecurityChecksInBuild('v99'));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('är inte publicerad');
+        BuildGuide::coolifyBuildCommand('v99');
     }
 }

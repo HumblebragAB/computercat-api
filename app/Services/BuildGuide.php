@@ -17,6 +17,15 @@ final class BuildGuide
     // JSON-escaping (code.claude.com/docs/en/mcp). Större filer hämtas via REST.
     public const INLINE_MAX_BYTES = 30000;
 
+    // Spärrskriptet som Coolify hämtar och kör i bygget (spec delprojekt 3, "Coolify kör spärren").
+    public const GATE_SCRIPT = 'scripts/cc-gate.mjs';
+
+    // Coolify v4.4.6 sparar build_command i varchar(255) och godkänner bara
+    // SHELL_SAFE_COMMAND_PATTERN (bilaga A, spike etapp B S10). Mönstret här är strängare.
+    public const COOLIFY_COMMAND_MAX = 255;
+
+    private const COOLIFY_SAFE = '/\A[A-Za-z0-9._\/=:@,+ -]+\z/';
+
     // sha256 av manifest.json för publicerade versioner. En publicerad version
     // ändras aldrig; en ändring blir en ny version. BuildGuideTest vaktar.
     public const FROZEN = [
@@ -130,6 +139,42 @@ final class BuildGuide
                 'download_url' => $f['bytes'] <= self::INLINE_MAX_BYTES ? null : self::downloadUrl($m['version'], $f['path']),
             ], $m['files']),
         ];
+    }
+
+    // Har versionen spärrskriptet som Coolify kör i bygget? v1 har det inte. Okänd version: nej.
+    public static function runsSecurityChecksInBuild(string $version): bool
+    {
+        try {
+            return in_array(self::GATE_SCRIPT, array_column(self::manifest($version)['files'], 'path'), true);
+        } catch (BuildGuideNotFound) {
+            return false;
+        }
+    }
+
+    // Coolifys byggkommando för nya appar (spec delprojekt 3, "Coolify kör spärren", Eriks beslut
+    // 2026-10-14). Ingen sha256 i kommandot (det ryms inte i 255 tecken): integriteten kommer av
+    // att Computercat bara serverar låsta guidefiler, att BuildGuide::read kontrollerar varje fils
+    // sha256 innan den skickas, och att hämtningen går över https till vår egen server. Spelrepot
+    // kan inte ändra det som hämtas.
+    public static function coolifyBuildCommand(string $version): ?string
+    {
+        if (! self::isPublished($version)) {
+            throw new \RuntimeException("Byggguiden {$version} är inte publicerad; Coolify kan inte hämta dess skript.");
+        }
+        if (! self::runsSecurityChecksInBuild($version)) {
+            return null;
+        }
+
+        $command = 'npm run build && curl -fsS '.self::downloadUrl($version, self::GATE_SCRIPT).' -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs';
+        // Fail loud här i stället för 500 och ingen app i Coolify.
+        if (strlen($command) > self::COOLIFY_COMMAND_MAX) {
+            throw new \RuntimeException('Coolifys byggkommando blir '.strlen($command).' tecken; Coolify sparar högst '.self::COOLIFY_COMMAND_MAX.'. Kontrollera APP_URL.');
+        }
+        if (preg_match(self::COOLIFY_SAFE, str_replace(' && ', ' ', $command)) !== 1) {
+            throw new \RuntimeException('Coolifys byggkommando innehåller tecken som Coolify inte godkänner. Kontrollera APP_URL.');
+        }
+
+        return $command;
     }
 
     // Från APP_URL och alltid https: url() kan ge http:// bakom proxyn, och

@@ -3,11 +3,13 @@
 namespace Tests\Feature\Provisioning;
 
 use App\Models\Game;
+use App\Models\ProvisioningRun;
 use App\Provisioning\StepFailed;
 use App\Provisioning\StepResult;
 use App\Provisioning\Steps\CoolifyAppStep;
 use App\Provisioning\Steps\CoolifyEnvStep;
 use App\Provisioning\Steps\CorsStep;
+use App\Services\BuildGuide;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\ProvisioningFakes;
 
@@ -17,9 +19,20 @@ class CoolifyStepsTest extends ProvisioningTestCase
 
     private const PROJECT_URL = 'coolify.test/api/v1/projects/demo-project-uuid/production';
 
+    // Repo-steget fryser guideversionen; coolify_app läser den därifrån.
+    private function runWithGuide(?string $version, array $attrs = []): ProvisioningRun
+    {
+        $run = $this->provisioningRun(array_merge(['slug' => 'kattsvep'], $attrs));
+        if ($version !== null) {
+            $this->stepRow($run, 'repo')->update(['detail' => ['build_guide' => $version]]);
+        }
+
+        return $run;
+    }
+
     public function test_app_is_created_and_uuid_saved(): void
     {
-        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        $run = $this->runWithGuide('v1');
         Http::fake([
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
             'coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201),
@@ -67,7 +80,7 @@ class CoolifyStepsTest extends ProvisioningTestCase
 
     public function test_domain_conflict_fails(): void
     {
-        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        $run = $this->runWithGuide('v1');
         Http::fake([
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
             'coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyConflict(), 409),
@@ -79,7 +92,7 @@ class CoolifyStepsTest extends ProvisioningTestCase
 
     public function test_definite_rejection_clears_the_create_marker_so_a_later_manual_app_is_not_adopted(): void
     {
-        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        $run = $this->runWithGuide('v1');
         Http::fake([
             self::PROJECT_URL => Http::sequence()
                 ->push(ProvisioningFakes::coolifyProject([]))
@@ -104,7 +117,7 @@ class CoolifyStepsTest extends ProvisioningTestCase
 
     public function test_conflict_clears_the_marker_but_server_errors_keep_it(): void
     {
-        $run = $this->provisioningRun(['slug' => 'kattsvep']);
+        $run = $this->runWithGuide('v1');
         Http::fake([
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
             'coolify.test/api/v1/applications/private-github-app' => Http::sequence()
@@ -183,5 +196,63 @@ class CoolifyStepsTest extends ProvisioningTestCase
         $this->runStep(CorsStep::class, $run, 'cors');
 
         $this->assertSame(['https://annan.se', 'https://kattsvep.apps.humblebrag.se'], $game->fresh()->allowed_origins);
+    }
+
+    public function test_v2_run_creates_app_with_the_build_command(): void
+    {
+        $run = $this->runWithGuide('v2');
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
+            'coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201),
+        ]);
+
+        $this->assertSame(StepResult::DONE, $this->runStep(CoolifyAppStep::class, $run, 'coolify_app')->outcome);
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app')
+            && ($r->data()['build_command'] ?? null) === BuildGuide::coolifyBuildCommand('v2'));
+    }
+
+    // Ett spel som frös v1 får aldrig v2:s byggkommando, även när LATEST är v2.
+    public function test_v1_run_creates_app_without_build_command(): void
+    {
+        $run = $this->runWithGuide('v1');
+        Http::fake([
+            self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([])),
+            'coolify.test/api/v1/applications/private-github-app' => Http::response(ProvisioningFakes::coolifyCreated('app-1'), 201),
+        ]);
+
+        $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app') && ! array_key_exists('build_command', $r->data()));
+    }
+
+    // R13: en version som inte går att bygga kommando för fäller före markören och före Coolify.
+    public function test_unusable_build_guide_version_fails_before_marker_and_create(): void
+    {
+        $run = $this->runWithGuide('v9');
+        Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([]))]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+            $this->fail('En okänd guideversion släpptes igenom.');
+        } catch (StepFailed $e) {
+            $this->assertStringContainsString('v9', $e->getMessage());
+        }
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app'));
+        $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
+    }
+
+    public function test_missing_build_guide_version_fails_before_any_create(): void
+    {
+        $run = $this->runWithGuide(null);
+        Http::fake([self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([]))]);
+
+        try {
+            $this->runStep(CoolifyAppStep::class, $run, 'coolify_app');
+            $this->fail('Ett saknat build_guide släpptes igenom.');
+        } catch (StepFailed $e) {
+            $this->assertStringContainsString('build guide version', $e->getMessage());
+        }
+        Http::assertNotSent(fn ($r) => str_ends_with($r->url(), '/applications/private-github-app'));
+        $this->assertArrayNotHasKey('create_requested_at', $this->stepRow($run, 'coolify_app')->fresh()->detail ?? []);
     }
 }
