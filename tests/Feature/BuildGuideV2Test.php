@@ -89,4 +89,21 @@ class BuildGuideV2Test extends TestCase
         $this->assertStringContainsString("'--omit=dev', '--audit-level=high'", $gate);
         $this->assertStringContainsString('!/^npm_config_/i.test(key)', $gate);
     }
+
+    public function test_eslint_has_the_security_rules(): void
+    {
+        $config = BuildGuide::file('v2', 'eslint.config.mjs')['content'];
+
+        foreach (["'no-eval': 'error'", "'no-implied-eval': 'error'", "'no-new-func': 'error'", "Property[key.name='dangerouslySetInnerHTML']", 'NEXT_PUBLIC_COMPUTERCAT_(GAME|URL)'] as $text) {
+            $this->assertStringContainsString($text, $config);
+        }
+        $this->assertContains('test/eslintRules.test.ts', array_column(BuildGuide::manifest('v2')['files'], 'path'));
+    }
+
+    // R8: braces accepteras som dev-only; ingen override, och texterna säger varför.
+    public function test_braces_is_accepted_without_override(): void
+    {
+        $this->assertSame(['vite' => '7.3.7'], $this->package()['overrides']);
+        $this->assertSame(['vite' => '7.3.7'], BuildGuide::manifest('v2')['overrides']);
+    }
 }
