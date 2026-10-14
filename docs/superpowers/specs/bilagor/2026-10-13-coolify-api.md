@@ -8,12 +8,12 @@ Required per spec (S:711): `project_uuid`, `server_uuid`, `environment_name`, `e
 Optional fields used here: `ports_exposes` (string, S:742), `name`, `domains` (S:758), `is_static` (bool, S:774), `is_spa`, `is_auto_deploy_enabled` (S:780), `static_image` (enum `nginx:alpine`, S:789), `install_command` (S:793), `build_command` (S:796), `base_directory` (S:805), `publish_directory` (S:808), `custom_labels` (S:872), `instant_deploy` (bool, S:907), `is_http_basic_auth_enabled`/`http_basic_auth_username`/`http_basic_auth_password` (S:1024), `destination_uuid`, `autogenerate_domain` (default true), `force_domain_override`.
 Responses: 201 `{uuid}`, 409 domain conflict `{message, warning, conflicts[]}`, 400, 401.
 Public-repo contrast: **POST `/applications/public`** (S:316). Same body, but no `github_app_uuid`.
-`git_repository` format for GH App, e.g. `owner/repo` or full URL: **UNCONFIRMED**.
+`git_repository` format for GH App: VERIFIERAT 2026-10-14 (spike S1): `owner/repo` (`HumblebragAB/e2e-spike`) ger 201 och klonen i bygget lyckas.
 
 ## 2. Build pack for `next build` + `output: 'export'`
 Enum: `nixpacks, railpack, static, dockerfile, dockercompose` (S, private-github-app body).
 - `static` runs **no build**. It copies the repo into nginx as is (`deploy_static_buildpack` and `build_static_image`, `app/Jobs/ApplicationDeploymentJob.php@v4.4.6`:1214-1237, 4295-4305). It only fits pre-built output.
-- **Use `build_pack: "nixpacks"` + `is_static: true` + `publish_directory: "out"`**. Nixpacks builds, then `COPY --from=<build> /app/out` into `static_image` nginx (Job.php:4395-4505). Matches the official docs: "Build strategy nixpacks, Site type Static, Output Directory `out`" (coollabsio/coolify-docs `content/docs/applications/framework-examples/javascript/nextjs.mdx`:18-22). `ports_exposes` "80" for nginx: inferred, **UNCONFIRMED**.
+- **Use `build_pack: "nixpacks"` + `is_static: true` + `publish_directory: "/out"`** (VERIFIERAT 2026-10-14: `"out"` ger 422 "The publish directory field format is invalid."; regeln är `ValidationPatterns::DIRECTORY_PATH_PATTERN = /^\/([a-zA-Z0-9._\-\/~@+]*)?$/`, så inledande `/` krävs). Nixpacks builds, then `COPY --from=<build> /app/out` into `static_image` nginx (Job.php:4395-4505). Matches the official docs: "Build strategy nixpacks, Site type Static, Output Directory `out`" (coollabsio/coolify-docs `content/docs/applications/framework-examples/javascript/nextjs.mdx`:18-22). `ports_exposes` "80" for nginx: VERIFIERAT 2026-10-14 (spike S2): sidan svarar 401 utan och 200 med basic auth.
 - `railpack` + `is_static` also exists (Job.php:3716-3723).
 
 ## 3. Domains, env, basic auth, labels
@@ -37,3 +37,27 @@ Field `is_auto_deploy_enabled` (bool, default true; S:780). GitHub App webhooks 
 
 ## 7. Tokens
 Abilities: `read`, `read:sensitive`, `write`, `write:sensitive`, `deploy`, `root` (`app/Livewire/Security/ApiTokens.php`:129). `root` bypasses all checks (`app/Http/Middleware/ApiAbility.php`). Create and delete need `write`, deploy and cancel need `deploy`, GETs need `read`. Expiry options: 7, 30, 60, 90 or 365 days, or none. **Team scoping:** `team_id` is set to the session's current team at creation (`app/Models/User.php`:278), and `api.token.team` enforces it. To restrict a token to one team, switch to that team in the UI before creating it. Non-admin members are limited to read (ApiAbility). UI quirk: toggling `deploy` resets the selection to `['deploy']` only (ApiTokens.php:110). You need write+deploy for create+deploy, so add `write` after `deploy`. A token can only be created in the UI. An API endpoint for it is **UNCONFIRMED**.
+
+## Spikresultat (2026-10-14, Coolify v4.4.6)
+
+Körd från Forge-servern med prodtoken (read+write, utan deploy). Engångsapp `spel-e2e-spike`, raderad efteråt på sitt uuid.
+
+- S1: `git_repository: "owner/repo"` fungerar med GitHub App-källa (201, klon lyckas).
+- S1b: `publish_directory` måste börja med `/` (`"/out"`); `"out"` ger 422. Alla andra fält i CoolifyClient-bodyn godtogs.
+- S2: `ports_exposes: "80"` + `static_image: nginx:alpine` serverar exporten (401 utan auth, 200 med `demo:demo`).
+- S3: Traefik-labels från API-skapad basic auth är identiska med en UI-konfigurerad app (Footr): `http-basic-auth-<uuid>`-middleware på https-routern. `coolify-robots-sync` lade till värden (noindex, `X-Robots-Tag: noindex, nofollow, noarchive`), `coolify-health` förväntar 401 för appar med basic auth. Inga larm.
+- S4: build-variabel med `is_buildtime: true` hamnar i den byggda JS:en.
+- S5: wildcard `*.apps.humblebrag.se` → 46.246.30.194 (Coolify-servern).
+- S7: bygget tog cirka 4 min; RAM-topp 2043 MB använt av 3936, minst 1893 MB tillgängligt, swap 490→530 MB. 1 vCPU.
+- S13: `GET /projects/{uuid}/{env}` ger objekt med `applications[]` (`uuid`, `name`). Appen syns direkt efter skapande.
+- S14: `GET /applications/{uuid}` ger `is_http_basic_auth_enabled: true`; `http_basic_auth_password` saknas helt med denna token. `is_static` på toppnivå är `null`, värdet ligger i `settings.is_static` (true). Projekt syns bara som `environment_id`.
+- S15: `GET /applications/{uuid}/envs` ger en lista med `key`, `uuid`, `is_buildtime`, `is_runtime`, `is_preview`; `value` är `null` (dold). Varje variabel finns två gånger: en med `is_preview: false` och en med `is_preview: true`. Coolify lägger själv till `NIXPACKS_NODE_VERSION` vid skapande. `POST` ger 201 `{uuid}`, `PATCH /envs` med samma body ger 201 med hela posten.
+- S16: read+write räcker för alla anrop ovan (skapa, läsa, envs, PATCH, DELETE).
+- S17: `DELETE /applications/{uuid}` ger 200 `{"message":"Application deletion request queued."}`; appen var borta ur projektlistan inom 30 s och domänen svarar 503.
+- S18: Coolifys GitHub App når det nya repot (klon i bygget lyckas).
+- S20: Coolify sätter `NIXPACKS_NODE_VERSION=22` automatiskt (syns i `nixpacks plan --env 'NIXPACKS_NODE_VERSION=22'`); Next.js 16.4 byggde utan fel. Ingen egen variabel behövs.
+- S20b: `install_command: "npm ci --ignore-scripts"` (satt via `PATCH /applications/{uuid}`) skickas som `--install-cmd 'npm ci --ignore-scripts'` till nixpacks; bygget lyckas.
+- S21: servern `localhost` har `concurrent_builds = 1` (läst i `server_settings`, bara läsning).
+- S22: `GET /deployments/applications/{uuid}?skip=0&take=5` ger `{"count":N,"deployments":[…]}` nyast först, med `deployment_uuid`, `status` (`in_progress`, `finished`), `created_at`, `commit`. `GET /deployments/{uuid}` innehåller inget `logs`-fält i v4.4.6; bygglogg läses i `application_deployment_queues.logs`.
+- S23: `instant_deploy: false` mot repo med bara README startar inget bygge (`count: 0` efter 2+ min).
+- S24: första pushen till `main` startade ett bygge inom 1 s via auto-deploy, utan `POST /deploy`. En push från en molnsession (S6) startade nästa bygge på samma sätt.

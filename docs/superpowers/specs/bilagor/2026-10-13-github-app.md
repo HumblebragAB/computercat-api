@@ -52,7 +52,7 @@ Installation token:
 - Response 201: `token`, `expires_at`, `permissions`, `repository_selection` (`all`/`selected`), `repositories`.
 - Lifetime: **1 hour** (https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app).
 - Finding installation id: `GET /orgs/{org}/installation` (JWT), or `GET /repos/{owner}/{repo}/installation`, `GET /app/installations`, or from webhook payload. Can be stored as config since it is stable per installation.
-- UNCONFIRMED: whether an already-issued token without `repositories` restriction automatically covers a repo created after issuance. Simplest: mint a fresh token per operation (cheap; tokens are short-lived anyway).
+- VERIFIERAT 2026-10-14 (spike S9): en token utfärdad före skapandet nådde det nya repot direkt (README 200 vid första försöket). Planen tar ändå ny token per operation. Simplest: mint a fresh token per operation (cheap; tokens are short-lived anyway).
 
 Laravel note: use an existing JWT lib (e.g. firebase/php-jwt or lcobucci/jwt) — standard RS256; private key from secret store/env, never committed.
 
@@ -100,5 +100,18 @@ Read 2026-10-13 on docs.github.com.
 - `POST /orgs/{org}/repos` (https://docs.github.com/en/rest/repos/repos#create-an-organization-repository). Body used: `name` (required), `description`, `private` (boolean, default `false`, so always sent as `true`), `auto_init` (boolean, default `false`; "Pass true to create an initial commit with empty README"). Responses: 201 Created, 403 Forbidden, 422 "Validation failed, or the endpoint has been spammed.", 451.
 - Permissions page (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps): `POST /orgs/{org}/repos` is listed under "Repository permissions for "Administration"" (write, UAT/IAT, additional permissions ✓) and under "Repository permissions for "Repository creation"" (write, UAT/IAT, additional permissions ✓). The page does not say how they combine. **UNCONFIRMED:** whether Administration: write alone is enough; spike S8 tries it, and on 403 Erik decides whether to add "Repository creation".
 - Contents (same page): `GET /repos/{owner}/{repo}/contents/{path}` needs Contents: read; `PUT /repos/{owner}/{repo}/contents/{path}` needs Contents: write (also listed under Workflows: write, which only matters for files under `.github/workflows/`; we never write there).
-- Access to created repos: "If the app creates any repositories, the app will automatically be granted access to those repositories as well." (https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). The same page does not say whether "Only select repositories" requires at least one selected repository. **UNCONFIRMED.**
+- Access to created repos: "If the app creates any repositories, the app will automatically be granted access to those repositories as well." (https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). VERIFIERAT 2026-10-14: installationen med "Only select repositories" kräver minst ett valt repo (UI: "Select at least one repository"); ankarrepot `HumblebragAB/spelstudio-ankare` fyller den rollen. Repo som appen skapar läggs till i installationen direkt.
 - `auto_init` README content and how fast it is readable via the Contents API: not documented; spike S11 measures it. The step polls a 404 for up to 3 minutes.
+
+## Spikresultat (2026-10-14)
+
+App "Humblebrag Spelstudio" (App ID 5312120), installation 171274645 på HumblebragAB, "Only select repositories". Behörigheter: Administration RW, Contents RW, Repository creation RW, Metadata R. JWT med `iss` = client id fungerar.
+
+- S8: `POST /orgs/HumblebragAB/repos` med `private: true, auto_init: true` ger 201 och `private: true` med installationstoken. Appen har "Repository creation: write" (Erik valde att lägga till den före test), så frågan om Administration räcker ensam är inte prövad.
+- S9: token utfärdad före skapandet når det nya repot direkt.
+- S10: `GET /repos/{o}/{r}` har `id`, `description`, `archived`, `private`.
+- S11: README från `auto_init` var läsbar direkt (0 s). Innehåll: `# <namn>` + beskrivningen. Contents `GET` ger `sha`, `content`, `encoding: base64`. `PUT` med `sha` skriver över (200), `PUT` utan `sha` skapar ny fil (201). `PUT` utan `sha` mot befintlig fil ger 422 `{"message":"Invalid request.\n\n\"sha\" wasn't supplied.", "status":"422"}`.
+- S12: andra `POST` med samma namn ger 422 `{"message":"Repository creation failed.","errors":[{"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account"}]}`; inget nytt repo (samma `id`).
+- S17: `PATCH archived: true` med installationstoken ger 200 och `archived: true`.
+- S6: en engångs-routine i molnmiljön "Spelstudio" pushade direkt till `main` (ingen ny gren); `npm ci` nådde registret och `npm run check` var grön.
+- Repo som appen skapar läggs till i installationen direkt (syns i `GET /installation/repositories`).
