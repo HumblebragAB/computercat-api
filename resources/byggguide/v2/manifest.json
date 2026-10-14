@@ -120,8 +120,8 @@
         {
             "path": "scripts/cc-gate.mjs",
             "source": "files/scripts/cc-gate.mjs",
-            "sha256": "450e50a227284ebc950d49bbaa7075bcd98a30e92a5d84f8b72d8fa0ef09d5c1",
-            "bytes": 9772
+            "sha256": "fd18c5bd1758b633f50c54b6976fabe5cb5f41ef8ea2e20a8d5233fb4b5fba04",
+            "bytes": 13800
         },
         {
             "path": "scripts/check-export.mjs",
@@ -344,6 +344,12 @@
             "source": "files/src/lib/computercat/storage.ts",
             "sha256": "c9600d20863545bfebafbdbd8d61d32d6b5843d771babdad62084bf8b43137b7",
             "bytes": 1842
+        },
+        {
+            "path": "test/ccAudit.test.ts",
+            "source": "files/test/ccAudit.test.ts",
+            "sha256": "73d59c856548110eeb3a31f589847e5cde3185312be65b92300a95004ad449e1",
+            "bytes": 6976
         },
         {
             "path": "test/docs.test.ts",

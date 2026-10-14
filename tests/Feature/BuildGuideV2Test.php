@@ -78,4 +78,15 @@ class BuildGuideV2Test extends TestCase
         $this->assertStringContainsString('contentSecurityPolicy(process.env.NEXT_PUBLIC_COMPUTERCAT_URL)', $layout);
         $this->assertStringContainsString("process.env.NODE_ENV === 'production'", $layout);
     }
+
+    public function test_audit_script_is_in_the_guide(): void
+    {
+        $paths = array_column(BuildGuide::manifest('v2')['files'], 'path');
+
+        $gate = BuildGuide::file('v2', 'scripts/cc-gate.mjs')['content'];
+
+        $this->assertContains('test/ccAudit.test.ts', $paths);
+        $this->assertStringContainsString("'--omit=dev', '--audit-level=high'", $gate);
+        $this->assertStringContainsString('delete env.NPM_CONFIG_PRODUCTION;', $gate);
+    }
 }

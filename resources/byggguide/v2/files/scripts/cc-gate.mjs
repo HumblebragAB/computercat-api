@@ -18,6 +18,7 @@
 //   <script async src>, <link rel=stylesheet> m.fl. ovanför metataggen, så alla resurs-URL:er i
 //   HTML kontrolleras separat och måste vara samma ursprung (se checkResources).
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const OUT = 'out';
@@ -233,3 +234,82 @@ if (findings.length > 0) {
 }
 
 console.log(`check-security: OK (${files.length} filer, ${pages} HTML-sidor med rätt CSP)`);
+
+// ---- Del 2: npm audit för produktionsberoenden (spec delprojekt 3, del 3).
+// - Fynd (high eller critical) fäller med paketnamn och allvarlighetsgrad.
+// - Fel mot registret (nätverkskod eller 5xx) ger ett nytt försök efter 10 s; sedan fäller
+//   skriptet med "npm-registret svarade inte".
+// - Andra fel (annan kod, utdata som inte är JSON) fäller direkt med koden.
+// Formen på `npm audit --json` (npm 10, verifierad 2026-10-14): en rapport har
+// auditReportVersion, metadata och vulnerabilities; ett fel har message och error, och
+// orsaken står i message ("… reason: getaddrinfo ENOTFOUND registry.npmjs.org").
+// --registry gör att spelrepots .npmrc inte kan peka granskningen mot ett annat register.
+
+const ARGS = ['audit', '--omit=dev', '--audit-level=high', '--json', '--registry=https://registry.npmjs.org/'];
+const SERIOUS = new Set(['high', 'critical']);
+const NETWORK = /^(ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|E?5\d\d)$/;
+// Bara testerna kortar väntan; den kan aldrig bli längre än 10 s.
+const RETRY_DELAY_MS = Math.min(10_000, Math.max(0, Number(process.env.CC_AUDIT_RETRY_DELAY_MS ?? 10_000) || 0));
+
+// error.code om npm skickar den, annars koden ur message (E-kod eller HTTP-status).
+function errorCode(json) {
+  if (typeof json?.error?.code === 'string' && json.error.code !== '') return json.error.code;
+  const message = typeof json?.message === 'string' ? json.message : '';
+  return message.match(/\b(E[A-Z][A-Z0-9_]+)\b/)?.[1] ?? message.match(/\b(5\d\d)\b/)?.[1] ?? 'okänd kod';
+}
+
+function audit() {
+  // Spike A (S8): nixpacks sätter NPM_CONFIG_PRODUCTION=false, och då räknar npm audit
+  // --omit=dev ändå med utvecklingsberoenden. Variabeln får aldrig nå npm här.
+  const env = { ...process.env };
+  delete env.NPM_CONFIG_PRODUCTION;
+  delete env.npm_config_production;
+  const r = spawnSync('npm', ARGS, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
+  if (r.error) return { kind: 'failed', code: r.error.code ?? 'npm startade inte' };
+
+  let json = null;
+  try {
+    json = JSON.parse(r.stdout);
+  } catch {
+    return { kind: 'failed', code: 'ingen JSON' };
+  }
+  const isReport =
+    json !== null && typeof json === 'object' && 'auditReportVersion' in json && typeof json.vulnerabilities === 'object' && json.vulnerabilities !== null;
+  if (!isReport) {
+    const code = errorCode(json);
+    return NETWORK.test(code) ? { kind: 'registry', code } : { kind: 'failed', code };
+  }
+
+  // Fail closed: high eller critical fäller även om npm avslutade med 0.
+  const serious = Object.values(json.vulnerabilities)
+    .filter((v) => v && SERIOUS.has(v.severity))
+    .map((v) => `${v.name} (${v.severity})`)
+    .sort();
+  if (serious.length > 0) return { kind: 'findings', serious };
+  if (r.status !== 0) return { kind: 'unexpected', status: r.status };
+  return { kind: 'ok' };
+}
+
+let result = audit();
+if (result.kind === 'registry') {
+  console.error(`cc-audit: npm-registret svarade inte (${result.code}); nytt försök om ${RETRY_DELAY_MS / 1000} s.`);
+  await new Promise((done) => setTimeout(done, RETRY_DELAY_MS));
+  result = audit();
+}
+
+if (result.kind === 'ok') {
+  console.log('cc-audit: OK (inga high eller critical i produktionsberoenden)');
+} else if (result.kind === 'findings') {
+  for (const line of result.serious) console.error(`cc-audit: ${line}`);
+  console.error('cc-audit: uppdatera paketen (npm audit fix eller en ny version) och pusha igen. Tysta aldrig fyndet.');
+  process.exit(1);
+} else if (result.kind === 'unexpected') {
+  console.error(`cc-audit: npm audit avslutade med kod ${result.status} utan high eller critical i rapporten.`);
+  process.exit(1);
+} else if (result.kind === 'failed') {
+  console.error(`cc-audit: npm audit misslyckades (${result.code}). Kör npm audit --omit=dev lokalt och läs felet.`);
+  process.exit(1);
+} else {
+  console.error('cc-audit: npm-registret svarade inte (två försök). Vänta och pusha igen.');
+  process.exit(1);
+}
