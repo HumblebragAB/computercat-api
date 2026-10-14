@@ -26,3 +26,6 @@ Schedule::command('computercat:prune-oauth-clients --hours=24')->dailyAt('04:30'
 
 // Sanctum-token som gått ut (90 dagar, eller 10 minuter efter en förnyelse) raderas efter ett dygn.
 Schedule::command('sanctum:prune-expired --hours=24')->dailyAt('04:45');
+
+// Provisioneringens invariant (spec 2c): lyckade Demo-spel mot GitHub, Coolify, SiteOps och Demo-adressen.
+Schedule::command('computercat:check-provisioning')->dailyAt('06:15')->withoutOverlapping(30);
