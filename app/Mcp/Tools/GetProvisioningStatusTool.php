@@ -12,6 +12,7 @@ use App\Provisioning\DemoProbe;
 use App\Provisioning\Http\Redactor;
 use App\Provisioning\SafeMessage;
 use App\Releases\DemoBuildRecorder;
+use App\Services\BuildGuide;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -20,6 +21,12 @@ use Laravel\Mcp\Response;
 
 class GetProvisioningStatusTool extends GameTool
 {
+    // Spec delprojekt 3, "Status vid fel", ordagrant (svenska som släppflödets next-texter).
+    public const DEPLOY_FAILED_NEXT = 'Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen.';
+
+    // Ett avbrutet bygge är inget fel i koden; det ska inte skicka spelets Claude att leta fel.
+    public const DEPLOY_CANCELLED_NEXT = 'Bygget avbröts i Coolify innan det blev klart. Pusha igen för att starta ett nytt bygge; Demo visar förra lyckade bygget tills dess.';
+
     protected string $name = 'get_provisioning_status';
 
     protected string $description = 'Show how provisioning (or archiving) of a game is going: each step with status, the repo URL, the Demo URL with its basic auth login, and the latest error. After a successful run, "demo" tells whether code has been pushed and built: awaiting_code (ready for code, follow CLAUDE.md step 1), building, live, deployed_not_answering or deploy_failed. Works for the creator even if the game has not been created yet.';
@@ -124,6 +131,19 @@ class GetProvisioningStatusTool extends GameTool
             'url_status' => $code,
         ];
 
+        if ($state === 'deploy_failed') {
+            try {
+                if ($this->runsSecurityChecks($run)) {
+                    $result['next'] = $latest['status'] === 'cancelled-by-user' ? self::DEPLOY_CANCELLED_NEXT : self::DEPLOY_FAILED_NEXT;
+                }
+            } catch (\Throwable $e) {
+                // Synligt men inte fatalt: Demo-läget gäller ändå.
+                $ref = (string) Str::uuid();
+                Log::warning('get_provisioning_status kunde inte läsa byggguiden', ['ref' => $ref, 'run' => $run->uuid, 'exception' => $e]);
+                $result['next_error'] = "Could not read the build guide for this game (ref {$ref}).";
+            }
+        }
+
         // Första gången Demo lever: SiteOps-övervakningen slås på (en gång).
         try {
             app(DemoMonitoring::class)->enableIfLive($run, $latest, $code);
@@ -144,6 +164,14 @@ class GetProvisioningStatusTool extends GameTool
         }
 
         return $result;
+    }
+
+    // Guideversionen som repo-steget frös. v1 eller saknat värde: dagens svar, utan next.
+    private function runsSecurityChecks(ProvisioningRun $run): bool
+    {
+        $version = $run->steps->firstWhere('step', 'repo')?->detail['build_guide'] ?? null;
+
+        return is_string($version) && BuildGuide::runsSecurityChecksInBuild($version);
     }
 
     private function runData(?ProvisioningRun $run): ?array

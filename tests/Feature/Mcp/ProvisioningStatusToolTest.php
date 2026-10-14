@@ -8,8 +8,10 @@ use App\Models\McpAuditLog;
 use App\Models\ProvisioningRun;
 use App\Models\ProvisioningStep;
 use App\Provisioning\Saga;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Tests\Support\CreatesProvisioningRuns;
 use Tests\Support\ProvisioningFakes;
 
@@ -74,9 +76,12 @@ class ProvisioningStatusToolTest extends McpTestCase
         return $run;
     }
 
-    private function demoFor(array $fakes): array
+    private function demoFor(array $fakes, ?string $buildGuide = null): array
     {
         $run = $this->succeededRun();
+        if ($buildGuide !== null) {
+            $run->steps()->where('step', 'repo')->firstOrFail()->update(['detail' => ['build_guide' => $buildGuide]]);
+        }
         Http::fake($fakes);
 
         $result = $this->callTool($this->staffMember(Game::where('slug', 'kattsvep')->firstOrFail()), 'get_provisioning_status', ['game' => 'kattsvep']);
@@ -190,5 +195,87 @@ class ProvisioningStatusToolTest extends McpTestCase
 
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('no provisioning run', $result['text']);
+    }
+
+    // Spec delprojekt 3, "Status vid fel".
+    public function test_failed_v2_build_tells_the_game_claude_to_run_the_checks_locally(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ], 'v2');
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertSame('Bygget föll i Coolify. Kör `npm run check` lokalt (samma säkerhetskontroller som Coolify), slå upp felet med `search_facts` och pusha igen. Pekar felet på npm-registret: vänta och pusha igen.', $demo['next']);
+    }
+
+    public function test_cancelled_v2_build_gets_its_own_text(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'cancelled-by-user']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ], 'v2');
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertSame('Bygget avbröts i Coolify innan det blev klart. Pusha igen för att starta ett nytt bygge; Demo visar förra lyckade bygget tills dess.', $demo['next']);
+    }
+
+    // Ett fel i byggguiden får inte fälla statusen, men det döljs inte heller.
+    public function test_unreadable_build_guide_is_shown_not_fatal(): void
+    {
+        $root = storage_path('framework/testing/byggguide-'.Str::lower(Str::random(10)));
+        File::copyDirectory(resource_path('byggguide'), $root);
+        try {
+            File::ensureDirectoryExists("{$root}/v99");
+            file_put_contents("{$root}/v99/manifest.json", '{');
+            config(['byggguide.path' => $root]);
+
+            $demo = $this->demoFor([
+                'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+                'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+            ], 'v99');
+
+            $this->assertSame('deploy_failed', $demo['state']);
+            $this->assertArrayNotHasKey('next', $demo);
+            $this->assertStringContainsString('Could not read the build guide', $demo['next_error']);
+        } finally {
+            // Bara katalogen som testet skapade.
+            File::deleteDirectory($root);
+        }
+    }
+
+    public function test_failed_v1_build_keeps_todays_answer(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ], 'v1');
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertArrayNotHasKey('next', $demo);
+    }
+
+    public function test_failed_build_without_recorded_version_keeps_todays_answer(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-2', 'failed']])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ]);
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertArrayNotHasKey('next', $demo);
+    }
+
+    public function test_live_v2_build_has_no_failure_text(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished', '2026-10-14T08:00:00.000000Z', str_repeat('c', 40)]])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('<html></html>'),
+            'siteops.test/api/v1/sites/42/environments/7' => Http::response(ProvisioningFakes::siteopsEnvironmentUpdated(42, 'https://kattsvep.apps.humblebrag.se')),
+            'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments('https://kattsvep.apps.humblebrag.se', monitored: false)),
+        ], 'v2');
+
+        $this->assertSame('live', $demo['state']);
+        $this->assertArrayNotHasKey('next', $demo);
     }
 }
