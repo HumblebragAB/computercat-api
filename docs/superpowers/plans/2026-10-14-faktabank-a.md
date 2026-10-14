@@ -19,7 +19,7 @@
 - H2-rubrikerna utanför kodblock är exakt `Regel`, `Varför`, `Så gör du`, `Källa`, i den ordningen.
 - YAML tolkas med `Yaml::parse($text, 0)` (inga objekt- eller PHP-taggar).
 - Källrader med prefix `resources/`, `app/`, `routes/`, `config/`, `docs/` ska finnas i computercat-api; med prefix `src/`, `scripts/`, `test/` ska finnas i manifestet för varje version i artikelns `build_guide` (eller `BuildGuide::LATEST` om fältet saknas). Suffix `:rad`, `:rad-rad` och `#ankare` tas bort före kontrollen.
-- Sökning: `mb_strtolower`, split på `/[^\p{L}\p{N}]+/u`, tokens med minst 2 tecken, unika frågeord; träff är exakt token eller prefix när frågeordet har minst 4 tecken; poäng 5 titel, 3 taggar, 2 sammanfattning, 1 brödtext; högst 10, sorterat på poäng fallande och sedan `id`.
+- Sökning: `mb_strtolower`, split på `/[^\p{L}\p{N}]+/u`, tokens med minst 2 tecken, unika frågeord; träff är exakt token, eller prefix åt något håll när både frågeord och token har minst 4 tecken; poäng 5 titel, 3 taggar, 2 sammanfattning, 1 brödtext; högst 10, sorterat på poäng fallande och sedan `id`.
 - Verktygen ärver `PlatformTool`, bara läsning, svar under 50 000 tecken.
 - Ingen artikel byggs av användarinnehåll. Etapp A:s artiklar gäller både v1 och v2 och refererar inte v2.
 - Commit-meddelanden på svenska, utan Co-Authored-By.
@@ -37,7 +37,7 @@
 ### Task 1: `FactBank` läser och validerar artiklar
 
 **Files:**
-- Modify: `composer.json`, `composer.lock` (symfony/yaml från require-dev till require)
+- Modify: `composer.json`, `composer.lock` (lägg till symfony/yaml i require; i dag finns den bara indirekt bland dev-paketen i lock-filen)
 - Create: `app/Services/FactBank.php`, `app/Services/FactBankInvalid.php`
 - Test: `tests/Unit/FactBankTest.php`
 
@@ -51,7 +51,7 @@
   - En artikel är `array{id: string, title: string, topic: string, tags: list<string>, summary: string, updated: string, build_guide: ?list<string>, markdown: string}`.
   - `final class App\Services\FactBankInvalid extends \RuntimeException` (fel i en artikel; meddelandet nämner filen relativt `resources/faktabank`).
 
-- [ ] **Steg 1: Flytta symfony/yaml till require.**
+- [ ] **Steg 1: Lägg till symfony/yaml i require.**
 
 ```bash
 composer require symfony/yaml:^8.1
@@ -160,7 +160,7 @@ class FactBankTest extends TestCase
     public function test_id_pattern_is_enforced(): void
     {
         $this->article('stack', 'Versaler');
-        $this->assertInvalid('id');
+        $this->assertInvalid('id följer inte');
     }
 
     public function test_duplicate_id_in_two_topics_is_invalid(): void
@@ -173,7 +173,7 @@ class FactBankTest extends TestCase
     public function test_topic_must_match_directory(): void
     {
         $this->article('stack', 'fel-amne', ['topic' => 'testing']);
-        $this->assertInvalid('topic');
+        $this->assertInvalid('topic måste');
     }
 
     public function test_unknown_topic_directory_is_invalid(): void
@@ -186,25 +186,25 @@ class FactBankTest extends TestCase
     public function test_unquoted_date_is_invalid(): void
     {
         $this->article('stack', 'datum', ['updated' => '2026-10-14']);
-        $this->assertInvalid('updated');
+        $this->assertInvalid('updated ska');
     }
 
     public function test_field_limits(): void
     {
         $this->article('stack', 'lang-rubrik', ['title' => str_repeat('a', 81)]);
-        $this->assertInvalid('title');
+        $this->assertInvalid('title saknas');
     }
 
     public function test_tags_must_be_one_to_eight_strings(): void
     {
         $this->article('stack', 'taggar', ['tags' => '[]']);
-        $this->assertInvalid('tags');
+        $this->assertInvalid('tags ska');
     }
 
     public function test_unknown_build_guide_version_is_invalid(): void
     {
         $this->article('stack', 'version', ['build_guide' => '[v9]']);
-        $this->assertInvalid('build_guide');
+        $this->assertInvalid('build_guide ska');
     }
 
     public function test_file_over_12000_characters_is_invalid(): void
@@ -226,6 +226,54 @@ class FactBankTest extends TestCase
         $this->assertSame(['kodblock'], array_column($this->bank()->all(), 'id'));
     }
 
+    public function test_tilde_fence_and_unclosed_fence(): void
+    {
+        $this->article('stack', 'tilde', [], "## Regel\n~~~\n## Varför\n~~~\n## Varför\nx\n## Så gör du\nx\n## Källa\n- app/Services/BuildGuide.php\n");
+        $this->assertSame(['tilde'], array_column($this->bank()->all(), 'id'));
+
+        $this->article('stack', 'ostangt', [], "## Regel\n```\n## Varför\nx\n## Så gör du\nx\n## Källa\n- app/Services/BuildGuide.php\n");
+        $this->assertInvalid('rubrikerna');
+    }
+
+    public function test_source_section_in_code_block_is_ignored(): void
+    {
+        $this->article('stack', 'kod-kalla', [], "## Regel\n```\n## Källa\n- app/Finns/Inte.php\n```\n## Varför\nx\n## Så gör du\nx\n## Källa\n- app/Services/BuildGuide.php\n");
+        $this->assertSame(['kod-kalla'], array_column($this->bank()->all(), 'id'));
+    }
+
+    public function test_unknown_source_prefix_and_empty_sources_are_invalid(): void
+    {
+        $this->article('stack', 'okant-prefix', [], "## Regel\nx\n## Varför\nx\n## Så gör du\nx\n## Källa\n- app2/finns/inte.php\n");
+        $this->assertInvalid('okänt prefix');
+    }
+
+    public function test_empty_source_section_is_invalid(): void
+    {
+        $this->article('stack', 'utan-kalla', [], "## Regel\nx\n## Varför\nx\n## Så gör du\nx\n## Källa\nIngen.\n");
+        $this->assertInvalid('minst en rad');
+    }
+
+    public function test_https_source_and_ds_store_are_accepted(): void
+    {
+        $this->article('practice', 'lank-kalla', [], "## Regel\nx\n## Varför\nx\n## Så gör du\nx\n## Källa\n- https://developer.mozilla.org/\n");
+        File::put($this->root.'/practice/.DS_Store', 'x');
+        File::put($this->root.'/.DS_Store', 'x');
+        $this->assertSame(['lank-kalla'], array_column($this->bank()->all(), 'id'));
+    }
+
+    public function test_symlinked_directory_is_invalid(): void
+    {
+        $outside = sys_get_temp_dir().'/faktabank-katalog-'.bin2hex(random_bytes(4));
+        File::makeDirectory($outside);
+        symlink($outside, $this->root.'/stack');
+
+        try {
+            $this->assertInvalid('stack');
+        } finally {
+            File::deleteDirectory($outside);
+        }
+    }
+
     public function test_missing_front_matter_is_invalid(): void
     {
         File::ensureDirectoryExists($this->root.'/stack');
@@ -237,7 +285,7 @@ class FactBankTest extends TestCase
     public function test_yaml_php_tags_are_not_executed(): void
     {
         $this->article('stack', 'tagg', ['summary' => '!php/const PHP_VERSION']);
-        $this->assertInvalid('summary');
+        $this->assertInvalid('summary saknas');
     }
 
     public function test_source_in_api_repo_must_exist_with_suffix_stripped(): void
@@ -360,7 +408,7 @@ final class FactBank
 
         $facts = [];
         foreach (scandir($rootReal) as $topic) {
-            if ($topic === '.' || $topic === '..') {
+            if ($topic === '.' || $topic === '..' || $topic === '.DS_Store') {
                 continue;
             }
             $dir = $rootReal.'/'.$topic;
@@ -368,7 +416,8 @@ final class FactBank
                 throw new FactBankInvalid("Okänt ämne eller oväntad fil i faktabanken: {$topic}");
             }
             foreach (scandir($dir) as $name) {
-                if ($name === '.' || $name === '..') {
+                // .DS_Store skapas av Finder på macOS och är aldrig en artikel.
+                if ($name === '.' || $name === '..' || $name === '.DS_Store') {
                     continue;
                 }
                 $facts[] = $this->parse($rootReal, $topic, $name);
@@ -454,8 +503,9 @@ final class FactBank
         }
 
         $body = $m[2];
-        $this->assertHeadings($rel, $body);
-        $this->assertSources($rel, $body, $buildGuide ?? [BuildGuide::LATEST]);
+        $prose = self::withoutCode($body);
+        $this->assertHeadings($rel, $prose);
+        $this->assertSources($rel, $prose, $buildGuide ?? [BuildGuide::LATEST]);
 
         return [
             'id' => $id,
@@ -469,33 +519,66 @@ final class FactBank
         ];
     }
 
-    private function assertHeadings(string $rel, string $body): void
+    // Tar bort kodblock (``` och ~~~). Ett ostängt staket gör resten av texten till kod,
+    // så att en rubrik efter det aldrig räknas och artikeln fäller i rubrikkontrollen.
+    private static function withoutCode(string $body): string
     {
-        $withoutCode = (string) preg_replace('/^```.*?^```[^\n]*$/ms', '', $body);
-        preg_match_all('/^## (.+?)\s*$/m', $withoutCode, $m);
+        $out = [];
+        $fence = null;
+        foreach (explode("\n", $body) as $line) {
+            if (preg_match('/^(```|~~~)/', $line, $m) === 1) {
+                if ($fence === null) {
+                    $fence = $m[1];
+                    continue;
+                }
+                if ($fence === $m[1]) {
+                    $fence = null;
+                    continue;
+                }
+            }
+            if ($fence === null) {
+                $out[] = $line;
+            }
+        }
+
+        return implode("\n", $out);
+    }
+
+    private function assertHeadings(string $rel, string $text): void
+    {
+        preg_match_all('/^## (.+?)\s*$/m', $text, $m);
         if ($m[1] !== self::HEADINGS) {
             throw new FactBankInvalid("{$rel}: rubrikerna ska vara exakt ## ".implode(', ## ', self::HEADINGS).' i den ordningen (hittade: '.implode(', ', $m[1]).').');
         }
     }
 
     /** @param list<string> $versions */
-    private function assertSources(string $rel, string $body, array $versions): void
+    private function assertSources(string $rel, string $text, array $versions): void
     {
-        $section = substr($body, (int) strrpos($body, '## Källa'));
+        // $text är utan kodblock och har exakt en "## Källa", sist (assertHeadings körs först).
+        $section = substr($text, (int) strpos($text, "## Källa\n"));
         preg_match_all('/^- +`?([^`\s]+)`?/m', $section, $m);
+        if ($m[1] === []) {
+            throw new FactBankInvalid("{$rel}: ## Källa måste ha minst en rad som börjar med \"- \".");
+        }
 
         foreach ($m[1] as $source) {
+            if (str_starts_with($source, 'https://')) {
+                continue;
+            }
             $path = (string) preg_replace('/(#.*|:\d+(?:-\d+)?)$/', '', $source);
             if (array_filter(self::API_PREFIXES, fn ($p) => str_starts_with($path, $p)) !== []) {
                 if (str_contains($path, '..') || ! is_file(base_path($path))) {
-                    throw new FactBankInvalid("{$rel}: källan {$path} finns inte i computercat-api.");
+                    throw new FactBankInvalid("{$rel}: källan \"{$path}\" finns inte i computercat-api (skriv sökvägen utan avslutande skiljetecken).");
                 }
             } elseif (array_filter(self::GAME_PREFIXES, fn ($p) => str_starts_with($path, $p)) !== []) {
                 foreach ($versions as $version) {
                     if (! in_array($path, array_column(BuildGuide::manifest($version)['files'], 'path'), true)) {
-                        throw new FactBankInvalid("{$rel}: källan {$path} finns inte i byggguide {$version}.");
+                        throw new FactBankInvalid("{$rel}: källan \"{$path}\" finns inte i byggguide {$version}.");
                     }
                 }
+            } else {
+                throw new FactBankInvalid("{$rel}: källan \"{$source}\" har okänt prefix (tillåtet: ".implode(', ', [...self::API_PREFIXES, ...self::GAME_PREFIXES]).' eller https://).');
             }
         }
     }
@@ -544,9 +627,9 @@ class FactBankSearchTest extends TestCase
     {
         parent::setUp();
         $this->root = sys_get_temp_dir().'/faktabank-sok-'.bin2hex(random_bytes(6));
-        $this->put('stack', 'nytt-beroende', 'Nytt npm-beroende', '[beroende, npm, paket]', 'Kräver motivering.', 'Skriv varför i commit-meddelandet.');
-        $this->put('testing', 'spellogik', 'Testa spellogiken', '[vitest, enhetstest]', 'Ren logik testas utan nätverk.', 'Ett nytt beroende behövs inte för tester.');
-        $this->put('security', 'hemligheter', 'Inga hemligheter i klienten', '[nycklar, env]', 'Bara slug och API-adress är publika.', 'check:security körs före push.');
+        $this->makeArticle('stack', 'nytt-beroende', 'Nytt npm-beroende', '[beroende, npm, paket]', 'Kräver motivering.', 'Skriv varför i commit-meddelandet.');
+        $this->makeArticle('testing', 'spellogik', 'Testa spellogiken', '[vitest, enhetstest]', 'Ren logik testas utan nätverk.', 'Ett nytt beroende behövs inte för tester.');
+        $this->makeArticle('security', 'hemligheter', 'Inga hemligheter i klienten', '[nycklar, env]', 'Bara slug och API-adress är publika.', 'check:security körs före push.');
     }
 
     protected function tearDown(): void
@@ -555,7 +638,7 @@ class FactBankSearchTest extends TestCase
         parent::tearDown();
     }
 
-    private function put(string $topic, string $id, string $title, string $tags, string $summary, string $body): void
+    private function makeArticle(string $topic, string $id, string $title, string $tags, string $summary, string $body): void
     {
         File::ensureDirectoryExists("{$this->root}/{$topic}");
         File::put("{$this->root}/{$topic}/{$id}.md", "---\nid: {$id}\ntitle: {$title}\ntopic: {$topic}\ntags: {$tags}\nsummary: {$summary}\nupdated: \"2026-10-14\"\n---\n## Regel\n{$body}\n## Varför\nx\n## Så gör du\nx\n## Källa\n- app/Services/BuildGuide.php\n");
@@ -586,9 +669,11 @@ class FactBankSearchTest extends TestCase
         $this->assertSame(1, $results[1]['score']);
     }
 
-    public function test_prefix_match_needs_four_characters(): void
+    // Prefix åt båda hållen när båda orden har minst 4 tecken: "beroenden" träffar "beroende".
+    public function test_prefix_match_both_ways_needs_four_characters(): void
     {
         $this->assertSame(['spellogik'], $this->ids('enhetstes'));
+        $this->assertSame(['nytt-beroende', 'spellogik'], $this->ids('beroenden'));
         $this->assertSame([], $this->ids('en'));
     }
 
@@ -609,8 +694,8 @@ class FactBankSearchTest extends TestCase
     public function test_topic_filter_and_tie_order(): void
     {
         $this->assertSame(['nytt-beroende'], $this->ids('beroende', 'stack'));
-        $this->put('stack', 'aaa-npm', 'npm', '[x]', 'y', 'z');
-        $this->put('stack', 'zzz-npm', 'npm', '[x]', 'y', 'z');
+        $this->makeArticle('stack', 'aaa-npm', 'npm', '[x]', 'y', 'z');
+        $this->makeArticle('stack', 'zzz-npm', 'npm', '[x]', 'y', 'z');
         // nytt-beroende har npm i både rubrik och taggar (8); aaa och zzz bara i rubriken (5), ordnade på id.
         $this->assertSame(['nytt-beroende', 'aaa-npm', 'zzz-npm'], $this->ids('npm', 'stack'));
     }
@@ -618,7 +703,7 @@ class FactBankSearchTest extends TestCase
     public function test_at_most_ten_results(): void
     {
         foreach (range(1, 12) as $i) {
-            $this->put('practice', "mobil-{$i}", 'Mobil', '[mobil]', 'mobil', 'mobil');
+            $this->makeArticle('practice', "mobil-{$i}", 'Mobil', '[mobil]', 'mobil', 'mobil');
         }
 
         $this->assertCount(10, $this->ids('mobil'));
@@ -687,7 +772,8 @@ class FactBankSearchTest extends TestCase
     private static function matches(string $term, array $tokens): bool
     {
         foreach ($tokens as $token) {
-            if ($token === $term || (mb_strlen($term) >= 4 && str_starts_with($token, $term))) {
+            if ($token === $term || (mb_strlen($term) >= 4 && mb_strlen($token) >= 4
+                && (str_starts_with($token, $term) || str_starts_with($term, $token)))) {
                 return true;
             }
         }
@@ -711,7 +797,7 @@ git commit -m "Faktabanken: sökning med vikter för rubrik, taggar, sammanfattn
 
 **Files:**
 - Create: `app/Mcp/Tools/ListFactsTool.php`, `app/Mcp/Tools/SearchFactsTool.php`, `app/Mcp/Tools/GetFactTool.php`
-- Modify: `app/Mcp/ComputercatServer.php` (lägg till de tre i `$tools` efter `GetBuildGuideFileTool::class`), `app/Mcp/AuditLogger.php` (`shorten()` redigerar hemligheter). Verktygen hämtar tjänsten med `app(FactBank::class)`; ingen bindning behövs.
+- Modify: `app/Mcp/ComputercatServer.php` (lägg till de tre i `$tools` efter `GetBuildGuideFileTool::class`), `app/Mcp/AuditLogger.php` (`shorten()` redigerar hemligheter), `app/Provisioning/Http/Redactor.php` (Stripe, AWS, Slack), `tests/Unit/Provisioning/RedactorTest.php`. Verktygen hämtar tjänsten med `app(FactBank::class)`; ingen bindning behövs.
 - Test: `tests/Feature/Mcp/FactToolsTest.php`
 
 **Interfaces:**
@@ -756,7 +842,7 @@ class FactToolsTest extends McpTestCase
         parent::tearDown();
     }
 
-    private function json(array $result): array
+    private function decode(array $result): array
     {
         $this->assertTrue($result['ok'], $result['text']);
 
@@ -765,30 +851,30 @@ class FactToolsTest extends McpTestCase
 
     public function test_list_facts_returns_topics_and_summaries(): void
     {
-        $json = $this->json($this->callTool($this->staffMember(), 'list_facts'));
+        $json = $this->decode($this->callTool($this->staffMember(), 'list_facts'));
 
         $this->assertSame(FactBank::TOPICS, $json['topics']);
         $this->assertSame(['nytt-beroende', 'spellogik'], array_column($json['facts'], 'id'));
         $this->assertSame(['id', 'title', 'topic', 'summary', 'tags', 'build_guide'], array_keys($json['facts'][0]));
-        $this->assertSame(['spellogik'], array_column($this->json($this->callTool($this->staffMember(), 'list_facts', ['topic' => 'testing']))['facts'], 'id'));
-        $this->assertSame(['nytt-beroende'], array_column($this->json($this->callTool($this->staffMember(), 'list_facts', ['build_guide' => 'v2']))['facts'], 'id'));
+        $this->assertSame(['spellogik'], array_column($this->decode($this->callTool($this->staffMember(), 'list_facts', ['topic' => 'testing']))['facts'], 'id'));
+        $this->assertSame(['nytt-beroende'], array_column($this->decode($this->callTool($this->staffMember(), 'list_facts', ['build_guide' => 'v2']))['facts'], 'id'));
     }
 
     public function test_search_facts_ranks_and_suggests_list_when_empty(): void
     {
-        $json = $this->json($this->callTool($this->staffMember(), 'search_facts', ['query' => 'npm-beroende']));
+        $json = $this->decode($this->callTool($this->staffMember(), 'search_facts', ['query' => 'npm-beroende']));
         $this->assertSame('nytt-beroende', $json['results'][0]['id']);
         $this->assertArrayHasKey('score', $json['results'][0]);
         $this->assertArrayNotHasKey('markdown', $json['results'][0]);
 
-        $empty = $this->json($this->callTool($this->staffMember(), 'search_facts', ['query' => '--']));
+        $empty = $this->decode($this->callTool($this->staffMember(), 'search_facts', ['query' => '--']));
         $this->assertSame([], $empty['results']);
         $this->assertStringContainsString('list_facts', $empty['next']);
     }
 
     public function test_get_fact_returns_markdown_and_rejects_path_like_ids(): void
     {
-        $json = $this->json($this->callTool($this->staffMember(), 'get_fact', ['id' => 'spellogik']));
+        $json = $this->decode($this->callTool($this->staffMember(), 'get_fact', ['id' => 'spellogik']));
         $this->assertSame(['v1'], $json['build_guide']);
         $this->assertStringContainsString('Text om spellogik.', $json['markdown']);
 
@@ -811,6 +897,8 @@ class FactToolsTest extends McpTestCase
         $this->assertFalse($this->callTool($staff, 'search_facts', ['query' => 'x'])['ok']);
         $this->assertFalse($this->callTool($staff, 'search_facts', ['query' => str_repeat('a', 201)])['ok']);
         $this->assertFalse($this->callTool($staff, 'search_facts', ['query' => 'npm', 'build_guide' => 'x'])['ok']);
+        // Många MCP-klienter skickar null för valfria fält.
+        $this->assertTrue($this->callTool($staff, 'search_facts', ['query' => 'npm', 'topic' => null, 'build_guide' => null])['ok']);
     }
 
     public function test_non_staff_is_denied_and_logged(): void
@@ -826,13 +914,14 @@ class FactToolsTest extends McpTestCase
 
     public function test_secret_in_query_is_redacted_in_the_audit_log(): void
     {
-        $token = 'ghp_'.str_repeat('A', 36);
+        // Byggs vid körning så att push protection och gitleaks inte stoppar committen.
+        foreach (['ghp_'.str_repeat('A', 36), 'sk_'.'live_'.str_repeat('a', 24), 'AKIA'.str_repeat('B', 16)] as $i => $token) {
+            $this->callTool($this->staffMember(), 'search_facts', ['query' => "nyckel {$token}"]);
 
-        $this->callTool($this->staffMember(), 'search_facts', ['query' => "nyckel {$token}"]);
-
-        $logged = McpAuditLog::where('tool', 'search_facts')->first()->arguments['query'];
-        $this->assertStringNotContainsString($token, $logged);
-        $this->assertStringContainsString('nyckel', $logged);
+            $logged = McpAuditLog::where('tool', 'search_facts')->orderByDesc('id')->first()->arguments['query'];
+            $this->assertStringNotContainsString($token, $logged);
+            $this->assertStringContainsString('nyckel', $logged);
+        }
     }
 
 }
@@ -877,8 +966,8 @@ class ListFactsTool extends PlatformTool
     protected function run(array $args, User $user): Response
     {
         $validator = Validator::make($args, [
-            'topic' => ['sometimes', 'string', Rule::in(FactBank::TOPICS)],
-            'build_guide' => ['sometimes', 'string', 'regex:'.BuildGuide::VERSION_PATTERN],
+            'topic' => ['sometimes', 'nullable', 'string', Rule::in(FactBank::TOPICS)],
+            'build_guide' => ['sometimes', 'nullable', 'string', 'regex:'.BuildGuide::VERSION_PATTERN],
         ]);
         if ($validator->fails()) {
             return $this->validationFailed($validator->errors()->toArray());
@@ -917,7 +1006,7 @@ class SearchFactsTool extends PlatformTool
 {
     protected string $name = 'search_facts';
 
-    protected string $description = 'Search the Computercat fact bank for how we build games. Ask before adding a dependency, before setting up leaderboards or anti-cheat, when a build or check fails, and before request_live. Returns up to 10 articles with id, title and summary; read one with get_fact. Pass build_guide with the version in the game\'s CLAUDE.md. Articles override your own judgement; if nothing covers a big decision, ask a human.';
+    protected string $description = 'Search the Computercat fact bank for how we build games. Ask before choosing a library or adding a dependency, before writing tests, when a build or check fails, and before request_live. Search in Swedish or English; the articles are in Swedish. Returns up to 10 articles with id, title and summary; read one with get_fact. Pass build_guide with the version in the game\'s CLAUDE.md. Articles override your own judgement; if nothing covers a big decision, ask a human.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -936,8 +1025,8 @@ class SearchFactsTool extends PlatformTool
                     $fail('The query must be valid UTF-8.');
                 }
             }],
-            'topic' => ['sometimes', 'string', Rule::in(FactBank::TOPICS)],
-            'build_guide' => ['sometimes', 'string', 'regex:'.BuildGuide::VERSION_PATTERN],
+            'topic' => ['sometimes', 'nullable', 'string', Rule::in(FactBank::TOPICS)],
+            'build_guide' => ['sometimes', 'nullable', 'string', 'regex:'.BuildGuide::VERSION_PATTERN],
         ]);
         if ($validator->fails()) {
             return $this->validationFailed($validator->errors()->toArray());
@@ -1014,6 +1103,25 @@ class GetFactTool extends PlatformTool
         Tools\GetFactTool::class,
 ```
 
+`app/Provisioning/Http/Redactor.php`, i `scrubSecrets()`: lägg till tre mönster i `preg_replace`-listan (samma mönster som specens säkerhetsspärr), så att de redigeras i alla loggar som använder Redactor:
+
+```php
+            '/\b[sr]k_live_[A-Za-z0-9]{20,}\b/',
+            '/\bAKIA[0-9A-Z]{16}\b/',
+            '/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/',
+```
+
+och ett test per mönster i `tests/Unit/Provisioning/RedactorTest.php` (strängarna byggs vid körning, t.ex. `'sk_'.'live_'.str_repeat('a', 24)`, så att push protection och gitleaks inte stoppar committen):
+
+```php
+    public function test_stripe_aws_and_slack_tokens_are_scrubbed(): void
+    {
+        foreach (['sk_'.'live_'.str_repeat('a', 24), 'AKIA'.str_repeat('B', 16), 'xox'.'b-'.str_repeat('1', 12)] as $secret) {
+            $this->assertStringNotContainsString($secret, Redactor::scrubSecrets("x {$secret} y"), $secret);
+        }
+    }
+```
+
 `app/Mcp/AuditLogger.php`, i `shorten()` direkt efter UTF-8-kontrollen:
 
 ```php
@@ -1023,14 +1131,14 @@ class GetFactTool extends PlatformTool
 
 (Använd ett `use App\Provisioning\Http\Redactor;` överst i stället för fullt namn, enligt filens stil.)
 
-- [ ] **Steg 4: Kör `php artisan test --filter='FactToolsTest|ToolInvariantsTest|PlatformToolTest|AuditLog'`, förväntat PASS.** `ToolInvariantsTest` kontrollerar att namnen är tillåtna, att verktygen ärver `PlatformTool` och att `tools/list` matchar.
+- [ ] **Steg 4: Kör `php artisan test --filter='FactToolsTest|ToolInvariantsTest|PlatformToolTest|AuditLog|RedactorTest'`, förväntat PASS.** Fram till Task 4 finns ingen `resources/faktabank`; `ToolInvariantsTest` anropar ändå de nya verktygen och får "Unexpected error" (med en `Log::error`). Det är väntat och försvinner i Task 4. `ToolInvariantsTest` kontrollerar att namnen är tillåtna, att verktygen ärver `PlatformTool` och att `tools/list` matchar.
 
 - [ ] **Steg 5: Hela sviten** `php artisan test`, sedan pint på ändrade filer.
 
 - [ ] **Steg 6: Commit.**
 
 ```bash
-git add app/Mcp/Tools/ListFactsTool.php app/Mcp/Tools/SearchFactsTool.php app/Mcp/Tools/GetFactTool.php app/Mcp/ComputercatServer.php app/Mcp/AuditLogger.php tests/Feature/Mcp/FactToolsTest.php
+git add app/Mcp/Tools/ListFactsTool.php app/Mcp/Tools/SearchFactsTool.php app/Mcp/Tools/GetFactTool.php app/Mcp/ComputercatServer.php app/Mcp/AuditLogger.php app/Provisioning/Http/Redactor.php tests/Feature/Mcp/FactToolsTest.php tests/Unit/Provisioning/RedactorTest.php
 git commit -m "MCP: list_facts, search_facts och get_fact; hemligheter redigeras i revisionsloggens argument"
 ```
 
@@ -1155,7 +1263,7 @@ Varje nytt bibliotek är kod som ska hållas uppdaterad, granskas för sårbarhe
 id: stack-nytt-beroende
 title: Nytt npm-beroende
 topic: stack
-tags: [beroende, npm, paket, bibliotek, installera]
+tags: [beroende, npm, paket, bibliotek, installera, dependency, library]
 summary: Ett nytt npm-paket kräver att inget i byggguiden eller Computercat redan löser behovet, och en skriven motivering i commit-meddelandet.
 updated: "2026-10-14"
 ---
@@ -1171,15 +1279,16 @@ Spelen byggs som statisk export och deployas automatiskt vid varje push. Ett pak
 ## Så gör du
 
 1. Kontrollera `stack-valordning` och `get_integration_guide`.
-2. Välj ett välunderhållet paket utan installationsskript som behövs. Installationer körs alltid med `npm ci --ignore-scripts`.
-3. Installera med exakt version, kör `npm run check` och `npm audit --omit=dev --audit-level=high`.
+2. Välj ett välunderhållet paket som fungerar utan installationsskript: installationsskript körs aldrig, varken lokalt eller i Coolify (`npm ci --ignore-scripts`).
+3. Installera med `npm install --save-exact --ignore-scripts <paket>`, kör sedan `npm run check` och `npm audit --omit=dev --audit-level=high`.
 4. Skriv motiveringen i commit-meddelandet.
-5. Tredjeparts-analytics, spårning, reklam och externa typsnitt eller CDN-skript kräver Eriks beslut. Fråga i stället för att lägga till.
+5. Tredjeparts-analytics, spårning och reklam kräver Eriks beslut (spec delprojekt 3). Externa typsnitt och CDN-skript fungerar inte: bygget ska klara sig utan nätverk och använder inte `next/font/google`. Fråga i stället för att lägga till.
 
 ## Källa
 
 - resources/byggguide/v1/files/CLAUDE.md
 - resources/byggguide/v1/files/package.json
+- docs/superpowers/specs/2026-10-14-faktabank-design.md
 ```
 
 `resources/faktabank/stack/stack-ingen-egen-backend.md`:
@@ -1189,7 +1298,7 @@ Spelen byggs som statisk export och deployas automatiskt vid varje push. Ett pak
 id: stack-ingen-egen-backend
 title: Ingen egen backend
 topic: stack
-tags: [backend, server, databas, api, firebase, supabase]
+tags: [backend, server, databas, api, firebase, supabase, database]
 summary: Computercat är spelets enda backend. Bygg aldrig egna API-routes, databaser eller tjänster som Firebase eller Supabase.
 updated: "2026-10-14"
 ---
@@ -1221,7 +1330,7 @@ Spelet är en statisk export utan server. Computercat har inloggning, topplistor
 id: testing-vad-som-testas
 title: Vilka tester ett spel ska ha
 topic: testing
-tags: [tester, vitest, enhetstest, integrationstest, jsdom]
+tags: [tester, vitest, enhetstest, integrationstest, jsdom, testing]
 summary: Spellogik som enhetstester, Computercat-flöden med fakeFetch och ett jsdom-test från första drag till skickat resultat.
 updated: "2026-10-14"
 ---
@@ -1262,7 +1371,7 @@ Demo deployas automatiskt vid varje push till main. Testerna är det som hindrar
 id: security-hemligheter-i-klienten
 title: Inga hemligheter i klienten
 topic: security
-tags: [hemlighet, nyckel, api-nyckel, env, token]
+tags: [hemlighet, nyckel, nycklar, api-nyckel, env, token, secret]
 summary: Allt i spelet är publikt. Bara spelets slug och Computercats adress får ligga i NEXT_PUBLIC-variabler; nycklar hör aldrig hemma i spelrepot.
 updated: "2026-10-14"
 ---
@@ -1316,7 +1425,7 @@ Demo är skyddad med basic auth och syns inte för allmänheten. Live är ett be
 
 ## Så gör du
 
-- `demo.state` betyder: `awaiting_code` (ingen kod pushad än), `building`, `live`, `deploy_failed` (bygget föll; kör `npm run check` lokalt) och `deployed_not_answering`.
+- `demo.state` betyder: `awaiting_code` (ingen kod pushad än), `building`, `live`, `deploy_failed` (bygget föll; kör `npm run check` lokalt), `deployed_not_answering` och `unknown` (Coolify kunde inte läsas; försök igen och fråga en människa om det består).
 - Ett spel som inte ska finnas kvar arkiveras med `archive_game` (repot arkiveras, inget raderas).
 - Fråga en människa när något faller två gånger på samma sätt, i stället för att försöka igen i oändlighet.
 
@@ -1355,4 +1464,4 @@ git commit -m "Faktabanken: sex fröartiklar och innehållstest"
 - [ ] **Steg 1:** Fråga Erik (AskUserQuestion): merge till main, push (Forge deployar, `composer install` hämtar symfony/yaml som produktionsberoende), `queue:restart`, röktest. Ingen migration. Rollback: `git revert` och push.
 - [ ] **Steg 2:** Efter OK: `~/.claude/bin/wt-finish <worktree>`, kontrollera `git log origin/main..main` (bara grenens commits), `git push origin main`.
 - [ ] **Steg 3:** Vänta tills `current/app/Services/FactBank.php` finns på servern, kör `queue:restart`, kontrollera `curl -s -o /dev/null -w '%{http_code}' https://api.computercat.co/api/v1/games` → 200 och på servern `php8.4 artisan tinker --execute="echo count((new App\Services\FactBank)->all());"` → 6.
-- [ ] **Steg 4:** Kör en engångs-routine i molnmiljön Spelstudio med bara connectorn: "Använd search_facts för att ta reda på om du får lägga till ett npm-paket för animationer i ett Computercat-spel, läs artikeln med get_fact och svara med regeln och dess källor." Förväntat: routinen hittar `stack-nytt-beroende` och citerar regeln.
+- [ ] **Steg 4:** Kör en engångs-routine i molnmiljön Spelstudio med bara connectorn: "Can I add an npm package for animations to a Computercat game? Use search_facts (search in English first), read the article with get_fact and answer with the rule and its sources." Förväntat: routinen hittar `stack-nytt-beroende` och citerar regeln.
