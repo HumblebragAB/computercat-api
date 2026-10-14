@@ -146,4 +146,18 @@ class IntegrationGuideTest extends McpTestCase
 
         return $rows;
     }
+
+    // Spec 2c: spelets och topplistans slug går genom code(), även i kodblocken.
+    // Ett äldre spel kan ha en slug som aldrig validerats av GameSlug.
+    public function test_slugs_in_manual_cannot_break_out_of_code(): void
+    {
+        $game = $this->game('evil`slug|x');
+        $game->leaderboardTypes()->create(['slug' => 'lb`x', 'name' => 'Time', 'sort_direction' => 'asc', 'score_label' => 'ms', 'period' => 'daily', 'max_entries_per_period' => 100, 'is_active' => true]);
+
+        $manual = IntegrationGuide::manual($game, array_keys(IntegrationGuide::FEATURES));
+
+        $this->assertStringNotContainsString('evil`slug', $manual);
+        $this->assertStringNotContainsString('lb`x', $manual);
+        $this->assertStringContainsString("/games/evil'slug\\|x/leaderboards/lb'x", $manual);
+    }
 }

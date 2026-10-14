@@ -217,7 +217,7 @@ class IntegrationGuide
             $ex = $game->leaderboardTypes->first();
             $lines[] = '### Submit score';
             $lines[] = '```';
-            $lines[] = "POST {$baseUrl}/games/{$game->slug}/leaderboards/{$ex->slug}";
+            $lines[] = "POST {$baseUrl}/games/".self::code($game->slug).'/leaderboards/'.self::code($ex->slug);
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = 'Content-Type: application/json';
             $lines[] = '';
@@ -284,13 +284,13 @@ class IntegrationGuide
             }
             $lines[] = '### Get leaderboard';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/leaderboards/{$ex->slug}";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/leaderboards/'.self::code($ex->slug);
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '';
             $lines[] = '### Get my rank';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/leaderboards/{$ex->slug}/me";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/leaderboards/'.self::code($ex->slug).'/me';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '';
@@ -313,7 +313,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Report unlocks';
             $lines[] = '```';
-            $lines[] = "POST {$baseUrl}/games/{$game->slug}/achievements";
+            $lines[] = "POST {$baseUrl}/games/".self::code($game->slug).'/achievements';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = 'Content-Type: application/json';
             $lines[] = '';
@@ -323,7 +323,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get my achievements';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/achievements/me";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/achievements/me';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '';
@@ -344,7 +344,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Save';
             $lines[] = '```';
-            $lines[] = "PUT {$baseUrl}/games/{$game->slug}/saves/main";
+            $lines[] = "PUT {$baseUrl}/games/".self::code($game->slug).'/saves/main';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = 'Content-Type: application/json';
             $lines[] = '';
@@ -356,7 +356,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Load';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/saves/main";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/saves/main';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '';
@@ -376,7 +376,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get ownership';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/ownership";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/ownership';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Response:';
@@ -423,7 +423,7 @@ class IntegrationGuide
             $lines[] = '```js';
             $lines[] = 'await Purchases.restorePurchases();';
             $lines[] = '// Then re-fetch ownership from our server:';
-            $lines[] = "const ownership = await fetch('{$baseUrl}/games/{$game->slug}/ownership');";
+            $lines[] = "const ownership = await fetch('{$baseUrl}/games/".self::code($game->slug)."/ownership');";
             $lines[] = '```';
             $lines[] = '';
             $lines[] = '### Server-side (no client action needed)';
@@ -450,7 +450,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = "### Get today's content";
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/daily/{poolKey}";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/daily/{poolKey}';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Response:';
@@ -460,7 +460,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get content for a past date';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/daily/{poolKey}/{date}";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/daily/{poolKey}/{date}';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '- `date` format: `YYYY-MM-DD`. Only today and past dates are allowed.';
@@ -486,7 +486,7 @@ class IntegrationGuide
             $lines[] = '### Random items from a pool';
             $lines[] = 'For question banks and similar, where the player may see the whole pool. The pool must have **Random access** switched on, otherwise 404.';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/pools/{poolKey}/items?count=20";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/pools/{poolKey}/items?count=20';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Response:';
@@ -506,7 +506,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get streak';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/streaks/{key}";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/streaks/{key}';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Response:';
@@ -516,7 +516,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Record activity';
             $lines[] = '```';
-            $lines[] = "POST {$baseUrl}/games/{$game->slug}/streaks/{key}/record";
+            $lines[] = "POST {$baseUrl}/games/".self::code($game->slug).'/streaks/{key}/record';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Server logic:';
@@ -542,7 +542,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Fetch config';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/config";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/config';
             $lines[] = '```';
             $lines[] = 'Response:';
             $lines[] = '```json';
@@ -580,7 +580,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get my stats';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/stats/me";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/stats/me';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Response:';
@@ -601,7 +601,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### List active events';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/events";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/events';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = 'Returns only events where `now()` is between `starts_at` and `ends_at`.';
@@ -613,7 +613,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '### Get single event';
             $lines[] = '```';
-            $lines[] = "GET {$baseUrl}/games/{$game->slug}/events/{slug}";
+            $lines[] = "GET {$baseUrl}/games/".self::code($game->slug).'/events/{slug}';
             $lines[] = 'Authorization: Bearer <token>';
             $lines[] = '```';
             $lines[] = '';

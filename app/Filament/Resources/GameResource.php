@@ -98,7 +98,10 @@ class GameResource extends Resource
                         ->required()
                         ->maxLength(50)
                         ->unique(ignoreRecord: true)
-                        ->helperText('URL-friendly identifier (e.g., "tocco", "wordcraft")'),
+                        // Provisioneringens slugregel gäller bara nya spel; redigering
+                        // av ett befintligt spel (tocco, tells, glosis) blockeras aldrig.
+                        ->rule(new \App\Rules\GameSlug, fn (?Game $record) => $record === null)
+                        ->helperText('Nya spel: 3-40 tecken, gemener, siffror och enkla bindestreck (t.ex. "kattsvep"). Blir också reponamn och underdomän.'),
                     Forms\Components\TextInput::make('name')
                         ->required()
                         ->maxLength(100),
