@@ -10,12 +10,15 @@ use App\Provisioning\DemoMonitoring;
 use App\Provisioning\DemoProbe;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\SafeMessage;
+use App\Releases\DemoBuildRecorder;
 use App\Support\SlackAlert;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Throwable;
 
 /**
+ * Nattkontrollen skriver också Demo-kvitton (spärr 1) och bevakar släppen (checkReleases, Task 10).
+ *
  * Invarianten för provisioneringen (spec 2c): varje lyckad run har ett
  * oarkiverat repo, en Coolify-app spel-<slug> med basic auth i Demo-projektet,
  * en aktiv och övervakad SiteOps-sajt, och, när spelets Claude har pushat,
@@ -35,12 +38,15 @@ class CheckProvisioning extends Command
 
     private DemoMonitoring $monitoring;
 
-    public function handle(GitHubAppClient $github, CoolifyClient $coolify, SiteOpsClient $siteops, SlackAlert $slack, DemoMonitoring $monitoring): int
+    private DemoBuildRecorder $receipts;
+
+    public function handle(GitHubAppClient $github, CoolifyClient $coolify, SiteOpsClient $siteops, SlackAlert $slack, DemoMonitoring $monitoring, DemoBuildRecorder $receipts): int
     {
         // Kommandoinstansen återanvänds inom en process (Artisan::call, tester):
         // avvikelser från en tidigare körning får inte följa med.
         $this->deviations = [];
         $this->monitoring = $monitoring;
+        $this->receipts = $receipts;
 
         $missing = ProvisioningConfig::missing();
         if ($missing !== []) {
@@ -137,6 +143,13 @@ class CheckProvisioning extends Command
         });
 
         $this->checkDeployment($key, $run, $coolify);
+
+        // Spärr 1: nattkontrollen är det tredje stället som skriver Demo-kvitton (skrivs också med --dry-run, det är lokalt).
+        $this->check("{$key}:receipts", "Demo-kvitton för {$run->slug}", function () use ($run) {
+            $this->receipts->recordForRun($run);
+
+            return null;
+        });
     }
 
     // Repot är redo för kod efter sagan; första bygget kommer från spelets push.

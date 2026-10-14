@@ -148,7 +148,7 @@ final class ProvisioningFakes
      * GET /deployments/applications/{uuid}?skip=&take= (spike S22): Application::deployments()
      * svarar {count, deployments}, nyast först. Varje post är en ApplicationDeploymentQueue.
      *
-     * @param  list<array{0: string, 1: string, 2?: string}>  $deployments  [deployment_uuid, status, created_at]
+     * @param  list<array{0: string, 1: string, 2?: string, 3?: string}>  $deployments  [deployment_uuid, status, created_at, commit]
      */
     public static function coolifyDeployments(array $deployments): array
     {
@@ -158,7 +158,7 @@ final class ProvisioningFakes
                 'deployment_uuid' => $d[0],
                 'status' => $d[1],
                 'created_at' => $d[2] ?? '2026-10-14T08:00:00.000000Z',
-                'commit' => 'abc123',
+                'commit' => $d[3] ?? str_repeat('a', 40),
                 'logs' => 'Building... token=hemligt',
             ], $deployments),
         ];

@@ -11,6 +11,7 @@ use App\Provisioning\DemoMonitoring;
 use App\Provisioning\DemoProbe;
 use App\Provisioning\Http\Redactor;
 use App\Provisioning\SafeMessage;
+use App\Releases\DemoBuildRecorder;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -132,6 +133,15 @@ class GetProvisioningStatusTool extends GameTool
             $result['monitoring_error'] = $e instanceof SafeMessage ? Redactor::limit(Redactor::scrubSecrets($e->getMessage())) : "Could not enable SiteOps monitoring (ref {$ref}).";
         }
         $result['monitoring'] = $run->fresh()->monitoring_enabled_at === null ? 'pending' : 'enabled';
+
+        // Spärr 1: lyckade byggen sparas som kvitton. Ett fel här ändrar inte Demo-läget, men döljs inte.
+        try {
+            app(DemoBuildRecorder::class)->recordForRun($run);
+        } catch (\Throwable $e) {
+            $ref = (string) Str::uuid();
+            Log::warning('get_provisioning_status kunde inte skriva Demo-kvitton', ['ref' => $ref, 'run' => $run->uuid, 'exception' => $e]);
+            $result['receipts_error'] = $e instanceof SafeMessage ? 'Could not record Demo build receipts: '.Redactor::limit(Redactor::scrubSecrets($e->getMessage())) : "Could not record Demo build receipts (ref {$ref}).";
+        }
 
         return $result;
     }

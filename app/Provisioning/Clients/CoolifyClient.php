@@ -171,6 +171,61 @@ class CoolifyClient
         ];
     }
 
+    /**
+     * De senaste byggena, nyast först, med commit (S26-S28 i bilaga A). Samma spärr som
+     * latestDeployment. Bara finished-byggen formkontrolleras fullt ut; commit är string eller null.
+     * Coolifys lista visar bara de senaste byggena (S29), därför sparas kvitton.
+     *
+     * @return list<array{deployment_uuid: string, status: string, created_at: string, commit: ?string}>
+     */
+    public function recentDeployments(string $uuid, int $take = 10): array
+    {
+        $this->assertKnown($uuid);
+        $path = '/deployments/applications/'.$uuid.'?'.http_build_query(['skip' => 0, 'take' => max(1, min($take, 100))]);
+        $deployments = $this->coolify('GET', $path)->json('deployments');
+        if (! is_array($deployments) || ! array_is_list($deployments)) {
+            throw new ExternalApiException('Coolify', 'GET', $path, 200, 'response lacks deployments[] (expected a list)');
+        }
+
+        $out = [];
+        foreach ($deployments as $deployment) {
+            if (! is_array($deployment)) {
+                throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment entry is not an object');
+            }
+            $status = $deployment['status'] ?? null;
+            if (! is_string($status)) {
+                throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment status is not a string');
+            }
+
+            // Bara byggen som kan bli kvitton (finished) valideras fullt ut. En okänd status eller ett
+            // konstigt format på ett pågående eller misslyckat bygge får inte fälla läsningen av resten (S28 listar de status som setts).
+            if ($status !== 'finished') {
+                $out[] = [
+                    'deployment_uuid' => is_string($deployment['deployment_uuid'] ?? null) ? $deployment['deployment_uuid'] : '',
+                    'status' => $status,
+                    'created_at' => is_string($deployment['created_at'] ?? null) ? $deployment['created_at'] : '',
+                    'commit' => null,
+                ];
+
+                continue;
+            }
+
+            foreach (['deployment_uuid', 'created_at'] as $field) {
+                if (! is_string($deployment[$field] ?? null) || $deployment[$field] === '') {
+                    throw new ExternalApiException('Coolify', 'GET', $path, 200, "deployment lacks {$field}");
+                }
+            }
+            $commit = $deployment['commit'] ?? null;
+            if ($commit !== null && ! is_string($commit)) {
+                throw new ExternalApiException('Coolify', 'GET', $path, 200, 'deployment commit is not a string');
+            }
+
+            $out[] = ['deployment_uuid' => $deployment['deployment_uuid'], 'status' => $status, 'created_at' => $deployment['created_at'], 'commit' => $commit];
+        }
+
+        return $out;
+    }
+
     // Asynkron i Coolify (DeleteResourceJob); standardvärdena på query-flaggorna (alla true) används.
     public function deleteApplication(string $uuid): void
     {

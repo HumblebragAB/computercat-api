@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Console;
 
+use App\Models\DemoBuild;
+use App\Models\Game;
 use App\Models\ProvisioningRun;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Http;
@@ -187,6 +189,16 @@ class CheckProvisioningTest extends ProvisioningTestCase
 
         $this->artisan('computercat:check-provisioning')->expectsOutputToContain('COOLIFY_TOKEN')->assertExitCode(1);
         Http::assertNothingSent();
+    }
+
+    public function test_nightly_check_records_demo_receipts(): void
+    {
+        $this->run->update(['game_id' => Game::create(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'is_active' => true, 'settings' => []])->id]);
+        $this->fakeHealthy();
+
+        $this->artisan('computercat:check-provisioning')->expectsOutput('0 avvikelse(r).')->assertExitCode(0);
+
+        $this->assertSame([str_repeat('a', 40)], DemoBuild::pluck('commit_sha')->all());
     }
 
     public function test_is_scheduled_nightly(): void

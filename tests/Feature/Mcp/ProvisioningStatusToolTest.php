@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mcp;
 
+use App\Models\DemoBuild;
 use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\ProvisioningRun;
@@ -114,6 +115,38 @@ class ProvisioningStatusToolTest extends McpTestCase
         $again = $this->callTool($this->staffMember(Game::where('slug', 'kattsvep')->firstOrFail()), 'get_provisioning_status', ['game' => 'kattsvep']);
         $this->assertSame('enabled', json_decode($again['text'], true)['demo']['monitoring']);
         $this->assertCount(1, Http::recorded(fn ($r) => $r->method() === 'PATCH'));
+    }
+
+    // Spärr 1: statusanropet skriver kvittot, utan att ändra svaret.
+    public function test_status_call_records_a_demo_receipt_for_a_finished_build(): void
+    {
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'finished', '2026-10-14T08:00:00.000000Z', str_repeat('c', 40)]])),
+            'https://kattsvep.apps.humblebrag.se' => Http::response('<html></html>'),
+            'siteops.test/api/v1/sites/42/environments/7' => Http::response(ProvisioningFakes::siteopsEnvironmentUpdated(42, 'https://kattsvep.apps.humblebrag.se')),
+            'siteops.test/api/v1/sites/42/environments' => Http::response(ProvisioningFakes::siteopsEnvironments('https://kattsvep.apps.humblebrag.se', monitored: false)),
+        ]);
+
+        $this->assertSame('live', $demo['state']);
+        $this->assertArrayNotHasKey('receipts_error', $demo);
+        $this->assertSame([str_repeat('c', 40)], DemoBuild::pluck('commit_sha')->all());
+    }
+
+    public function test_receipt_failure_is_shown_but_does_not_break_the_status(): void
+    {
+        $calls = 0;
+        $demo = $this->demoFor([
+            'coolify.test/api/v1/deployments/applications/app-1*' => function () use (&$calls) {
+                // Första anropet är latestDeployment, andra är recentDeployments.
+                return ++$calls === 1
+                    ? Http::response(ProvisioningFakes::coolifyDeployments([['dep-1', 'failed']]))
+                    : Http::response(['message' => 'boom'], 500);
+            },
+            'https://kattsvep.apps.humblebrag.se' => Http::response('Bad Gateway', 502),
+        ]);
+
+        $this->assertSame('deploy_failed', $demo['state']);
+        $this->assertStringContainsString('Could not record Demo build receipts', $demo['receipts_error']);
     }
 
     public function test_failed_build_is_reported_with_the_demo_status(): void
