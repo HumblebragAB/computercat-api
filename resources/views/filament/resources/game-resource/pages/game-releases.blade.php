@@ -56,10 +56,13 @@
                             <div class="text-xs">{{ $release->last_error }}</div>
                         @endif
                     </div>
-                    @if ($release->status === 'awaiting_approval')
+                    @if (in_array($release->status, ['requested', 'awaiting_approval'], true))
                         <div class="flex gap-2">
-                            <x-filament::button size="sm" wire:click="approve({{ $release->id }})" wire:confirm="Godkänn commit {{ $release->commit_sha }} till {{ $release->stage }}?">Godkänn</x-filament::button>
-                            <x-filament::button size="sm" color="gray" wire:click="reject({{ $release->id }})" wire:confirm="Avslå släppet?">Avslå</x-filament::button>
+                            @if ($release->status === 'awaiting_approval')
+                                <x-filament::button size="sm" wire:click="approve({{ $release->id }})" wire:confirm="Godkänn commit {{ $release->commit_sha }} till {{ $release->stage }}?">Godkänn</x-filament::button>
+                                <x-filament::button size="sm" color="gray" wire:click="reject({{ $release->id }})" wire:confirm="Avslå släppet?">Avslå</x-filament::button>
+                            @endif
+                            <x-filament::button size="sm" color="danger" wire:click="cancel({{ $release->id }})" wire:confirm="Avbryt släppet?">Avbryt</x-filament::button>
                         </div>
                     @endif
                 </div>

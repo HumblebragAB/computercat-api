@@ -92,8 +92,28 @@ class GameReleases extends Page
             return;
         }
 
-        Log::notice('Släpp avslaget', ['release_uuid' => $release->uuid, 'admin_id' => $admin->id]);
         Notification::make()->success()->title('Släppet är avslaget.')->send();
+    }
+
+    public function cancel(int $releaseId): void
+    {
+        $admin = $this->admin();
+        $release = $this->getRecord()->releases()->whereKey($releaseId)->first();
+        if ($release === null) {
+            Notification::make()->danger()->title('Okänt släpp för det här spelet.')->send();
+
+            return;
+        }
+
+        try {
+            app(ReleaseService::class)->cancel($release, $admin);
+        } catch (ReleaseRefused $e) {
+            Notification::make()->danger()->title($e->getMessage())->send();
+
+            return;
+        }
+
+        Notification::make()->success()->title('Släppet är avbrutet.')->send();
     }
 
     public function markStepDone(int $stepId): void

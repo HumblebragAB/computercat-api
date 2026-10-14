@@ -13,6 +13,7 @@ use App\Provisioning\DemoProbe;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\SafeMessage;
 use App\Releases\DemoBuildRecorder;
+use App\Releases\SetupSteps;
 use App\Support\SlackAlert;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
@@ -129,6 +130,11 @@ class CheckProvisioning extends Command
             $reminderCutoff = now()->subDays((int) config('releases.setup_reminder_days'));
             $open = ReleaseSetupStep::with('game')->where('status', ReleaseSetupStep::OPEN)->where('created_at', '<', $reminderCutoff)->orderBy('id')->get();
             foreach ($open->groupBy(fn (ReleaseSetupStep $s) => $s->game_id.':'.$s->target) as $steps) {
+                // Steg som Computercat själv stänger (etapp 2) kan Erik inte agera på: aldrig påminnelse.
+                $steps = $steps->reject(fn (ReleaseSetupStep $s) => in_array($s->key, SetupSteps::AUTOMATIC, true));
+                if ($steps->isEmpty()) {
+                    continue;
+                }
                 $game = $steps->first()->game;
                 $target = $steps->first()->target;
                 // Arkiverade spel och steg för ett mål som tagits bort ska inte påminna.

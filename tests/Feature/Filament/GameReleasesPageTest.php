@@ -130,6 +130,49 @@ class GameReleasesPageTest extends TestCase
         $this->assertSame(Release::CANCELLED, $release->fresh()->status);
     }
 
+    public function test_admin_cancels_a_requested_release_and_it_is_logged(): void
+    {
+        $admin = $this->adminUser();
+        $release = $this->release($this->game, ['status' => Release::REQUESTED]);
+        Log::spy();
+
+        $this->page($admin)->call('cancel', $release->id);
+
+        $fresh = $release->fresh();
+        $this->assertSame(Release::CANCELLED, $fresh->status);
+        $this->assertSame('Avbrutet av en platform admin.', $fresh->last_error);
+        Log::shouldHaveReceived('notice')->with('Släpp avbrutet', ['release_uuid' => $release->uuid, 'admin_id' => $admin->id])->once();
+    }
+
+    public function test_non_admin_cannot_cancel(): void
+    {
+        $staff = User::factory()->staff()->create();
+        $release = $this->release($this->game, ['status' => Release::REQUESTED]);
+        $this->actingAs($staff);
+
+        Livewire::test(GameReleases::class, ['record' => $this->game->getKey()])->assertForbidden();
+        $this->assertSame(Release::REQUESTED, $release->fresh()->status);
+    }
+
+    public function test_release_of_another_game_cannot_be_cancelled_from_this_page(): void
+    {
+        $other = $this->releasableGame('ordjakt', ['web']);
+        $foreign = $this->release($other, ['status' => Release::REQUESTED]);
+
+        $this->page($this->adminUser())->call('cancel', $foreign->id);
+
+        $this->assertSame(Release::REQUESTED, $foreign->fresh()->status);
+    }
+
+    public function test_a_building_release_cannot_be_cancelled(): void
+    {
+        $release = $this->release($this->game, ['status' => Release::BUILDING]);
+
+        $this->page($this->adminUser())->call('cancel', $release->id);
+
+        $this->assertSame(Release::BUILDING, $release->fresh()->status);
+    }
+
     public function test_admin_marks_a_step_done_but_only_for_this_game(): void
     {
         $admin = $this->adminUser();

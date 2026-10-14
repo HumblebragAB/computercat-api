@@ -92,9 +92,27 @@ final class ReleaseService
         $this->assertAdmin($admin);
         Release::expireStale();
 
-        return DB::transaction(function () use ($release) {
+        return DB::transaction(function () use ($release, $admin) {
             $locked = $this->lockedAwaiting($release);
             $locked->update(['status' => Release::CANCELLED, 'last_error' => 'Rejected by a platform admin.']);
+            Log::notice('Släpp avslaget', ['release_uuid' => $locked->uuid, 'admin_id' => $admin->id]);
+
+            return $locked;
+        });
+    }
+
+    /** Avbryter ett släpp som inte börjat byggas (requested eller awaiting_approval). @throws ReleaseRefused */
+    public function cancel(Release $release, User $admin): Release
+    {
+        $this->assertAdmin($admin);
+
+        return DB::transaction(function () use ($release, $admin) {
+            $locked = Release::whereKey($release->getKey())->lockForUpdate()->firstOrFail();
+            if (! in_array($locked->status, [Release::REQUESTED, Release::AWAITING_APPROVAL], true)) {
+                throw new ReleaseRefused("Release is {$locked->status}; only a requested or awaiting_approval release can be cancelled.");
+            }
+            $locked->update(['status' => Release::CANCELLED, 'last_error' => 'Avbrutet av en platform admin.']);
+            Log::notice('Släpp avbrutet', ['release_uuid' => $locked->uuid, 'admin_id' => $admin->id]);
 
             return $locked;
         });
@@ -128,7 +146,7 @@ final class ReleaseService
     private function assertAdmin(User $user): void
     {
         if (! $user->isPlatformAdmin()) {
-            throw new ReleaseRefused('Only a platform admin can approve or reject a release.');
+            throw new ReleaseRefused('Only a platform admin can approve, reject or cancel a release.');
         }
     }
 

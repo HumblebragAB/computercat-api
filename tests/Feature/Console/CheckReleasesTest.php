@@ -71,6 +71,17 @@ class CheckReleasesTest extends ProvisioningTestCase
         $this->assertCount(1, Http::recorded(fn ($r) => $r->url() === ProvisioningFakes::SLACK));
     }
 
+    public function test_automatic_steps_never_remind_but_manual_steps_do(): void
+    {
+        $game = $this->releasableGame('kattsvep', ['app_store']);
+        ReleaseSetupStep::where('game_id', $game->id)->update(['status' => 'done']);
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_bundle_id')->update(['status' => 'open', 'created_at' => now()->subDays(10)]);
+        $this->artisan('computercat:check-provisioning')->expectsOutput('0 avvikelse(r).')->assertExitCode(0);
+
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->update(['status' => 'open', 'created_at' => now()->subDays(10)]);
+        $this->artisan('computercat:check-provisioning')->expectsOutputToContain('appstore_create_app')->assertExitCode(1);
+    }
+
     public function test_recent_open_steps_and_steps_of_removed_targets_are_ignored(): void
     {
         $game = $this->releasableGame('kattsvep', ['app_store']);
