@@ -24,6 +24,23 @@ class ReleaseFactbankSyncTest extends TestCase
         return implode("\n", $this->processArticles());
     }
 
+    // Varje artikel listar sina tillstånd/steg som rader "- `nyckel`: text". Raderna parsas
+    // och jämförs hela, så att en förkortad mall, ett saknat eller omdöpt tillstånd, eller en
+    // text under fel nyckel fäller testet. Dubbletter fäller också.
+    private function bulletLines(string $file): array
+    {
+        $text = (string) file_get_contents(resource_path("faktabank/process/{$file}"));
+        preg_match_all('/^- `([a-z_]+)`: (.*)$/m', $text, $m, PREG_SET_ORDER);
+
+        $lines = [];
+        foreach ($m as $row) {
+            $this->assertArrayNotHasKey($row[1], $lines, "{$file}: nyckeln {$row[1]} står på flera rader.");
+            $lines[$row[1]] = $row[2];
+        }
+
+        return $lines;
+    }
+
     public function test_the_two_release_articles_exist(): void
     {
         $articles = $this->processArticles();
@@ -32,25 +49,30 @@ class ReleaseFactbankSyncTest extends TestCase
         $this->assertArrayHasKey('process-slapp-engangssteg.md', $articles);
     }
 
-    public function test_every_next_state_and_its_exact_text_is_in_the_articles(): void
+    public function test_next_states_match_the_article_line_by_line(): void
     {
-        $text = $this->allText();
+        $lines = $this->bulletLines('process-slappflode.md');
 
+        $this->assertEqualsCanonicalizing(array_keys(ReleaseNext::TEMPLATES), array_keys($lines), 'Tillstånden i artikeln och ReleaseNext::TEMPLATES skiljer sig.');
         foreach (ReleaseNext::TEMPLATES as $state => $template) {
-            $this->assertStringContainsString("`{$state}`", $text, "Artikeln saknar tillståndet {$state}.");
-            $this->assertStringContainsString($template, $text, "Artikelns text för {$state} skiljer sig från ReleaseNext.");
+            $this->assertSame($template, $lines[$state], "Artikelns rad för {$state} skiljer sig från ReleaseNext::TEMPLATES.");
         }
     }
 
-    public function test_every_setup_step_and_its_instruction_is_in_the_articles(): void
+    public function test_setup_steps_match_the_article_line_by_line(): void
     {
-        $text = $this->allText();
+        $lines = $this->bulletLines('process-slapp-engangssteg.md');
 
-        foreach (SetupSteps::DEFINITIONS as $target => $steps) {
-            foreach ($steps as $key => $instruction) {
-                $this->assertStringContainsString("`{$key}`", $text, "Artikeln saknar engångssteget {$key} ({$target}).");
-                $this->assertStringContainsString($instruction, $text, "Artikelns text för {$key} skiljer sig från SetupSteps.");
+        $steps = [];
+        foreach (SetupSteps::DEFINITIONS as $target => $definitions) {
+            foreach ($definitions as $key => $instruction) {
+                $steps[$key] = $instruction;
             }
+        }
+
+        $this->assertEqualsCanonicalizing(array_keys($steps), array_keys($lines), 'Engångsstegen i artikeln och SetupSteps::DEFINITIONS skiljer sig.');
+        foreach ($steps as $key => $instruction) {
+            $this->assertSame($instruction, $lines[$key], "Artikelns rad för {$key} skiljer sig från SetupSteps::DEFINITIONS.");
         }
     }
 

@@ -2,7 +2,7 @@
 id: process-slappflode
 title: Släppflödet från Demo till telefon och produktion
 topic: process
-tags: [process, slapp, release, promote_release, get_release_status, testflight, produktion, godkannande]
+tags: [process, slapp, release, promote_release, get_release_status, testflight, produktion, godkännande]
 summary: get_release_status säger vad som gäller och vad nästa steg är. promote_release befordrar en exakt commit; första produktionssläppet per mål godkänns av Erik i Filament.
 updated: "2026-10-14"
 ---
@@ -38,7 +38,7 @@ Tillstånden i `get_release_status` och vad `next` säger i varje (texten är or
 - `failed`: Släppet {release} av commit {commit} misslyckades: {error} Åtgärda orsaken och begär ett nytt släpp med promote_release(target: {target}, stage: {stage}).
 - `cancelled`: Släppet {release} av commit {commit} avbröts. Begär ett nytt med promote_release(target: {target}, stage: {stage}).
 
-Ett släpp som ingen rört på sju dygn avbryts av sig självt. Fråga en människa när något fastnar i stället för att försöka igen i oändlighet.
+Ett släpp som väntar på godkännande eller byggstart i sju dygn avbryts av sig självt. Fråga en människa när något fastnar i stället för att försöka igen i oändlighet.
 
 ## Källa
 

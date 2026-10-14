@@ -2,7 +2,7 @@
 id: process-slapp-engangssteg
 title: Engångssteg före första släpp till en butik eller domän
 topic: process
-tags: [process, engangssteg, appstore, play, domän, bundle-id, release]
+tags: [process, engångssteg, appstore, play, domän, bundle-id, release]
 summary: Varje produktionsmål har engångssteg som Erik eller Computercat gör en gång per spel. Öppna steg stoppar befordran till målet.
 updated: "2026-10-14"
 ---
@@ -28,7 +28,6 @@ Stegen per mål och deras text (ordagrant som i `get_release_status`):
 - `play_create_app`: Erik skapar appen i Play Console med spelets paketnamn.
 - `play_store_listing`: Erik fyller i innehållsklassning, dataskydd, målgrupp och butikstext i Play Console.
 - `play_app_signing`: Erik aktiverar Play App Signing för appen i Play Console.
-
 
 ## Källa
 
