@@ -97,7 +97,7 @@ class BuildGuideCommandsTest extends TestCase
         }
 
         $this->assertNotEmpty($environments);
-        $allowed = [...VerifyBuildGuide::INHERITED_ENV, 'NEXT_TELEMETRY_DISABLED', 'NEXT_PUBLIC_COMPUTERCAT_GAME'];
+        $allowed = [...VerifyBuildGuide::INHERITED_ENV, 'HOME', 'NEXT_TELEMETRY_DISABLED', 'NEXT_PUBLIC_COMPUTERCAT_GAME'];
         foreach ($environments as $env) {
             $kept = array_keys(array_filter($env, fn ($value) => $value !== false));
             $this->assertSame([], array_values(array_diff($kept, $allowed)), 'ärvda variabler som inte är tillåtna');
@@ -113,5 +113,26 @@ class BuildGuideCommandsTest extends TestCase
         }
         // Installationsskript körs inte under verifieringen.
         $this->assertSame('npm ci --ignore-scripts', $commands[0]);
+    }
+
+    // HOME pekar på en ny tillfällig katalog: npm och paketen når aldrig
+    // ~/.npmrc, ~/.ssh eller annat i den riktiga hemkatalogen.
+    public function test_verify_runs_with_a_temporary_home_that_is_removed(): void
+    {
+        $homes = [];
+        Process::fake(function (PendingProcess $process) use (&$homes) {
+            $homes[] = $process->environment['HOME'] ?? null;
+            $this->assertDirectoryExists($process->environment['HOME']);
+
+            return Process::result();
+        });
+
+        $this->artisan('computercat:byggguide:verify v1')->assertExitCode(0);
+
+        $this->assertCount(1, array_unique($homes));
+        $this->assertNotSame(getenv('HOME'), $homes[0]);
+        $this->assertStringStartsWith(sys_get_temp_dir().'/byggguide-home-', $homes[0]);
+        $this->assertDirectoryDoesNotExist($homes[0]);
+        $this->assertNotContains('HOME', VerifyBuildGuide::INHERITED_ENV);
     }
 }

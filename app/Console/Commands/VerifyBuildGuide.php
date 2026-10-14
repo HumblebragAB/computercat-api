@@ -18,7 +18,8 @@ class VerifyBuildGuide extends Command
 
     // Det enda som ärvs från computercat-api:s miljö. npm ci kör kod från
     // hundratals paket; APP_KEY, Forge-, Coolify- och GitHub-tokens får de aldrig se.
-    public const INHERITED_ENV = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'npm_config_cache', 'NPM_CONFIG_CACHE'];
+    // HOME ärvs inte: kommandot sätter en egen tillfällig hemkatalog.
+    public const INHERITED_ENV = ['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'npm_config_cache', 'NPM_CONFIG_CACHE'];
 
     protected $signature = 'computercat:byggguide:verify {version? : Standard: senaste versionen} {--keep : Behåll den tillfälliga katalogen}';
 
@@ -43,6 +44,9 @@ class VerifyBuildGuide extends Command
 
         $dir = sys_get_temp_dir().'/byggguide-verify-'.Str::lower(Str::random(12));
         mkdir($dir, 0700);
+        // Egen HOME: npm och paketen når aldrig ~/.npmrc, ~/.ssh eller annat i den riktiga.
+        $home = sys_get_temp_dir().'/byggguide-home-'.Str::lower(Str::random(12));
+        mkdir($home, 0700);
 
         try {
             foreach ($manifest['files'] as $entry) {
@@ -60,7 +64,7 @@ class VerifyBuildGuide extends Command
             }
             file_put_contents($dir.'/README.md', BuildGuide::readme($version, 'Byggguide-verifiering'));
 
-            $env = self::environment(['NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG]);
+            $env = self::environment(['HOME' => $home, 'NEXT_TELEMETRY_DISABLED' => '1', 'NEXT_PUBLIC_COMPUTERCAT_GAME' => self::SLUG]);
             // Manifestets install är npm ci --ignore-scripts (BuildGuideTest vaktar):
             // installationsskript körs aldrig, varken här, i spelet eller i Demo-bygget.
             foreach ([$manifest['commands']['install'], ...array_column($manifest['required_checks'], 'command')] as $command) {
@@ -77,6 +81,8 @@ class VerifyBuildGuide extends Command
 
             return self::SUCCESS;
         } finally {
+            // Bara hemkatalogen som skapades ovan, även med --keep.
+            File::deleteDirectory($home);
             if ($this->option('keep')) {
                 $this->line("Katalogen behålls: {$dir}");
             } else {
