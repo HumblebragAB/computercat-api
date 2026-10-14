@@ -31,10 +31,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // lägger CSRF-kontroll på anrop från den egna domänen. Den slumpade
         // token i adressen är behörigheten; en CSRF-token tillför inget.
         //
-        // Glosis fotoskanning och studioröst: Capacitor på Android har origin https://localhost,
-        // som Sanctum räknar som "stateful" och då kräver CSRF. Anropet har
-        // ingen session; köpbeviset i anropet är behörigheten. Samma sak för
-        // gratisnivåns App Attest-endpoints, där Apples intyg är behörigheten.
+        // Glosis fotoskanning och studioröst: Capacitor på Android har origin https://localhost.
+        // Sanctums standard räknar den inte längre som "stateful" (config/sanctum.php), men
+        // undantagen står kvar som försvar om SANCTUM_STATEFUL_DOMAINS någon gång tar med
+        // localhost. Anropet har ingen session; köpbeviset i anropet är behörigheten. Samma
+        // sak för gratisnivåns App Attest-endpoints, där Apples intyg är behörigheten.
         $middleware->validateCsrfTokens(except: [
             'api/v1/interest/*/unsubscribe', 'api/v1/games/glosis/scan', 'api/v1/games/glosis/tts/prepare',
             'api/v1/games/glosis/attest/challenge', 'api/v1/games/glosis/attest/register',

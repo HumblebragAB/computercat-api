@@ -2887,7 +2887,15 @@ Förväntat: `["v2",["v1","v2"]]` och `cc-gate.mjs: OK`. `AVVIKER` eller fel: st
 
 - [ ] **Steg 2: Kommandot i prod.** Skriv `$SCRATCH/tinker/cmd.php` med `echo App\Services\BuildGuide::coolifyBuildCommand('v2').PHP_EOL;` och kör `prodtinker $SCRATCH/tinker/cmd.php`. Förväntat exakt: `npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v2/files/scripts/cc-gate.mjs -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs`.
 
-- [ ] **Steg 3: Första v2-spelet.** Fråga Erik (AskUserQuestion) hur det första v2-bygget verifieras: (a) nästa riktiga spel är acceptansen, och jag följer dess första bygge med `get_provisioning_status` och byggloggens `check-security:`/`cc-audit:`-rader; (b) ett engångsspel via `create_game` nu, byggt av en routine, arkiverat med `archive_game` efteråt; (c) vänta. Mattias informeras först när ett v2-bygge varit `finished` med båda `OK`-raderna och Erik sagt till.
+- [ ] **Steg 2b: Sanctum i prod (localhost:3000 gav 419 före rättningen).** Bara läsande anrop utan sidoeffekt (ingen token, inget skapas):
+
+```bash
+for o in http://localhost:3000 https://api.computercat.co; do printf '%s → ' $o; curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Accept: application/json' -H "Origin: $o" -H "Referer: $o/" https://api.computercat.co/api/v1/auth/refresh; done
+```
+
+Förväntat: `http://localhost:3000 → 401` (inte längre stateful) och `https://api.computercat.co → 419` (API:ts egen värd är fortfarande stateful). Ger localhost:3000 fortfarande `419` sätter prod-`.env` troligen `SANCTUM_STATEFUL_DOMAINS`: stanna och fråga Erik innan `.env` läses eller ändras (hemlighetsfil).
+
+- [ ] **Steg 3: Första v2-spelet.** Fråga Erik (AskUserQuestion) hur det första v2-bygget verifieras: (a) nästa riktiga spel är acceptansen, och jag följer dess första bygge med `get_provisioning_status` och byggloggens `check-security:`/`cc-audit:`-rader; (b) ett engångsspel via `create_game` nu, byggt av en routine, arkiverat med `archive_game` efteråt; (c) vänta. Mattias informeras först när ett v2-bygge varit `finished` med båda `OK`-raderna och Erik sagt till. Känd orsak till `failed` från deploy: ett nytt high-fynd i next, react eller zustand fäller varje nytt v2-bygge (avsiktligt enligt specen); `search_facts` och en uppdatering av byggguiden är vägen.
 
 ---
 
