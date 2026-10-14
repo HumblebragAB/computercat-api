@@ -32,5 +32,20 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <env name="GITHUB_APP_CLIENT_ID" value=""/>
+        <env name="GITHUB_APP_INSTALLATION_ID" value=""/>
+        <env name="GITHUB_APP_PRIVATE_KEY_PATH" value=""/>
+        <env name="GITHUB_OWNER" value=""/>
+        <env name="COOLIFY_URL" value=""/>
+        <env name="COOLIFY_TOKEN" value=""/>
+        <env name="COOLIFY_PROJECT_UUID" value=""/>
+        <env name="COOLIFY_SERVER_UUID" value=""/>
+        <env name="COOLIFY_GITHUB_APP_UUID" value=""/>
+        <env name="SITEOPS_URL" value=""/>
+        <env name="SITEOPS_API_KEY" value=""/>
+        <env name="DEMO_BASIC_AUTH_USER" value=""/>
+        <env name="DEMO_BASIC_AUTH_PASSWORD" value=""/>
+        <env name="SLACK_ALERT_WEBHOOK_URL" value=""/>
+        <env name="PROVISIONING_RESERVED_SUBDOMAINS" value=""/>
     </php>
 </phpunit>

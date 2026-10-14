@@ -14,6 +14,7 @@
         "laravel/passport": "^13",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.10.1",
+        "lcobucci/jwt": "^5.6",
         "symfony/http-client": "^8.1",
         "symfony/mailgun-mailer": "^8.1"
     },
