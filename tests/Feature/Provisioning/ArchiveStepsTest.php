@@ -44,6 +44,7 @@ class ArchiveStepsTest extends ProvisioningTestCase
         Http::fake([
             self::PROJECT_URL => Http::sequence()
                 ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')]))
+                ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])) // stegets egen kontroll
                 ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')]))
                 ->push(ProvisioningFakes::coolifyProject([])),
             'coolify.test/api/v1/applications/app-1' => Http::response(ProvisioningFakes::coolifyDeleteQueued()),
@@ -79,19 +80,18 @@ class ArchiveStepsTest extends ProvisioningTestCase
         $this->assertCount(2, Http::recorded(fn ($r) => $r->method() === 'DELETE'));
     }
 
-    public function test_guard_failure_stops_archive_without_delete(): void
+    // Appen är redan borta ur Demo-projektet: inget DELETE (spärren skulle annars
+    // vägra uuid:t och arkiveringen fastna i failed).
+    public function test_app_already_gone_from_demo_project_is_skipped_without_delete(): void
     {
-        Queue::fake();
         Http::fake([
             self::PROJECT_URL => Http::response(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-9', 'annan-app')])),
-            ProvisioningFakes::SLACK => Http::response('ok'),
         ]);
-        Saga::start($this->archive);
 
-        (new AdvanceProvisioningRun($this->archive->id))->withFakeQueueInteractions()->handle(app(SlackAlert::class));
+        $result = $this->runStep(CoolifyDeleteStep::class, $this->archive, 'coolify_delete');
 
-        $this->assertSame(ProvisioningRun::FAILED, $this->archive->fresh()->status);
-        $this->assertStringContainsString('is not in the Demo project', $this->archive->fresh()->last_error);
+        $this->assertSame(StepResult::DONE, $result->outcome);
+        $this->assertSame('already gone', $result->detail['skipped']);
         Http::assertNotSent(fn ($r) => $r->method() === 'DELETE');
     }
 
@@ -154,6 +154,7 @@ class ArchiveStepsTest extends ProvisioningTestCase
         Http::fake([
             self::PROJECT_URL => Http::sequence()
                 ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')]))
+                ->push(ProvisioningFakes::coolifyProject([ProvisioningFakes::coolifyApp('app-1', 'spel-kattsvep')])) // stegets egen kontroll
                 ->push(ProvisioningFakes::coolifyProject([])),
             'coolify.test/api/v1/applications/app-1' => Http::response(ProvisioningFakes::coolifyDeleteQueued()),
             'siteops.test/api/v1/sites/42/deactivate' => Http::response(ProvisioningFakes::siteopsDeactivated(42)),
@@ -169,5 +170,64 @@ class ArchiveStepsTest extends ProvisioningTestCase
         $this->assertSame(ProvisioningRun::SUCCEEDED, $this->archive->fresh()->status);
         $this->assertSame(ProvisioningRun::ARCHIVED, $this->provision->fresh()->status);
         $this->assertSame([ProvisioningStep::DONE], $this->archive->steps()->distinct()->pluck('status')->all());
+    }
+
+    public function test_siteops_404_means_already_removed(): void
+    {
+        Http::fake(['siteops.test/api/v1/sites/42/deactivate' => Http::response(['message' => 'Not found'], 404)]);
+
+        $result = $this->runStep(SiteOpsDeactivateStep::class, $this->archive, 'siteops_deactivate');
+
+        $this->assertSame(StepResult::DONE, $result->outcome);
+        $this->assertArrayHasKey('skipped', $result->detail);
+    }
+
+    public function test_siteops_other_errors_still_fail(): void
+    {
+        Http::fake(['siteops.test/api/v1/sites/42/deactivate' => Http::response(['message' => 'boom'], 500)]);
+
+        $this->expectException(\App\Provisioning\Http\ExternalApiException::class);
+        $this->runStep(SiteOpsDeactivateStep::class, $this->archive, 'siteops_deactivate');
+    }
+
+    // Ägarbeviset: ett repo med rätt namn men utan provisioneringsrunnens uuid
+    // (t.ex. återskapat för hand) arkiveras aldrig.
+    public function test_foreign_repo_with_same_name_is_not_archived(): void
+    {
+        Http::fake([
+            'api.github.com/app/installations/4242/access_tokens' => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/kattsvep' => Http::response(ProvisioningFakes::githubRepo('kattsvep', $this->provision->uuid, description: 'Någon annans repo')),
+        ]);
+
+        try {
+            $this->runStep(RepoArchiveStep::class, $this->archive, 'repo_archive');
+            $this->fail('Främmande repo arkiverades.');
+        } catch (StepFailed) {
+            // väntat
+        }
+        Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
+    }
+
+    public function test_public_repo_with_matching_description_is_not_archived(): void
+    {
+        Http::fake([
+            'api.github.com/app/installations/4242/access_tokens' => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/kattsvep' => Http::response(ProvisioningFakes::githubRepo('kattsvep', $this->provision->uuid, private: false)),
+        ]);
+
+        $this->expectException(StepFailed::class);
+        try {
+            $this->runStep(RepoArchiveStep::class, $this->archive, 'repo_archive');
+        } finally {
+            Http::assertNotSent(fn ($r) => $r->method() === 'PATCH');
+        }
+    }
+
+    public function test_game_deactivate_fails_when_game_row_is_missing(): void
+    {
+        $this->archive->update(['game_id' => null]);
+
+        $this->expectException(StepFailed::class);
+        $this->runStep(GameDeactivateStep::class, $this->archive, 'game_deactivate');
     }
 }

@@ -28,6 +28,12 @@ final class CoolifyDeleteStep implements Step
 
         $detail = $step->detail ?? [];
         if (! ($detail['delete_requested'] ?? false)) {
+            // Redan borta ur Demo-projektet (raderad för hand): inget DELETE, och
+            // spärren i klienten skulle annars vägra uuid:t för alltid.
+            if (! collect($this->coolify->demoApplications())->contains(fn (array $app) => $app['uuid'] === $uuid)) {
+                return StepResult::done(['skipped' => 'already gone']);
+            }
+
             // Markören sparas före DELETE: dör jobbet mellan anropet och svaret
             // pollar omkörningen listningen i stället för att begära radering igen
             // (spärren skulle då vägra ett uuid som redan är borta).
