@@ -4,6 +4,8 @@ namespace Tests\Feature\Mcp;
 
 use App\Models\McpAuditLog;
 use App\Services\BuildGuide;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 
 class BuildGuideToolsTest extends McpTestCase
 {
@@ -13,10 +15,10 @@ class BuildGuideToolsTest extends McpTestCase
 
         $this->assertTrue($result['ok'], $result['text']);
         $json = json_decode($result['text'], true);
-        $this->assertSame('v1', $json['version']);
+        $this->assertSame(BuildGuide::LATEST, $json['version']);
         $this->assertSame('16.4.0', $json['stack']['next']);
         $this->assertContains('npm audit --omit=dev --audit-level=high', array_column($json['required_checks'], 'command'));
-        $this->assertSame(['v1'], $json['available_versions']);
+        $this->assertSame(BuildGuide::versions(), $json['available_versions']);
         $this->assertSame(['ok'], McpAuditLog::where('tool', 'get_build_guide')->pluck('outcome')->all());
     }
 
@@ -37,7 +39,7 @@ class BuildGuideToolsTest extends McpTestCase
 
         $this->assertSame('download', $json['delivery']);
         $this->assertNull($json['content']);
-        $this->assertStringEndsWith('/api/v1/build-guide/v1/files/package-lock.json', $json['download_url']);
+        $this->assertStringEndsWith('/api/v1/build-guide/'.BuildGuide::LATEST.'/files/package-lock.json', $json['download_url']);
     }
 
     public function test_unknown_path_and_version_are_errors(): void
@@ -56,9 +58,34 @@ class BuildGuideToolsTest extends McpTestCase
         $staff = $this->staffMember();
 
         $this->assertLessThan(50000, mb_strlen($this->callTool($staff, 'get_build_guide')['text']));
-        foreach (BuildGuide::manifest('v1')['files'] as $entry) {
+        foreach (BuildGuide::manifest(BuildGuide::LATEST)['files'] as $entry) {
             $text = $this->callTool($staff, 'get_build_guide_file', ['path' => $entry['path']])['text'];
             $this->assertLessThan(50000, mb_strlen($text), $entry['path']);
+        }
+    }
+
+    public function test_unpublished_version_is_unknown(): void
+    {
+        $root = storage_path('framework/testing/byggguide-'.Str::lower(Str::random(10)));
+        File::copyDirectory(resource_path('byggguide'), $root);
+        try {
+            File::copyDirectory("{$root}/v1", "{$root}/v99");
+            $manifest = json_decode(file_get_contents("{$root}/v99/manifest.json"), true);
+            $manifest['version'] = 'v99';
+            file_put_contents("{$root}/v99/manifest.json", json_encode($manifest));
+            config(['byggguide.path' => $root]);
+            $staff = $this->staffMember();
+
+            $guide = $this->callTool($staff, 'get_build_guide', ['version' => 'v99']);
+            $file = $this->callTool($staff, 'get_build_guide_file', ['path' => 'package.json', 'version' => 'v99']);
+
+            $this->assertFalse($guide['ok']);
+            $this->assertStringContainsString('Unknown build guide version', $guide['text']);
+            $this->assertFalse($file['ok']);
+            $this->assertStringContainsString('Unknown build guide version', $file['text']);
+            $this->assertStringNotContainsString('v99', json_encode($this->callTool($staff, 'get_build_guide')));
+        } finally {
+            File::deleteDirectory($root);
         }
     }
 }

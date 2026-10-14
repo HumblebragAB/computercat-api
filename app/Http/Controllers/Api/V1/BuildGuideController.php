@@ -14,8 +14,13 @@ class BuildGuideController extends Controller
 {
     public function show(?string $version = null): JsonResponse
     {
+        $version ??= BuildGuide::LATEST;
+        if (! BuildGuide::isPublished($version)) {
+            return response()->json(['message' => 'Build guide version not found.'], 404);
+        }
+
         try {
-            $guide = BuildGuide::publicManifest($version ?? BuildGuide::LATEST);
+            $guide = BuildGuide::publicManifest($version);
         } catch (BuildGuideNotFound) {
             return response()->json(['message' => 'Build guide version not found.'], 404);
         }
@@ -26,6 +31,10 @@ class BuildGuideController extends Controller
 
     public function file(string $version, string $path): Response|JsonResponse
     {
+        if (! BuildGuide::isPublished($version)) {
+            return response()->json(['message' => 'Build guide file not found.'], 404);
+        }
+
         try {
             $file = BuildGuide::file($version, $path);
         } catch (BuildGuideNotFound) {

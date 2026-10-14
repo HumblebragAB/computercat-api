@@ -30,8 +30,13 @@ class GetBuildGuideTool extends PlatformTool
             return $this->validationFailed($validator->errors()->toArray());
         }
 
+        $version = $args['version'] ?? BuildGuide::LATEST;
+        if (! BuildGuide::isPublished($version)) {
+            return Response::error('Unknown build guide version. Available: '.implode(', ', BuildGuide::versions()).'.');
+        }
+
         try {
-            $guide = BuildGuide::publicManifest($args['version'] ?? BuildGuide::LATEST);
+            $guide = BuildGuide::publicManifest($version);
         } catch (BuildGuideNotFound) {
             return Response::error('Unknown build guide version. Available: '.implode(', ', BuildGuide::versions()).'.');
         }

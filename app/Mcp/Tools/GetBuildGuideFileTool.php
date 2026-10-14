@@ -36,6 +36,10 @@ class GetBuildGuideFileTool extends PlatformTool
         }
 
         $version = $args['version'] ?? BuildGuide::LATEST;
+        if (! BuildGuide::isPublished($version)) {
+            return Response::error('Unknown build guide version. Available: '.implode(', ', BuildGuide::versions()).'.');
+        }
+
         try {
             $file = BuildGuide::file($version, $args['path']);
         } catch (BuildGuideNotFound) {

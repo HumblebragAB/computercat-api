@@ -5,8 +5,10 @@ namespace Tests\Feature\Api\V1;
 use App\Services\BuildGuide;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class BuildGuideApiTest extends TestCase
@@ -17,8 +19,9 @@ class BuildGuideApiTest extends TestCase
     {
         $response = $this->getJson('/api/v1/build-guide')->assertOk();
 
-        $this->assertSame('v1', $response->json('data.version'));
-        $this->assertSame(BuildGuide::publicManifest('v1')['files'], $response->json('data.files'));
+        $this->assertSame(BuildGuide::LATEST, $response->json('data.version'));
+        $this->assertSame(BuildGuide::publicManifest(BuildGuide::LATEST)['files'], $response->json('data.files'));
+        $this->assertSame(BuildGuide::versions(), $response->json('data.available_versions'));
         $this->assertStringContainsString('public', $response->headers->get('Cache-Control'));
         $this->getJson('/api/v1/build-guide/v1')->assertOk()->assertJsonPath('data.version', 'v1');
     }
@@ -75,5 +78,27 @@ class BuildGuideApiTest extends TestCase
         $this->assertStringNotContainsString('APP_URL', $body);
         $this->assertStringNotContainsString('BuildGuide', $body);
         $this->assertStringNotContainsString('trace', $body);
+    }
+
+    // Spec delprojekt 3: en version utan FROZEN-post syns inte och serveras inte.
+    public function test_unpublished_version_is_not_listed_or_served(): void
+    {
+        $root = storage_path('framework/testing/byggguide-'.Str::lower(Str::random(10)));
+        File::copyDirectory(resource_path('byggguide'), $root);
+        try {
+            File::copyDirectory("{$root}/v1", "{$root}/v99");
+            $manifest = json_decode(file_get_contents("{$root}/v99/manifest.json"), true);
+            $manifest['version'] = 'v99';
+            file_put_contents("{$root}/v99/manifest.json", json_encode($manifest));
+            config(['byggguide.path' => $root]);
+
+            $this->assertSame('v99', BuildGuide::manifest('v99')['version']);
+            $this->getJson('/api/v1/build-guide/v99')->assertNotFound()->assertJsonPath('message', 'Build guide version not found.');
+            $this->getJson('/api/v1/build-guide/v99/files/package.json')->assertNotFound()->assertJsonPath('message', 'Build guide file not found.');
+            $this->assertNotContains('v99', $this->getJson('/api/v1/build-guide')->json('data.available_versions'));
+        } finally {
+            // Bara katalogen som testet skapade.
+            File::deleteDirectory($root);
+        }
     }
 }

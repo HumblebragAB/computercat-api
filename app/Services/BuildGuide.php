@@ -23,18 +23,27 @@ final class BuildGuide
         'v1' => '7f763d8ee8d01c0765debcc225e40a5884c979035f4e3649f00815325699dc85',
     ];
 
+    // Bara låsta versioner syns (spec delprojekt 3, "Versioner"). En katalog under
+    // arbete läses av hash och verify men visas och serveras aldrig.
     /** @return list<string> */
     public static function versions(): array
     {
         $versions = [];
         foreach (glob(self::base().'/*', GLOB_ONLYDIR) ?: [] as $dir) {
-            if (preg_match(self::VERSION_PATTERN, basename($dir)) === 1 && is_file($dir.'/manifest.json')) {
+            if (self::isPublished(basename($dir))) {
                 $versions[] = basename($dir);
             }
         }
         usort($versions, fn (string $a, string $b) => (int) substr($a, 1) <=> (int) substr($b, 1));
 
         return $versions;
+    }
+
+    public static function isPublished(string $version): bool
+    {
+        return preg_match(self::VERSION_PATTERN, $version) === 1
+            && (self::FROZEN[$version] ?? '') !== ''
+            && is_file(self::base()."/{$version}/manifest.json");
     }
 
     public static function root(string $version): string
