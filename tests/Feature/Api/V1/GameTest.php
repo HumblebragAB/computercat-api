@@ -158,4 +158,31 @@ class GameTest extends TestCase
 
         $response->assertStatus(404);
     }
+
+    // Spec 2c: Demo-spel är aktiva men olistade tills Erik listar dem vid Live.
+    public function test_list_games_hides_unlisted_games(): void
+    {
+        Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true]);
+        Game::create(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'is_active' => true, 'is_listed' => false]);
+
+        $this->getJson('/api/v1/games')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.slug', 'tocco');
+    }
+
+    public function test_existing_games_are_listed_by_default(): void
+    {
+        $game = Game::create(['slug' => 'tocco', 'name' => 'Tocco', 'is_active' => true]);
+
+        $this->assertTrue($game->fresh()->is_listed);
+    }
+
+    public function test_unlisted_game_still_works_for_players(): void
+    {
+        Game::create(['slug' => 'kattsvep', 'name' => 'Kattsvep', 'is_active' => true, 'is_listed' => false]);
+
+        $this->getJson('/api/v1/games/kattsvep')->assertOk()->assertJsonPath('data.slug', 'kattsvep');
+        $this->getJson('/api/v1/games/kattsvep/config')->assertOk();
+    }
 }

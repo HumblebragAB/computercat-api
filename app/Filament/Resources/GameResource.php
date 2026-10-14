@@ -109,6 +109,10 @@ class GameResource extends Resource
                         ->columnSpanFull(),
                     Forms\Components\Toggle::make('is_active')
                         ->default(true),
+                    Forms\Components\Toggle::make('is_listed')
+                        ->label('Listad i publika spellistan')
+                        ->helperText('Demo-spel från create_game skapas olistade. Slå på vid Live.')
+                        ->default(true),
                     Forms\Components\TagsInput::make('allowed_origins')
                         ->label('Tillåtna origins (CORS)')
                         ->placeholder('https://ordjakt.apps.humblebrag.se')
@@ -402,6 +406,7 @@ class GameResource extends Resource
                 Tables\Columns\TextColumn::make('slug')->searchable(),
                 Tables\Columns\TextColumn::make('name')->searchable(),
                 Tables\Columns\IconColumn::make('is_active')->boolean(),
+                Tables\Columns\IconColumn::make('is_listed')->boolean()->label('Listad'),
                 Tables\Columns\TextColumn::make('leaderboard_types_count')
                     ->counts('leaderboardTypes')
                     ->label('Leaderboards'),

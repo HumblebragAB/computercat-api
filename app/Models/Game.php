@@ -16,6 +16,7 @@ class Game extends Model
         'settings',
         'allowed_origins',
         'is_active',
+        'is_listed',
     ];
 
     // Bär hemligheter per spel (t.ex. revenuecat.webhook_secret). Ska aldrig
@@ -28,6 +29,7 @@ class Game extends Model
             'settings' => 'array',
             'allowed_origins' => 'array',
             'is_active' => 'boolean',
+            'is_listed' => 'boolean',
         ];
     }
 
