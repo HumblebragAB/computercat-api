@@ -13,6 +13,10 @@ class GitHubReleaseCallsTest extends TestCase
 {
     private const SHA = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
 
+    private const UUID = '0b6f4f0e-0d1c-4f5e-9a55-3c0f1f4b2a11';
+
+    private const OTHER = '7a1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
+
     private const REPO = F::GITHUB.'/repos/HumblebragAB';
 
     protected function setUp(): void
@@ -107,7 +111,7 @@ class GitHubReleaseCallsTest extends TestCase
     public function test_workflow_run_and_the_failed_step(): void
     {
         $this->fake([
-            self::REPO.'/computercat-release/actions/runs/4711' => Http::response(F::githubRun(4711, 'completed', 'failure', 'uuid-1')),
+            self::REPO.'/computercat-release/actions/runs/4711' => Http::response(F::githubRun(4711, 'completed', 'failure', self::UUID)),
             self::REPO.'/computercat-release/actions/runs/4711/jobs*' => Http::response(F::githubRunJobs(['build', 'Kontrollera version och bundle-id'])),
         ]);
 
@@ -120,11 +124,11 @@ class GitHubReleaseCallsTest extends TestCase
     public function test_find_run_by_release_uuid_in_run_name(): void
     {
         $this->fake([self::REPO.'/computercat-release/actions/workflows/release-ios.yml/runs?*' => Http::response(['total_count' => 2, 'workflow_runs' => [
-            F::githubRun(1, 'completed', 'success', 'other-uuid'),
-            F::githubRun(2, 'queued', null, 'the-uuid'),
+            F::githubRun(1, 'completed', 'success', self::OTHER),
+            F::githubRun(2, 'queued', null, self::UUID),
         ]])]);
 
-        $this->assertSame(2, $this->client()->findWorkflowRun('computercat-release', 'release-ios.yml', 'the-uuid', now()->subMinute())['id']);
+        $this->assertSame(2, $this->client()->findWorkflowRun('computercat-release', 'release-ios.yml', self::UUID, now()->subMinute())['id']);
         Http::assertSent(fn (Request $r) => str_contains(urldecode($r->url()), 'event=workflow_dispatch') && str_contains(urldecode($r->url()), 'created=>='));
     }
 
@@ -134,5 +138,89 @@ class GitHubReleaseCallsTest extends TestCase
 
         $this->client()->cancelWorkflowRun('computercat-release', 4711);
         Http::assertSentCount(2); // token + cancel
+    }
+
+    public function test_dispatch_and_cancel_only_reach_the_release_repo_and_its_workflow(): void
+    {
+        $this->fake([]);
+        $calls = [
+            fn () => $this->client()->dispatchWorkflow('kattsvep', 'release-ios.yml', 'main', ['game' => 'kattsvep']),
+            fn () => $this->client()->dispatchWorkflow('computercat-release', 'deploy.yml', 'main', ['game' => 'kattsvep']),
+            fn () => $this->client()->dispatchWorkflow('computercat-ankare', 'release-ios.yml', 'main', []),
+            fn () => $this->client()->cancelWorkflowRun('kattsvep', 4711),
+            fn () => $this->client()->workflowRun('kattsvep', 4711),
+            fn () => $this->client()->workflowRunJobs('kattsvep', 4711),
+            fn () => $this->client()->findWorkflowRun('kattsvep', 'release-ios.yml', self::UUID, now()),
+            fn () => $this->client()->findWorkflowRun('computercat-release', 'deploy.yml', self::UUID, now()),
+        ];
+        foreach ($calls as $i => $call) {
+            try {
+                $call();
+                $this->fail("Anrop {$i} släpptes igenom.");
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_reserved_slugs_are_refused_for_tags_and_files(): void
+    {
+        $this->fake([]);
+        $calls = [
+            fn () => $this->client()->getTag('computercat-release', 'v1.2.0'),
+            fn () => $this->client()->createTag('computercat-release', 'v1.2.0', self::SHA),
+            fn () => $this->client()->getFile('computercat-release', 'package.json', self::SHA),
+            fn () => $this->client()->putFile('computercat-release', 'README.md', 'x', null, 'm'),
+        ];
+        foreach ($calls as $call) {
+            try {
+                $call();
+                $this->fail('Reserverat reponamn släpptes igenom.');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_find_run_needle_must_be_a_uuid(): void
+    {
+        $this->fake([]);
+        foreach (['', 'the-uuid', self::UUID.' x', "x\n"] as $bad) {
+            try {
+                $this->client()->findWorkflowRun('computercat-release', 'release-ios.yml', $bad, now());
+                $this->fail('Ogiltigt uppslag släpptes igenom.');
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function test_dispatch_limits_inputs_and_never_echoes_values(): void
+    {
+        $this->fake([]);
+        $secret = 'hemligt-varde-'.str_repeat('x', 250);
+        $many = [];
+        for ($i = 0; $i < 26; $i++) {
+            $many["k{$i}"] = 'v';
+        }
+        foreach ([['game' => $secret], $many, ['Bad Key' => 'v']] as $inputs) {
+            try {
+                $this->client()->dispatchWorkflow('computercat-release', 'release-ios.yml', 'main', $inputs);
+                $this->fail('Ogiltig indata släpptes igenom.');
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringNotContainsString('hemligt-varde', $e->getMessage());
+                $this->assertStringNotContainsString('Bad Key', $e->getMessage());
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    public function test_get_tag_exposes_an_annotated_tag_as_type_tag(): void
+    {
+        $this->fake([self::REPO.'/kattsvep/git/ref/tags/v1.2.0' => Http::response(F::githubTagRef('v1.2.0', self::SHA, 'tag'))]);
+
+        $this->assertSame('tag', $this->client()->getTag('kattsvep', 'v1.2.0')['type']);
     }
 }

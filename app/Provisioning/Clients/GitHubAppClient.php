@@ -204,9 +204,26 @@ class GitHubAppClient
         return $this->github('PATCH', '/repos/'.$this->owner().'/'.$this->repoName($name), ['archived' => true])->json();
     }
 
+    // Dispatch, körningar och avbrott når bara släpprepot och dess godkända flöde (plan R19:
+    // appen kan annars starta vilket flöde som helst i vilket repo som helst). Spikflödet
+    // release-ios-spike.yml ersätts av release-ios.yml i Task 10 och är därför inte tillåtet.
+    public const RELEASE_REPO = 'computercat-release';
+
+    public const RELEASE_WORKFLOWS = ['release-ios.yml'];
+
+    private const MAX_INPUTS = 25;
+
+    private const MAX_INPUT_LENGTH = 200;
+
     public const TAG_PATTERN = '/^v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\z/';
 
-    /** @return array{sha: string, type: string}|null */
+    /**
+     * type = 'commit' för en lättviktig tagg. 'tag' betyder annoterad tagg: sha är då taggobjektets,
+     * inte commitens, och får inte jämföras med ett commit-SHA (Task 6 behandlar type !== 'commit' som
+     * att taggen inte pekar på den commit som släpps).
+     *
+     * @return array{sha: string, type: string}|null
+     */
     public function getTag(string $name, string $tag): ?array
     {
         $path = '/repos/'.$this->owner().'/'.$this->repoName($name).'/git/ref/tags/'.$this->tag($tag);
@@ -241,12 +258,18 @@ class GitHubAppClient
      */
     public function dispatchWorkflow(string $repo, string $workflow, string $ref, array $inputs): array
     {
+        if (count($inputs) > self::MAX_INPUTS) {
+            throw new \InvalidArgumentException('För många workflow-indata (högst '.self::MAX_INPUTS.').');
+        }
         foreach ($inputs as $key => $value) {
-            if (! is_string($key) || ! is_string($value)) {
-                throw new \InvalidArgumentException('Workflow-indata måste vara strängar.');
+            if (! is_string($key) || preg_match('/^[a-z][a-z0-9_]{0,49}\z/', $key) !== 1) {
+                throw new \InvalidArgumentException('Ogiltigt namn på workflow-indata.');
+            }
+            if (! is_string($value) || strlen($value) > self::MAX_INPUT_LENGTH) {
+                throw new \InvalidArgumentException("Workflow-indata '{$key}' måste vara en sträng på högst ".self::MAX_INPUT_LENGTH.' tecken.');
             }
         }
-        $path = $this->actions($repo).'/workflows/'.$this->workflowFile($workflow).'/dispatches';
+        $path = $this->releaseActions($repo, $workflow).'/dispatches';
         $response = $this->github('POST', $path, ['ref' => $this->branch($ref), 'inputs' => $inputs, 'return_run_details' => true]);
 
         $id = $response->json('workflow_run_id');
@@ -261,7 +284,7 @@ class GitHubAppClient
     /** @return array{id: int, name: string, status: string, conclusion: ?string, html_url: string, head_sha: string} */
     public function workflowRun(string $repo, int $runId): array
     {
-        $path = $this->actions($repo).'/runs/'.$this->runId($runId);
+        $path = $this->releaseActions($repo).'/runs/'.$this->runId($runId);
 
         return $this->runFields($this->github('GET', $path)->json(), $path);
     }
@@ -269,7 +292,7 @@ class GitHubAppClient
     /** @return list<array{name: string, conclusion: ?string, failed_step: ?string}> */
     public function workflowRunJobs(string $repo, int $runId): array
     {
-        $path = $this->actions($repo).'/runs/'.$this->runId($runId).'/jobs?per_page=30';
+        $path = $this->releaseActions($repo).'/runs/'.$this->runId($runId).'/jobs?per_page=30';
         $jobs = $this->github('GET', $path)->json('jobs');
         if (! is_array($jobs)) {
             throw new ExternalApiException('GitHub', 'GET', $path, 200, 'response lacks jobs');
@@ -289,7 +312,10 @@ class GitHubAppClient
     // Reserv när dispatch-svaret gick förlorat: run-name innehåller release_uuid (spike A G2).
     public function findWorkflowRun(string $repo, string $workflow, string $needle, \DateTimeInterface $since): ?array
     {
-        $path = $this->actions($repo).'/workflows/'.$this->workflowFile($workflow).'/runs?'.http_build_query([
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/', $needle) !== 1) {
+            throw new \InvalidArgumentException('Uppslaget måste vara ett release_uuid.');
+        }
+        $path = $this->releaseActions($repo, $workflow).'/runs?'.http_build_query([
             'event' => 'workflow_dispatch',
             'created' => '>='.Carbon::instance($since)->utc()->format('Y-m-d\TH:i:s\Z'),
             'per_page' => 50,
@@ -306,7 +332,7 @@ class GitHubAppClient
     // 409 = körningen är redan avslutad; det är målet ändå.
     public function cancelWorkflowRun(string $repo, int $runId): void
     {
-        $this->github('POST', $this->actions($repo).'/runs/'.$this->runId($runId).'/cancel', null, [409]);
+        $this->github('POST', $this->releaseActions($repo).'/runs/'.$this->runId($runId).'/cancel', null, [409]);
     }
 
     private function runFields(mixed $run, string $path): array
@@ -325,9 +351,21 @@ class GitHubAppClient
         ];
     }
 
-    private function actions(string $repo): string
+    // Bara släpprepot och ett godkänt flöde; allt annat avvisas innan någon token hämtas.
+    private function releaseActions(string $repo, ?string $workflow = null): string
     {
-        return '/repos/'.$this->owner().'/'.$this->repoName($repo).'/actions';
+        if ($repo !== self::RELEASE_REPO) {
+            throw new \InvalidArgumentException('Actions nås bara i släpprepot.');
+        }
+        $path = '/repos/'.$this->owner().'/'.self::RELEASE_REPO.'/actions';
+        if ($workflow !== null) {
+            if (! in_array($workflow, self::RELEASE_WORKFLOWS, true)) {
+                throw new \InvalidArgumentException('Flödet är inte godkänt för start.');
+            }
+            $path .= '/workflows/'.$workflow;
+        }
+
+        return $path;
     }
 
     private function tag(string $tag): string
@@ -346,15 +384,6 @@ class GitHubAppClient
         }
 
         return $sha;
-    }
-
-    private function workflowFile(string $workflow): string
-    {
-        if (preg_match('/^[a-z0-9][a-z0-9-]{0,60}\.ya?ml\z/', $workflow) !== 1) {
-            throw new \InvalidArgumentException("Ogiltigt flödesnamn: {$workflow}");
-        }
-
-        return $workflow;
     }
 
     private function branch(string $ref): string
@@ -403,6 +432,10 @@ class GitHubAppClient
     {
         if (preg_match(GameSlug::PATTERN, $name) !== 1) {
             throw new \InvalidArgumentException("Ogiltigt reponamn: {$name}");
+        }
+        // Spelrepon och släpprepot är skilda: computercat-* och reserverade namn är aldrig ett spelrepo.
+        if (GameSlug::isReserved($name)) {
+            throw new \InvalidArgumentException("Reserverat reponamn: {$name}");
         }
 
         return $name;
