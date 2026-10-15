@@ -32,6 +32,9 @@ class GameSlug implements ValidationRule
 
     public static function isReserved(string $slug): bool
     {
-        return in_array($slug, (array) config('provisioning.reserved_slugs', []), true);
+        // R19 (plan 2026-10-15-slapp-testflight): släpprepots läsapp får en token för repot som heter
+        // som spelet; computercat-* är Computercats egna repon och får aldrig bli ett spel.
+        return str_starts_with($slug, 'computercat')
+            || in_array($slug, (array) config('provisioning.reserved_slugs', []), true);
     }
 }

@@ -24,6 +24,8 @@ use Lcobucci\JWT\Token\Builder;
 // GitHub App "ComputerCat Studio" (bilaga B). Appen har Administration:
 // write och kan alltså radera repon. Klienten har därför ingen metod för
 // DELETE och vägrar metoden i github(); TestCase vaktar hela sviten.
+// Etapp 2: klienten läser filer vid en commit, sätter lättviktiga taggar, startar släpprepots
+// flöde och läser och avbryter körningar; den flyttar eller raderar aldrig taggar.
 class GitHubAppClient
 {
     use SendsApiRequests;
@@ -156,9 +158,12 @@ class GitHubAppClient
     }
 
     /** @return array{sha: string, text: string}|null */
-    public function getFile(string $name, string $path): ?array
+    public function getFile(string $name, string $path, ?string $ref = null): ?array
     {
         $apiPath = '/repos/'.$this->owner().'/'.$this->repoName($name).'/contents/'.$this->filePath($path);
+        if ($ref !== null) {
+            $apiPath .= '?ref='.$this->commit($ref);
+        }
         $response = $this->github('GET', $apiPath, null, [404]);
         if ($response->status() === 404) {
             return null;
@@ -197,6 +202,177 @@ class GitHubAppClient
     public function archiveRepository(string $name): array
     {
         return $this->github('PATCH', '/repos/'.$this->owner().'/'.$this->repoName($name), ['archived' => true])->json();
+    }
+
+    public const TAG_PATTERN = '/^v(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\z/';
+
+    /** @return array{sha: string, type: string}|null */
+    public function getTag(string $name, string $tag): ?array
+    {
+        $path = '/repos/'.$this->owner().'/'.$this->repoName($name).'/git/ref/tags/'.$this->tag($tag);
+        $response = $this->github('GET', $path, null, [404]);
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $sha = $response->json('object.sha');
+        $type = $response->json('object.type');
+        if (! is_string($sha) || ! is_string($type)) {
+            throw new ExternalApiException('GitHub', 'GET', $path, $response->status(), 'unexpected ref response (expected object.sha and object.type)');
+        }
+
+        return ['sha' => strtolower($sha), 'type' => $type];
+    }
+
+    // Lättviktig tagg (en ref direkt på commiten). Flyttas och raderas aldrig (plan R3, R4).
+    public function createTag(string $name, string $tag, string $sha): void
+    {
+        $this->github('POST', '/repos/'.$this->owner().'/'.$this->repoName($name).'/git/refs', [
+            'ref' => 'refs/tags/'.$this->tag($tag),
+            'sha' => $this->commit($sha),
+        ]);
+    }
+
+    /**
+     * Spike A G1b: med return_run_details svarar GitHub 200 med körningens id.
+     *
+     * @param  array<string, string>  $inputs
+     * @return array{run_id: int, html_url: string}
+     */
+    public function dispatchWorkflow(string $repo, string $workflow, string $ref, array $inputs): array
+    {
+        foreach ($inputs as $key => $value) {
+            if (! is_string($key) || ! is_string($value)) {
+                throw new \InvalidArgumentException('Workflow-indata måste vara strängar.');
+            }
+        }
+        $path = $this->actions($repo).'/workflows/'.$this->workflowFile($workflow).'/dispatches';
+        $response = $this->github('POST', $path, ['ref' => $this->branch($ref), 'inputs' => $inputs, 'return_run_details' => true]);
+
+        $id = $response->json('workflow_run_id');
+        $url = $response->json('html_url');
+        if (! is_int($id) || $id <= 0 || ! is_string($url)) {
+            throw new ExternalApiException('GitHub', 'POST', $path, $response->status(), 'dispatch response lacks workflow_run_id or html_url');
+        }
+
+        return ['run_id' => $id, 'html_url' => $url];
+    }
+
+    /** @return array{id: int, name: string, status: string, conclusion: ?string, html_url: string, head_sha: string} */
+    public function workflowRun(string $repo, int $runId): array
+    {
+        $path = $this->actions($repo).'/runs/'.$this->runId($runId);
+
+        return $this->runFields($this->github('GET', $path)->json(), $path);
+    }
+
+    /** @return list<array{name: string, conclusion: ?string, failed_step: ?string}> */
+    public function workflowRunJobs(string $repo, int $runId): array
+    {
+        $path = $this->actions($repo).'/runs/'.$this->runId($runId).'/jobs?per_page=30';
+        $jobs = $this->github('GET', $path)->json('jobs');
+        if (! is_array($jobs)) {
+            throw new ExternalApiException('GitHub', 'GET', $path, 200, 'response lacks jobs');
+        }
+
+        return array_values(array_map(function (array $job) {
+            $failed = collect($job['steps'] ?? [])->first(fn ($s) => is_array($s) && in_array($s['conclusion'] ?? null, ['failure', 'timed_out', 'cancelled'], true));
+
+            return [
+                'name' => (string) ($job['name'] ?? '?'),
+                'conclusion' => is_string($job['conclusion'] ?? null) ? $job['conclusion'] : null,
+                'failed_step' => is_array($failed) ? (string) ($failed['name'] ?? '?') : null,
+            ];
+        }, array_filter($jobs, 'is_array')));
+    }
+
+    // Reserv när dispatch-svaret gick förlorat: run-name innehåller release_uuid (spike A G2).
+    public function findWorkflowRun(string $repo, string $workflow, string $needle, \DateTimeInterface $since): ?array
+    {
+        $path = $this->actions($repo).'/workflows/'.$this->workflowFile($workflow).'/runs?'.http_build_query([
+            'event' => 'workflow_dispatch',
+            'created' => '>='.Carbon::instance($since)->utc()->format('Y-m-d\TH:i:s\Z'),
+            'per_page' => 50,
+        ], '', '&', PHP_QUERY_RFC3986);
+        foreach ($this->github('GET', $path)->json('workflow_runs') ?? [] as $run) {
+            if (is_array($run) && is_string($run['name'] ?? null) && str_contains($run['name'], $needle)) {
+                return $this->runFields($run, $path);
+            }
+        }
+
+        return null;
+    }
+
+    // 409 = körningen är redan avslutad; det är målet ändå.
+    public function cancelWorkflowRun(string $repo, int $runId): void
+    {
+        $this->github('POST', $this->actions($repo).'/runs/'.$this->runId($runId).'/cancel', null, [409]);
+    }
+
+    private function runFields(mixed $run, string $path): array
+    {
+        if (! is_array($run) || ! is_int($run['id'] ?? null) || ! is_string($run['status'] ?? null)) {
+            throw new ExternalApiException('GitHub', 'GET', $path, 200, 'unexpected workflow run (expected id and status)');
+        }
+
+        return [
+            'id' => $run['id'],
+            'name' => (string) ($run['name'] ?? ''),
+            'status' => $run['status'],
+            'conclusion' => is_string($run['conclusion'] ?? null) ? $run['conclusion'] : null,
+            'html_url' => (string) ($run['html_url'] ?? ''),
+            'head_sha' => strtolower((string) ($run['head_sha'] ?? '')),
+        ];
+    }
+
+    private function actions(string $repo): string
+    {
+        return '/repos/'.$this->owner().'/'.$this->repoName($repo).'/actions';
+    }
+
+    private function tag(string $tag): string
+    {
+        if (preg_match(self::TAG_PATTERN, $tag) !== 1) {
+            throw new \InvalidArgumentException("Ogiltig tagg: {$tag}");
+        }
+
+        return $tag;
+    }
+
+    private function commit(string $sha): string
+    {
+        if (preg_match('/^[0-9a-f]{40}\z/', $sha) !== 1) {
+            throw new \InvalidArgumentException('Ogiltig ref: måste vara ett fullständigt commit-SHA.');
+        }
+
+        return $sha;
+    }
+
+    private function workflowFile(string $workflow): string
+    {
+        if (preg_match('/^[a-z0-9][a-z0-9-]{0,60}\.ya?ml\z/', $workflow) !== 1) {
+            throw new \InvalidArgumentException("Ogiltigt flödesnamn: {$workflow}");
+        }
+
+        return $workflow;
+    }
+
+    private function branch(string $ref): string
+    {
+        if (preg_match('/^[A-Za-z0-9._-]{1,100}\z/', $ref) !== 1) {
+            throw new \InvalidArgumentException("Ogiltig gren: {$ref}");
+        }
+
+        return $ref;
+    }
+
+    private function runId(int $id): int
+    {
+        if ($id <= 0) {
+            throw new \InvalidArgumentException('Ogiltigt körnings-id.');
+        }
+
+        return $id;
     }
 
     private function github(string $method, string $path, ?array $body = null, array $accept = []): Response

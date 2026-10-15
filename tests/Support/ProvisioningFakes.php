@@ -113,6 +113,50 @@ final class ProvisioningFakes
         return ['sha' => $sha, 'encoding' => 'base64', 'content' => chunk_split(base64_encode($text), 60, "\n")];
     }
 
+    /** GET /repos/{o}/{r}/git/ref/tags/{tag} (docs: git/refs). Lättviktig tagg: object.type = commit. */
+    public static function githubTagRef(string $tag, string $sha, string $type = 'commit'): array
+    {
+        return ['ref' => "refs/tags/{$tag}", 'object' => ['type' => $type, 'sha' => $sha, 'url' => self::GITHUB.'/repos/HumblebragAB/x/git/commits/'.$sha]];
+    }
+
+    /** 200 från dispatch med return_run_details (spike A G1b). */
+    public static function githubDispatch(int $runId): array
+    {
+        return [
+            'workflow_run_id' => $runId,
+            'run_url' => self::GITHUB."/repos/HumblebragAB/computercat-release/actions/runs/{$runId}",
+            'html_url' => "https://github.com/HumblebragAB/computercat-release/actions/runs/{$runId}",
+        ];
+    }
+
+    /** GET …/actions/runs/{id} (docs: workflow-runs; name = run-name, spike A G2). */
+    public static function githubRun(int $id, string $status, ?string $conclusion, string $releaseUuid, string $game = 'kattsvep'): array
+    {
+        return [
+            'id' => $id, 'name' => "ios {$game} {$releaseUuid}", 'status' => $status, 'conclusion' => $conclusion,
+            'event' => 'workflow_dispatch', 'head_branch' => 'main', 'head_sha' => str_repeat('9', 40),
+            'html_url' => "https://github.com/HumblebragAB/computercat-release/actions/runs/{$id}",
+        ];
+    }
+
+    /** GET …/actions/runs/{id}/jobs (docs: workflow-jobs). $failed = [jobb, steg] som föll. */
+    public static function githubRunJobs(?array $failed = null): array
+    {
+        $jobs = [];
+        foreach (['fetch', 'build', 'sign'] as $name) {
+            $isFailed = $failed !== null && $failed[0] === $name;
+            $jobs[] = [
+                'id' => crc32($name), 'name' => $name, 'status' => 'completed', 'conclusion' => $isFailed ? 'failure' : 'success',
+                'steps' => [
+                    ['name' => 'Set up job', 'status' => 'completed', 'conclusion' => 'success', 'number' => 1],
+                    ['name' => $isFailed ? $failed[1] : 'Klart', 'status' => 'completed', 'conclusion' => $isFailed ? 'failure' : 'success', 'number' => 2],
+                ],
+            ];
+        }
+
+        return ['total_count' => count($jobs), 'jobs' => $jobs];
+    }
+
     // --- Coolify (bilaga A) ---
 
     /** GET /projects/{uuid}/{environment_name} (spike S13). */

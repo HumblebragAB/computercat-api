@@ -47,3 +47,27 @@ Nyckeln **ComputerCat Release** (team-nyckel, roll **App Manager**, Key ID `N2SC
 - `buildUploads` sker i sign-jobbet och Computercat läser bara `GET /v1/builds`.
 - Gruppen skapas med `hasAccessToAllBuilds: true` som i B9, men att Computercat ser bygget i gruppen via `filter[betaGroups]` kontrolleras i Task 10 och 12.
 - GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.
+
+
+## GitHub REST som etapp 2 bygger på (docs.github.com, API 2022-11-28)
+
+Läst 2026-10-15 på docs.github.com. Sidorna anger inga fine-grained-behörigheter för GitHub App (bara `repo`-scope för OAuth/classic PAT); appens faktiska rättigheter för Actions och Contents är inte belagda här och prövas först i Task 12.
+
+| Endpoint | Koden läser | Statuskoder enligt referensen |
+|---|---|---|
+| `GET /repos/{o}/{r}/contents/{path}?ref=` | `sha`, `encoding`, `content` (ref = commit/gren/tagg) | 200, 302, 304, 403, 404. Att `content` är base64 med `encoding: base64` anges inte i sektionen (`encoding` är `none` för filer 1 till 100 MB med object-mediatyp); koden kräver `base64` och failar högljutt annars. |
+| `GET /repos/{o}/{r}/git/ref/{ref}` (`tags/<tagg>`) | `object.sha`, `object.type` | 200, 404 (saknas), 409 |
+| `POST /repos/{o}/{r}/git/refs` (`ref`, `sha`) | inget i svaret | 201, 409, 422 |
+| `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches` | `workflow_run_id`, `html_url` (även `run_url`) | 200 med körningens id (bekräftat i spike A G1b). `inputs` max 25 egenskaper. |
+| `GET /repos/{o}/{r}/actions/runs/{id}` | `id`, `status`, `conclusion`, `name`, `html_url`, `head_sha` | 200 |
+| `GET /repos/{o}/{r}/actions/runs/{id}/jobs` (`filter=latest\|all`, `per_page` max 100) | `jobs[].name`, `.conclusion`, `.steps[].name`, `.steps[].conclusion` | 200. Jobbets `conclusion`: success, failure, neutral, cancelled, skipped, timed_out, action_required, null. |
+| `POST /repos/{o}/{r}/actions/runs/{id}/cancel` | inget | 202, 409 |
+| `GET /repos/{o}/{r}/actions/workflows/{id}/runs` (`event`, `created`, `per_page` max 100) | `workflow_runs[]` med samma fält som en körning | 200 |
+
+Avvikelser och obelagda punkter:
+- **422 vid befintlig tagg:** referensen säger bara "validation failed, or the endpoint has been spammed" för 422 och anger 409 utan förklaring. Att 422 betyder "finns redan" är inte belagt. `createTag` accepterar varken 409 eller 422; båda ger `ExternalApiException`, och anroparen (Task 6) ska läsa taggen med `getTag` för att avgöra.
+- **Avbryta en avslutad körning:** referensen listar 409 utan att säga när. Att 409 gäller en avslutad körning är inte belagt (testet bygger på det). `cancelWorkflowRun` accepterar 409 som "inget att avbryta"; verifieras mot en riktig avslutad körning i Task 12.
+- **Värden för `status` på en körning** räknas inte upp på körningssidan; filtervärdena är queued, in_progress, completed m.fl. (requested, waiting, pending). `conclusion` på körningen: success, failure, cancelled m.fl. (se filterlistan: action_required, neutral, skipped, stale, timed_out). Koden jämför bara mot `completed` och `success`/`failure`.
+- **`created`-filtrets sökform** (`>=ISO8601`) hänvisas till "search syntax" utan exempel; formen `>=2026-10-15T10:00:00Z` är ännu inte prövad mot GitHub.
+- **`steps[].conclusion`:** värdena är inte listade; koden behandlar failure, timed_out och cancelled som misslyckat steg.
+- **`return_run_details`** nämns inte i referensen men är bekräftat i spike A G1b (200 med `workflow_run_id`).

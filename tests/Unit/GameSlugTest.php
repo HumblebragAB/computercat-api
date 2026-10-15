@@ -42,4 +42,14 @@ class GameSlugTest extends TestCase
         $this->assertTrue(Validator::make(['slug' => 'ordjakt'], ['slug' => [new GameSlug]])->fails());
         $this->assertTrue(Validator::make(['slug' => 'kattsvep'], ['slug' => [new GameSlug]])->passes());
     }
+
+    public function test_computercat_prefix_is_reserved(): void // R19: läsappens token följer spelets namn
+    {
+        config(['provisioning.reserved_slugs' => []]);
+
+        foreach (['computercat', 'computercat-release', 'computercat-ankare', 'computercatx'] as $slug) {
+            $this->assertTrue(GameSlug::isReserved($slug), $slug);
+        }
+        $this->assertFalse(GameSlug::isReserved('kattsvep'));
+    }
 }
