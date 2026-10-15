@@ -49,6 +49,35 @@ Nyckeln **ComputerCat Release** (team-nyckel, roll **App Manager**, Key ID `N2SC
 - GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.
 - **cc-gate i byggjobbet är tidig återkoppling, inte en bindande kontroll.** Byggjobbet kör spelets kod med sudo, så den koden kan ändra `node`, `shasum` eller `cc-gate.mjs` innan steget körs, eller hoppa över kontrollen och ändå lämna ett lyckat steg. En grön `Bygg och säkerhetskontroll` visar att spelet klarar kontrollen när det inte motarbetar den, inte att bygget är granskat. Bindande är bara det som sker i sign-jobbet (egen VM, ingen spelkod): granskningen av arkivet och av `App.ipa` (bundle-id, version, byggnummer, exportdeklaration, bara `App.app`) innan nycklarna används. Samma sak gäller byggjobbets kontroller av version, bundle-id och exportdeklaration.
 
+### Testkörning av release-ios.yml mot spikappen (2026-10-15)
+
+Körning `38755502361` i HumblebragAB/computercat-release, `workflow_dispatch` på `main` (merge `62f97dd` av PR #8), `run-name` `ios ccspike-ios 7f284fd0-4dfa-4ea8-a954-7abef13e50cc`. Indata: ccspike-ios `fe94d2f`, version 0.1.0, bygge 10, `se.computercat.test`, profil `74R2J9RJM4`, byggguide v2. Utfall `success`, alla steg gröna.
+
+| Jobb | Runner | Tid (UTC) |
+|---|---|---|
+| fetch | ubuntu-24.04 (image 20261004.327.1) | 14:53:56–14:54:04 (8 s) |
+| build | macos-26-arm64 (image 20260907.0351.1), Xcode 26.6 | 14:54:10–14:55:01 (51 s) |
+| sign | macos-26-arm64 (samma image) | 14:55:08–14:57:57 (2 min 49 s, varav cirka 2 min 35 s väntan på Apples bearbetning) |
+
+Kontrollstegen:
+
+- **Validera indata** och **Token når bara spelrepot**: gröna. Kontrollen att körningen startats från `main` passerade.
+- **Inga hemligheter i byggjobbet**: grön.
+- **Kontrollera version**: `package.json` 0.1.0 = indata.
+- **Bygg och säkerhetskontroll**: `cc-gate.mjs: OK` (sha256 för v2), `check-security: OK (23 filer, 3 HTML-sidor med rätt CSP)`, `cc-audit: OK`.
+- **Capacitor sync**: loggen visar "Creating capacitor.config.json in ios/App/App". Det bekräftar sökvägen `ios/App/App/capacitor.config.json` som **Kontrollera bundle-id och exportdeklaration** läser. Steget passerade: appId, `PRODUCT_BUNDLE_IDENTIFIER` och `ITSAppUsesNonExemptEncryption = false` stämde med `se.computercat.test`.
+- **Arkivera osignerat**: `Xcode 26.6`, `** ARCHIVE SUCCEEDED **`.
+- **Kontrollera skripten**: tre `OK` mot de fästa sha256. Kontrollen kördes igen efter uppackningen och före uppladdningen, med tre `OK` båda gångerna och ren `git status`.
+- **Packa upp och granska arkivet**: grönt. Granskningen omfattade zip-poster utan absoluta sökvägar, `..` och symlänkar, uppackning med bsdtar, bara `App.xcarchive` och `App.app`, `ApplicationPath = Applications/App.app` samt Info.plist med bundle-id, version 0.1.0, bygge 10 och exportdeklaration lika med indata. Detta bekräftar att arkivets Info.plist bär version och byggnummer från indata.
+- **Certifikat**: `1 identity imported`. **Profil**: "ComputerCat Test App Store type=IOS_APP_STORE" med en uuid i giltigt format.
+- **Signera och exportera**: `** EXPORT SUCCEEDED **`. ipa-kontrollen (bara `Payload/App.app` och samma fyra Info.plist-värden) passerade.
+- **Ladda upp till App Store Connect**: buildUpload `905807bf-c893-42c3-ab4a-ddd08c7a7b99` gick från AWAITING_UPLOAD via en uppladdningsoperation, och efter cirka 2,5 minuter i PROCESSING blev resultatet `state=COMPLETE`, utan fel och varningar.
+- **Städa**: grön.
+
+Apple efteråt (kontrollerat av controllern): bygge 10 har `processingState: VALID` och `usesNonExemptEncryption: false`, och det finns i gruppen `342f40c7-366f-4b70-9b09-6621ded72ab1` (`hasAccessToAllBuilds: true`, R7).
+
+Loggen är kontrollerad: alla hemligheter (läsappen, P12, P12-lösenordet, ASC-nyckeln och dess id) visas som `***`. Det finns inga omaskerade nycklar och inga långa base64-strängar; de två träffarna på "PRIVATE KEY" är grep-mönstret i byggjobbets kontroll. Stegen kör `/bin/bash -e {0}` utan pipefail, vilket är avsiktligt (se Task 10-rapporten).
+
 
 ## GitHub REST som etapp 2 bygger på (docs.github.com, API 2022-11-28)
 
