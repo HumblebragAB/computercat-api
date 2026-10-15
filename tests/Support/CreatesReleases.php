@@ -9,6 +9,7 @@ use App\Models\ReleaseSetupStep;
 use App\Models\User;
 use App\Releases\ReleaseCatalog;
 use App\Releases\SetupSteps;
+use App\Releases\TestFlight\IosBuildGuides;
 use Illuminate\Support\Str;
 
 // Gemensamma byggstenar för släpptesterna.
@@ -68,5 +69,19 @@ trait CreatesReleases
     protected function adminUser(): User
     {
         return User::factory()->staff(true)->create();
+    }
+
+    /** Låtsas att de här byggguideversionerna stöder iOS (före v3). */
+    protected function iosGuides(string ...$versions): void
+    {
+        $this->app->instance(IosBuildGuides::class, new class($versions) extends IosBuildGuides
+        {
+            public function __construct(private array $versions) {}
+
+            public function supports(string $version): bool
+            {
+                return in_array($version, $this->versions, true);
+            }
+        });
     }
 }

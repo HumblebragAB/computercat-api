@@ -151,6 +151,37 @@ final class BuildGuide
         }
     }
 
+    // Kan spel på versionen byggas för iOS i släpprepot? Styrs av manifestets "ios"-block
+    // (v3-kontraktet, plan 2026-10-15-slapp-testflight Task 4). Bara låsta versioner räknas.
+    public static function supportsIos(string $version): bool
+    {
+        if (! self::isPublished($version)) {
+            return false;
+        }
+
+        try {
+            return self::iosBlockIsValid(self::manifest($version)['ios'] ?? null);
+        } catch (BuildGuideNotFound) {
+            return false;
+        }
+    }
+
+    public static function iosBlockIsValid(mixed $ios): bool
+    {
+        return is_array($ios)
+            && ($ios['project'] ?? null) === 'ios/App/App.xcodeproj'
+            && ($ios['scheme'] ?? null) === 'App'
+            && ($ios['package_manager'] ?? null) === 'spm'
+            && is_string($ios['capacitor'] ?? null)
+            && preg_match('/^\d+\.\d+\.\d+\z/', $ios['capacitor']) === 1;
+    }
+
+    // Varje versions CLAUDE.md börjar med raden "Byggguide: **vN**." (v1, v2; kontraktet för v3).
+    public static function versionFromClaudeMd(string $text): ?string
+    {
+        return preg_match('/^Byggguide: \*\*(v[1-9][0-9]{0,2})\*\*/m', $text, $m) === 1 ? $m[1] : null;
+    }
+
     // Coolifys byggkommando för nya appar (spec delprojekt 3, "Coolify kör spärren", Eriks beslut
     // 2026-10-14). Ingen sha256 i kommandot (det ryms inte i 255 tecken): integriteten kommer av
     // att Computercat bara serverar låsta guidefiler, att BuildGuide::read kontrollerar varje fils

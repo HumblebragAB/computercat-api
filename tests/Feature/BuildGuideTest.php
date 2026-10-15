@@ -417,4 +417,30 @@ class BuildGuideTest extends TestCase
         $this->expectExceptionMessage('är inte publicerad');
         BuildGuide::coolifyBuildCommand('v99');
     }
+
+    public function test_no_published_version_before_v3_supports_ios(): void
+    {
+        $this->assertFalse(BuildGuide::supportsIos('v1'));
+        $this->assertFalse(BuildGuide::supportsIos('v2'));
+        $this->assertFalse(BuildGuide::supportsIos('v99'));
+        $this->assertFalse(BuildGuide::supportsIos('../v2'));
+    }
+
+    public function test_the_ios_block_must_match_the_contract(): void
+    {
+        $ok = ['capacitor' => '8.5.3', 'package_manager' => 'spm', 'project' => 'ios/App/App.xcodeproj', 'scheme' => 'App'];
+        $this->assertTrue(BuildGuide::iosBlockIsValid($ok));
+        $this->assertFalse(BuildGuide::iosBlockIsValid(array_replace($ok, ['project' => 'ios/App/Other.xcodeproj'])));
+        $this->assertFalse(BuildGuide::iosBlockIsValid(array_replace($ok, ['package_manager' => 'cocoapods'])));
+        $this->assertFalse(BuildGuide::iosBlockIsValid(array_replace($ok, ['capacitor' => '^8'])));
+        $this->assertFalse(BuildGuide::iosBlockIsValid(null));
+    }
+
+    public function test_version_is_read_from_the_claude_md_line(): void
+    {
+        $this->assertSame('v2', BuildGuide::versionFromClaudeMd(BuildGuide::claudeMd('v2')));
+        $this->assertSame('v1', BuildGuide::versionFromClaudeMd(BuildGuide::claudeMd('v1')));
+        $this->assertNull(BuildGuide::versionFromClaudeMd("# CLAUDE.md\nByggguide: v3\n"));
+        $this->assertNull(BuildGuide::versionFromClaudeMd("Text Byggguide: **v3**.\n"));
+    }
 }
