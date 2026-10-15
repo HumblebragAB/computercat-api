@@ -12,7 +12,7 @@ class GetReleaseStatusTool extends GameTool
 {
     protected string $name = 'get_release_status';
 
-    protected string $description = 'Show where a game is in the release flow: its production targets (web, app_store, play_store), the latest commit with a successful Demo build, the latest release per stage, open one-time setup steps, and "next" (what to do now, in Swedish). Reads Computercat\'s own records; receipts of Demo builds can be up to five minutes old. Any member.';
+    protected string $description = 'Show where a game is in the release flow: its production targets (web, app_store, play_store), the latest commit with a successful Demo build, the latest release per stage, open one-time setup steps, and "next" (what to do now, in Swedish). For app_store it also shows the bundle id, the latest version released to TestFlight and the latest build number. Reads Computercat\'s own records; receipts of Demo builds can be up to five minutes old. Any member.';
 
     public function schema(JsonSchema $schema): array
     {

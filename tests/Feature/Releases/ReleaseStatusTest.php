@@ -87,8 +87,8 @@ class ReleaseStatusTest extends TestCase
         $game = $this->releasableGame('kattsvep', ['app_store']);
         $this->demoBuild($game, $this->sha('b'));
 
-        $this->assertSame('ready_for_test', $this->statusOf($game)['targets']['app_store']['state']);
-        $this->assertStringContainsString('promote_release(target: app_store, stage: testflight)', $this->statusOf($game)['targets']['app_store']['next']);
+        $this->assertSame('ready_for_testflight', $this->statusOf($game)['targets']['app_store']['state']);
+        $this->assertStringContainsString('promote_release(target: app_store, stage: testflight, commit_sha: <commiten>)', $this->statusOf($game)['targets']['app_store']['next']);
 
         $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'commit_sha' => $this->sha('b'), 'status' => Release::SUCCEEDED]);
         $target = $this->statusOf($game)['targets']['app_store'];
@@ -123,7 +123,7 @@ class ReleaseStatusTest extends TestCase
         $this->demoBuild($game, $this->sha('b'), now());
 
         $target = $this->statusOf($game)['targets']['app_store'];
-        $this->assertSame('ready_for_test', $target['state']);
+        $this->assertSame('ready_for_testflight', $target['state']);
         $this->assertStringContainsString('Commit '.$this->sha('b').' är testad i Demo', $target['next']);
     }
 
@@ -177,6 +177,71 @@ class ReleaseStatusTest extends TestCase
         $this->assertArrayNotHasKey('requested_by', $latest);
     }
 
+    private function tf(Game $game, string $status, array $attrs = []): Release
+    {
+        return $this->release($game, $attrs + ['target' => 'app_store', 'stage' => 'testflight', 'status' => $status,
+            'marketing_version' => '1.2.0', 'build_number' => 5, 'build_guide' => 'v3']);
+    }
+
+    public function test_app_store_ready_state_gives_the_testflight_flow(): void
+    {
+        $game = $this->testFlightGame();
+        $this->demoBuild($game, $this->sha('b'));
+        $this->tf($game, Release::SUCCEEDED, ['commit_sha' => $this->sha('c'), 'marketing_version' => '1.1.0', 'build_number' => 4]);
+
+        $target = $this->statusOf($game)['targets']['app_store'];
+
+        $this->assertSame('ready_for_testflight', $target['state']);
+        $this->assertStringContainsString('Senast släppta version till TestFlight: 1.1.0.', $target['next']);
+        $this->assertStringContainsString(ReleaseNext::TESTFLIGHT_FLOW, $target['next']);
+        $this->assertSame(['bundle_id' => 'se.computercat.kattsvep', 'last_released_version' => '1.1.0', 'last_build_number' => 0], $target['ios']);
+    }
+
+    public function test_first_testflight_release_says_none_is_released(): void
+    {
+        $game = $this->testFlightGame();
+        $this->demoBuild($game);
+
+        $this->assertStringContainsString('Senast släppta version till TestFlight: ingen.', $this->statusOf($game)['targets']['app_store']['next']);
+    }
+
+    public function test_testflight_phases_have_their_own_texts(): void
+    {
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]); // App Store stängt, som i drift
+        $game = $this->testFlightGame();
+        $this->demoBuild($game);
+        $release = $this->tf($game, Release::REQUESTED);
+
+        foreach ([
+            Release::REQUESTED => ['starting', 'startar'],
+            Release::BUILDING => ['building_testflight', 'GitHub Actions bygger'],
+            Release::PROCESSING => ['building_testflight', 'Apple bearbetar'],
+            Release::SUCCEEDED => ['succeeded_testflight', 'finns i TestFlight för gruppen ComputerCat intern'],
+        ] as $status => [$state, $needle]) {
+            $release->update(['status' => $status]);
+            $target = $this->statusOf($game)['targets']['app_store'];
+            $this->assertSame($state, $target['state'], $status);
+            $this->assertStringContainsString($needle, $target['next'], $status);
+            $this->assertStringContainsString('version 1.2.0', $target['next'], $status);
+        }
+
+        $release->update(['status' => Release::FAILED, 'last_error' => 'The GitHub run ended with failure in job build.']);
+        $target = $this->statusOf($game)['targets']['app_store'];
+        $this->assertSame('failed_testflight', $target['state']);
+        $this->assertStringContainsString('ended with failure in job build. Samma commit kan skickas igen', $target['next']);
+        $this->assertSame(['1.2.0', 5], [$target['stages']['testflight']['latest_release']['marketing_version'], $target['stages']['testflight']['latest_release']['build_number']]);
+    }
+
+    public function test_succeeded_testflight_is_the_end_while_app_store_is_closed(): void
+    {
+        $game = $this->testFlightGame();
+        $this->demoBuild($game, $this->sha('a'));
+        $this->tf($game, Release::SUCCEEDED, ['commit_sha' => $this->sha('a')]);
+        config(['releases.buildable_stages' => ['testflight', 'play_internal']]);
+
+        $this->assertSame('succeeded_testflight', $this->statusOf($game)['targets']['app_store']['state']);
+    }
+
     public function test_next_templates_fail_loud(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -191,7 +256,7 @@ class ReleaseStatusTest extends TestCase
 
     public function test_every_template_placeholder_is_a_known_variable(): void
     {
-        $known = ['commit', 'stage', 'target', 'release', 'status', 'error', 'instruction', 'etapp', 'test_stage'];
+        $known = ['commit', 'stage', 'target', 'release', 'status', 'error', 'instruction', 'etapp', 'test_stage', 'last_version', 'version', 'build', 'phase', 'flow'];
         foreach (ReleaseNext::TEMPLATES as $state => $template) {
             preg_match_all('/\{([a-z_]+)\}/', $template, $m);
             $this->assertEmpty(array_diff($m[1], $known), $state);

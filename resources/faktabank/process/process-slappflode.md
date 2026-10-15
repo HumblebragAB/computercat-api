@@ -37,6 +37,11 @@ Tillstånden i `get_release_status` och vad `next` säger i varje (texten är or
 - `succeeded`: Släppet {release} av commit {commit} är klart i {stage}. Inget mer att göra.
 - `failed`: Släppet {release} av commit {commit} misslyckades: {error} Åtgärda orsaken och begär ett nytt släpp med promote_release(target: {target}, stage: {stage}).
 - `cancelled`: Släppet {release} av commit {commit} avbröts. Väntar det på godkännande som inte kommer: fråga Erik. Annars begär ett nytt med promote_release(target: {target}, stage: {stage}).
+- `ready_for_testflight`: Commit {commit} är testad i Demo. Senast släppta version till TestFlight: {last_version}. {flow}
+- `starting`: Släppet {release} (version {version}, bygge {build}) av commit {commit} startar. Fråga igen med get_release_status om en minut.
+- `building_testflight`: Släppet {release} (version {version}, bygge {build}) pågår: {phase}. Fråga igen med get_release_status om några minuter.
+- `succeeded_testflight`: Släppet {release} (version {version}, bygge {build}) finns i TestFlight för gruppen ComputerCat intern. Installera det med TestFlight-appen. Nästa version: {flow}
+- `failed_testflight`: Släppet {release} (version {version}) av commit {commit} misslyckades: {error} Samma commit kan skickas igen med promote_release(target: app_store, stage: testflight, commit_sha: {commit}). Ändrar du koden: {flow}
 
 Ett släpp som väntar på godkännande eller byggstart i sju dygn avbryts av sig självt. Fråga en människa när något fastnar i stället för att försöka igen i oändlighet.
 

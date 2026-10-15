@@ -6,6 +6,7 @@ use App\Models\DemoBuild;
 use App\Models\Game;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
+use App\Releases\TestFlight\TestFlightPreflight;
 
 // Det get_release_status svarar (R11: bara databasen, inga externa anrop).
 final class ReleaseStatus
@@ -75,7 +76,11 @@ final class ReleaseStatus
             'next' => ReleaseNext::for($state, $vars),
             'setup_steps' => $steps->map(fn (ReleaseSetupStep $s) => ['key' => $s->key, 'status' => $s->status, 'instruction' => $s->instruction])->values()->all(),
             'stages' => $stages,
-        ];
+        ] + ($target === 'app_store' ? ['ios' => [
+            'bundle_id' => $game->bundle_id,
+            'last_released_version' => ($last = TestFlightPreflight::lastReleased($game)) === null ? null : (string) $last,
+            'last_build_number' => (int) $game->ios_build_number,
+        ]] : []);
     }
 
     /** @return array{0: string, 1: array<string, string>} */
@@ -93,9 +98,15 @@ final class ReleaseStatus
         if ($test !== 'demo') {
             $testForCommit = self::latest($game, $target, $test, $commit);
             if ($testForCommit === null) {
-                return ['ready_for_test', ['commit' => $commit, 'stage' => $test, 'target' => $target]];
+                return $test === 'testflight'
+                    ? ['ready_for_testflight', ['commit' => $commit, 'last_version' => (string) (TestFlightPreflight::lastReleased($game) ?? 'ingen')]]
+                    : ['ready_for_test', ['commit' => $commit, 'stage' => $test, 'target' => $target]];
             }
             if ($testForCommit->status !== Release::SUCCEEDED) { // misslyckat eller avbrutet
+                return self::releaseState($testForCommit);
+            }
+            // Etapp 2 del 1: App Store är stängt; ett lyckat TestFlight-släpp är slutet tills nästa version.
+            if ($test === 'testflight' && ! ReleaseCatalog::isBuildable($prod)) {
                 return self::releaseState($testForCommit);
             }
         }
@@ -120,12 +131,13 @@ final class ReleaseStatus
     /** @return array{0: string, 1: array<string, string>} */
     private static function releaseState(Release $release): array
     {
+        $testflight = $release->stage === 'testflight';
         $state = match ($release->status) {
             Release::AWAITING_APPROVAL => 'awaiting_approval',
-            Release::REQUESTED => 'queued_for_build',
-            Release::BUILDING, Release::PROCESSING => 'in_progress',
-            Release::SUCCEEDED => 'succeeded',
-            Release::FAILED => 'failed',
+            Release::REQUESTED => ReleaseCatalog::isBuiltByComputercat($release->stage) ? 'starting' : 'queued_for_build',
+            Release::BUILDING, Release::PROCESSING => $testflight ? 'building_testflight' : 'in_progress',
+            Release::SUCCEEDED => $testflight ? 'succeeded_testflight' : 'succeeded',
+            Release::FAILED => $testflight ? 'failed_testflight' : 'failed',
             Release::CANCELLED => 'cancelled',
         };
 
@@ -137,6 +149,9 @@ final class ReleaseStatus
             'target' => $release->target,
             'etapp' => ReleaseCatalog::BUILD_ETAPP[$release->stage] ?? '?',
             'error' => $release->last_error === null || $release->last_error === '' ? 'orsak saknas.' : rtrim($release->last_error, '.').'.',
+            'version' => (string) ($release->marketing_version ?? '?'),
+            'build' => (string) ($release->build_number ?? '?'),
+            'phase' => $release->status === Release::PROCESSING ? 'Apple bearbetar bygget' : 'GitHub Actions bygger och laddar upp',
         ]];
     }
 
@@ -159,6 +174,8 @@ final class ReleaseStatus
             'approved' => $release->approved_at !== null,
             'self_approved' => $release->self_approved,
             'external' => $release->external,
+            'marketing_version' => $release->marketing_version,
+            'build_number' => $release->build_number,
             'last_error' => $release->last_error,
             'created_at' => $release->created_at->toIso8601String(),
         ];

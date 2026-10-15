@@ -8,6 +8,7 @@ use App\Models\Release;
 use App\Models\User;
 use App\Support\SlackAlert;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Tests\Support\AssertsNoHttpInTransaction;
 use Tests\Support\CreatesReleases;
 use Tests\Support\ProvisioningFakes;
@@ -43,6 +44,32 @@ class PromoteReleaseToolTest extends McpTestCase
     private function promote(array $args, ?User $user = null): array
     {
         return $this->callTool($user ?? $this->owner, 'promote_release', ['game' => 'kattsvep'] + $args);
+    }
+
+    private function fakeGameRepo(string $slug, string $version): void
+    {
+        $base = ProvisioningFakes::GITHUB."/repos/HumblebragAB/{$slug}";
+        Http::fake([
+            ProvisioningFakes::GITHUB.'/app/installations/4242/access_tokens' => Http::response(ProvisioningFakes::githubToken(), 201),
+            $base.'/contents/package.json?ref=*' => Http::response(ProvisioningFakes::githubContent(json_encode(['version' => $version]))),
+            $base.'/contents/CLAUDE.md?ref=*' => Http::response(ProvisioningFakes::githubContent("Byggguide: **v3**.\n")),
+            $base.'/git/ref/tags/*' => Http::response([], 404),
+        ]);
+    }
+
+    public function test_testflight_answer_has_version_build_number_and_the_starting_state(): void
+    {
+        Queue::fake();
+        $this->iosGuides('v3');
+        $game = $this->testFlightGame('tinker-isle');
+        $owner = $this->ownerOf($game);
+        $this->demoBuild($game, $this->sha('d'));
+        $this->fakeGameRepo('tinker-isle', '0.2.0');
+
+        $json = json_decode($this->callTool($owner, 'promote_release', ['game' => 'tinker-isle', 'target' => 'app_store', 'stage' => 'testflight'])['text'], true);
+
+        $this->assertSame(['requested', 'starting', '0.2.0', 1], [$json['status'], $json['state'], $json['marketing_version'], $json['build_number']]);
+        $this->assertStringContainsString('startar', $json['next']);
     }
 
     public function test_test_stage_defaults_to_the_latest_demo_commit_and_stops_at_requested(): void

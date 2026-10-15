@@ -21,7 +21,7 @@ class PromoteReleaseTool extends GameTool
 {
     protected string $name = 'promote_release';
 
-    protected string $description = 'Promote an exact commit to the next release stage: testflight or play_internal (test), or web_production, app_store or play_production (production). Test stages default to the latest commit with a successful Demo build; production stages need an explicit commit_sha that already succeeded in the test stage. The first production release per game and target must be approved by Erik in Filament. Only the game owner. In this version a test-stage release is only registered, not built yet, and production stages are refused until their build exists (etapp 1b, 2, 3); the answer says so. Check get_release_status first.';
+    protected string $description = 'Promote an exact commit to the next release stage. testflight (app_store) builds the iOS app: raise "version" in package.json (MAJOR.MINOR.PATCH, higher than the latest TestFlight release and not used before), push to main, wait for the green Demo build, then call this; Computercat tags v<version>, picks the build number, builds in GitHub Actions and puts the build in the TestFlight group "ComputerCat intern". play_internal is registered but not built yet. Production stages need an explicit commit_sha that succeeded in the test stage, and the first production release per game and target must be approved by Erik in Filament; production stages that are not built yet are refused. Test stages default to the latest commit with a successful Demo build. Only the game owner. Check get_release_status first; follow it after promoting.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -79,6 +79,8 @@ class PromoteReleaseTool extends GameTool
             'target' => $release->target,
             'stage' => $release->stage,
             'commit_sha' => $release->commit_sha,
+            'marketing_version' => $release->marketing_version,
+            'build_number' => $release->build_number,
             'status' => $release->status,
             'state' => $described['state'],
             'next' => $described['next'],
