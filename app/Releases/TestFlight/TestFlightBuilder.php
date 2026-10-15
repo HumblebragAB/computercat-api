@@ -7,6 +7,7 @@ use App\Provisioning\Clients\GitHubAppClient;
 use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\SafeMessage;
 use App\Releases\AppStore\AppStoreConnectApi;
+use App\Releases\AppStore\AppStoreNotConfigured;
 use App\Releases\MarketingVersion;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
@@ -72,8 +73,14 @@ final class TestFlightBuilder
     public function fail(Release $release, Throwable $e): void
     {
         $ref = (string) Str::uuid();
-        $message = $e instanceof SafeMessage || $e instanceof ReleaseRefused ? $e->getMessage() : "Internal error (ref {$ref}).";
-        Log::error('TestFlight-släpp misslyckades', ['ref' => $ref, 'release' => $release->uuid, 'exception' => $e]);
+        // Konfigfel: spelets Claude och last_error får bara en generisk text; env-namnen (aldrig värden) loggas.
+        $message = match (true) {
+            $e instanceof AppStoreNotConfigured => 'App Store is not configured; ask Erik.',
+            $e instanceof SafeMessage, $e instanceof ReleaseRefused => $e->getMessage(),
+            default => "Internal error (ref {$ref}).",
+        };
+        Log::error('TestFlight-släpp misslyckades', ['ref' => $ref, 'release' => $release->uuid, 'exception' => $e]
+            + ($e instanceof AppStoreNotConfigured ? ['detail' => $e->getMessage()] : []));
 
         // Under radlås och bara från en aktiv status: ett klart, fällt eller avbrutet släpp ändras aldrig.
         $fresh = DB::transaction(function () use ($release, $message) {
@@ -90,9 +97,15 @@ final class TestFlightBuilder
         }
 
         // R15: en körning som kan leva vidare avbryts, så att den inte laddar upp ett bygge för ett fällt släpp.
-        // Går det inte nu (GitHub svarar inte) försöker svepet igen (retryCancel).
-        if (! ($e instanceof ReleaseFailed && $e->runFinished) && ! $this->cancelRunOf($fresh)) {
-            $this->markCancelPending($fresh);
+        // Går det inte nu (GitHub svarar inte) försöker svepet igen (retryCancel). Begärdes en dispatch men
+        // ingen körning är känd eller hittad, letar svepet vidare via run-name så att en sen körning avbryts.
+        if (! ($e instanceof ReleaseFailed && $e->runFinished)) {
+            $result = $this->cancelRunOf($fresh);
+            if ($result === self::CANCEL_ERROR) {
+                $this->markCancelPending($fresh);
+            } elseif ($result === self::CANCEL_NONE && isset(($fresh->external ?? [])['dispatch_requested_at'])) {
+                $this->markCancelPending($fresh, orphanWatch: true);
+            }
         }
 
         $this->slack->send(
@@ -112,8 +125,11 @@ final class TestFlightBuilder
         if (! in_array($release->status, [Release::FAILED, Release::CANCELLED], true) || ($external['cancel_pending'] ?? false) !== true) {
             return;
         }
+        $orphanWatch = ($external['orphan_watch'] ?? false) === true;
+        $result = $this->cancelRunOf($release);
 
-        if ($this->cancelRunOf($release)) {
+        // Avbruten, eller (utan bevakning) inget att avbryta: klart.
+        if ($result === self::CANCEL_DONE || ($result === self::CANCEL_NONE && ! $orphanWatch)) {
             $this->updateExternal($release, fn (array $x) => array_merge(array_diff_key($x, ['cancel_pending' => 1]), ['cancel_confirmed_at' => now()->toIso8601String()]));
 
             return;
@@ -126,6 +142,14 @@ final class TestFlightBuilder
             return;
         }
 
+        // Bevakningen hittade ingen körning på hela tiden: ingen körning startades. Inget larm.
+        if ($result === self::CANCEL_NONE) {
+            $this->updateExternal($release, fn (array $x) => array_merge(array_diff_key($x, ['cancel_pending' => 1]), ['cancel_attempts' => $attempts, 'orphan_watch_ended_at' => now()->toIso8601String()]));
+            Log::notice('Ingen körning dök upp för det fällda släppet; bevakningen avslutad', ['release' => $release->uuid, 'attempts' => $attempts]);
+
+            return;
+        }
+
         $this->updateExternal($release, fn (array $x) => array_merge(array_diff_key($x, ['cancel_pending' => 1]), ['cancel_attempts' => $attempts, 'cancel_given_up_at' => now()->toIso8601String()]));
         Log::error('GitHub-körningen för ett fällt släpp kunde inte avbrytas', ['release' => $release->uuid, 'attempts' => $attempts]);
         $this->slack->send(
@@ -134,10 +158,10 @@ final class TestFlightBuilder
         );
     }
 
-    private function markCancelPending(Release $release): void
+    private function markCancelPending(Release $release, bool $orphanWatch = false): void
     {
-        $this->updateExternal($release, fn (array $x) => array_merge($x, ['cancel_pending' => true, 'cancel_attempts' => 1]));
-        Log::warning('Körningen kunde inte avbrytas nu; svepet försöker igen', ['release' => $release->uuid]);
+        $this->updateExternal($release, fn (array $x) => array_merge($x, ['cancel_pending' => true, 'cancel_attempts' => 1] + ($orphanWatch ? ['orphan_watch' => true] : [])));
+        Log::warning($orphanWatch ? 'Ingen körning känd för det fällda släppet; svepet letar via run-name' : 'Körningen kunde inte avbrytas nu; svepet försöker igen', ['release' => $release->uuid]);
     }
 
     // Ändrar bara external, under radlås (status rörs inte).
@@ -154,7 +178,8 @@ final class TestFlightBuilder
     // fasgränsen gör det i stället (R11). Alla andra fel (4xx, oväntat svar) fäller direkt.
     private static function isTransient(Throwable $e): bool
     {
-        return $e instanceof ExternalApiException && ($e->status === 0 || $e->status >= 500 || in_array($e->status, [408, 429], true));
+        return $e instanceof ExternalApiException && ($e->status === 0 || $e->status >= 500 || in_array($e->status, [408, 429], true)
+            || ($e->status === 403 && $e->rateLimited)); // GitHubs sekundära rate limit svarar 403
     }
 
     /**
@@ -327,7 +352,7 @@ final class TestFlightBuilder
         if (! $moved) {
             Log::warning('Körning startad för ett släpp som inte längre bygger; avbryts', ['release' => $release->uuid, 'run' => $runId]);
             $this->updateExternal($release, fn (array $x) => array_merge($x, ['github_run_id' => $runId]));
-            if (! $this->cancelRunOf($release)) {
+            if ($this->cancelRunOf($release) !== self::CANCEL_DONE) {
                 $this->markCancelPending($release);
             }
 
@@ -491,26 +516,51 @@ final class TestFlightBuilder
         );
     }
 
+    private const CANCEL_DONE = 'done';
+
+    private const CANCEL_NONE = 'none';
+
+    private const CANCEL_ERROR = 'error';
+
     /**
-     * Avbryter släppets körning om den finns (känd eller hittad via run-name). Fel loggas; de får inte
-     * dölja orsaken. @return bool true = avbruten eller inget att avbryta; false = försök igen senare
+     * Avbryter släppets körning: den kända, och svarar GitHub 404 på den (eller är ingen känd) den som
+     * hittas via run-name. Fel loggas; de får inte dölja orsaken.
+     *
+     * @return string CANCEL_DONE (avbruten), CANCEL_NONE (ingen körning hittad), CANCEL_ERROR (försök igen)
      */
-    private function cancelRunOf(Release $release): bool
+    private function cancelRunOf(Release $release): string
     {
         $external = $release->external ?? [];
+        $repo = (string) config('releases.ios_workflow.repo');
         try {
-            $runId = is_int($external['github_run_id'] ?? null) ? $external['github_run_id']
-                : (isset($external['dispatch_requested_at']) ? $this->findRun($release)['id'] ?? null : null);
-            if ($runId !== null) {
-                $this->github->cancelWorkflowRun((string) config('releases.ios_workflow.repo'), $runId);
-                Log::notice('GitHub-körning avbruten för fällt släpp', ['release' => $release->uuid, 'run' => $runId]);
-            }
+            $known = is_int($external['github_run_id'] ?? null) ? $external['github_run_id'] : null;
+            if ($known !== null) {
+                try {
+                    $this->github->cancelWorkflowRun($repo, $known);
+                    Log::notice('GitHub-körning avbruten för fällt släpp', ['release' => $release->uuid, 'run' => $known]);
 
-            return true;
+                    return self::CANCEL_DONE;
+                } catch (ExternalApiException $e) {
+                    if ($e->status !== 404) {
+                        throw $e;
+                    }
+                }
+            }
+            if (! isset($external['dispatch_requested_at'])) {
+                return self::CANCEL_NONE;
+            }
+            $run = $this->findRun($release);
+            if ($run === null || $run['id'] === $known) {
+                return self::CANCEL_NONE;
+            }
+            $this->github->cancelWorkflowRun($repo, $run['id']);
+            Log::notice('GitHub-körning (hittad via run-name) avbruten för fällt släpp', ['release' => $release->uuid, 'run' => $run['id']]);
+
+            return self::CANCEL_DONE;
         } catch (Throwable $e) {
             Log::warning('Kunde inte avbryta GitHub-körningen', ['release' => $release->uuid, 'error' => get_class($e)]);
 
-            return false;
+            return self::CANCEL_ERROR;
         }
     }
 }

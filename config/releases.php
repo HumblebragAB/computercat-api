@@ -59,7 +59,8 @@ return [
     ],
 
     // Svepet försöker avbryta körningen för ett fällt släpp så här många gånger (var femte minut,
-    // alltså ungefär en timme) när GitHub inte svarade när släppet fälldes; sedan larm.
+    // alltså ungefär en timme) när GitHub inte svarade när släppet fälldes; sedan larm. Lika länge
+    // letar svepet via run-name efter en körning för ett fällt släpp utan känd körning (inget larm).
     'cancel_retries' => 12,
 
     'poll_seconds' => [

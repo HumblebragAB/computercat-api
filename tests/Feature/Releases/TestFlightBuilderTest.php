@@ -773,4 +773,100 @@ class TestFlightBuilderTest extends TestCase
         $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
         $this->assertArrayHasKey('cancel_confirmed_at', $this->fresh()->external);
     }
+
+    // Slutgranskningen: sekundär rate limit, föräldralösa körningar och generiskt konfigfel.
+
+    public function test_github_secondary_rate_limit_403_is_tolerated(): void
+    {
+        $this->building();
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'You have exceeded a secondary rate limit.'], 403, ['Retry-After' => '60'])]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertNull($this->fresh()->last_error);
+    }
+
+    public function test_github_403_with_no_remaining_rate_limit_is_tolerated(): void
+    {
+        $this->building();
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'API rate limit exceeded'], 403, ['X-RateLimit-Remaining' => '0'])]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+    }
+
+    public function test_run_404_fails_and_the_sweep_finds_and_cancels_the_run_by_name(): void
+    {
+        Queue::fake();
+        $this->building();
+        $this->fake([
+            self::RELEASE_REPO.'/actions/runs/4711/cancel' => Http::response(['message' => 'Not Found'], 404),
+            self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'Not Found'], 404),
+            self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::sequence()
+                ->push(['total_count' => 0, 'workflow_runs' => []])
+                ->push(['total_count' => 1, 'workflow_runs' => [F::githubRun(4712, 'in_progress', null, $this->release->uuid)]]),
+        ]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+        $this->assertStringContainsString('returned 404', $this->fresh()->last_error);
+        $this->assertTrue($this->fresh()->external['cancel_pending']);
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4712/cancel'));
+        $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
+        $this->assertArrayHasKey('cancel_confirmed_at', $this->fresh()->external);
+    }
+
+    public function test_run_that_shows_up_after_the_window_is_cancelled_by_the_sweep(): void
+    {
+        Queue::fake();
+        $this->dispatchPending(4);
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::sequence()
+            ->push(['total_count' => 0, 'workflow_runs' => []])
+            ->push(['total_count' => 0, 'workflow_runs' => []])
+            ->push(['total_count' => 1, 'workflow_runs' => [F::githubRun(4713, 'queued', null, $this->release->uuid)]])]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertStringContainsString('no run was found', $this->fresh()->last_error);
+        $this->assertTrue($this->fresh()->external['cancel_pending']);
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4713/cancel'));
+        $this->assertArrayHasKey('cancel_confirmed_at', $this->fresh()->external);
+    }
+
+    public function test_watch_for_a_run_that_never_shows_up_ends_quietly(): void
+    {
+        Queue::fake();
+        $this->release->update(['status' => Release::FAILED, 'last_error' => 'No run.', 'external' => [
+            'dispatch_requested_at' => now()->subMinutes(70)->toIso8601String(), 'cancel_pending' => true, 'orphan_watch' => true,
+            'cancel_attempts' => (int) config('releases.cancel_retries') - 1,
+        ]]);
+        $this->fake();
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
+        $this->assertArrayHasKey('orphan_watch_ended_at', $this->fresh()->external);
+        Http::assertNotSent(fn (Request $r) => $r->url() === F::SLACK || str_ends_with($r->url(), '/cancel'));
+    }
+
+    public function test_app_store_not_configured_shows_a_generic_message_and_logs_the_details(): void
+    {
+        Log::spy();
+        config(['releases.app_store.key_id' => null]);
+        $this->fake();
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+        $this->assertSame('App Store is not configured; ask Erik.', $this->fresh()->last_error);
+        Log::shouldHaveReceived('error')->withArgs(fn ($msg, $ctx = []) => str_contains(json_encode($ctx), 'ASC_RELEASE_KEY_ID'));
+        Http::assertSent(fn (Request $r) => $r->url() === F::SLACK && ! str_contains($r['text'], 'ASC_RELEASE'));
+    }
 }

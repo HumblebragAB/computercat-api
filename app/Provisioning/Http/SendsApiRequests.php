@@ -34,6 +34,8 @@ trait SendsApiRequests
             return $response;
         }
 
-        throw new ExternalApiException($this->serviceName(), $method, $path, $response->status(), Redactor::body($response->body()));
+        $rateLimited = $response->header('Retry-After') !== '' || $response->header('X-RateLimit-Remaining') === '0';
+
+        throw new ExternalApiException($this->serviceName(), $method, $path, $response->status(), Redactor::body($response->body()), $rateLimited);
     }
 }
