@@ -100,12 +100,12 @@ Read 2026-10-13 on docs.github.com.
 - `POST /orgs/{org}/repos` (https://docs.github.com/en/rest/repos/repos#create-an-organization-repository). Body used: `name` (required), `description`, `private` (boolean, default `false`, so always sent as `true`), `auto_init` (boolean, default `false`; "Pass true to create an initial commit with empty README"). Responses: 201 Created, 403 Forbidden, 422 "Validation failed, or the endpoint has been spammed.", 451.
 - Permissions page (https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps): `POST /orgs/{org}/repos` is listed under "Repository permissions for "Administration"" (write, UAT/IAT, additional permissions ✓) and under "Repository permissions for "Repository creation"" (write, UAT/IAT, additional permissions ✓). The page does not say how they combine. **UNCONFIRMED:** whether Administration: write alone is enough; spike S8 tries it, and on 403 Erik decides whether to add "Repository creation".
 - Contents (same page): `GET /repos/{owner}/{repo}/contents/{path}` needs Contents: read; `PUT /repos/{owner}/{repo}/contents/{path}` needs Contents: write (also listed under Workflows: write, which only matters for files under `.github/workflows/`; we never write there).
-- Access to created repos: "If the app creates any repositories, the app will automatically be granted access to those repositories as well." (https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). VERIFIERAT 2026-10-14: installationen med "Only select repositories" kräver minst ett valt repo (UI: "Select at least one repository"); ankarrepot `HumblebragAB/spelstudio-ankare` fyller den rollen. Repo som appen skapar läggs till i installationen direkt.
+- Access to created repos: "If the app creates any repositories, the app will automatically be granted access to those repositories as well." (https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app). VERIFIERAT 2026-10-14: installationen med "Only select repositories" kräver minst ett valt repo (UI: "Select at least one repository"); ankarrepot `HumblebragAB/computercat-ankare` (hette spelstudio-ankare) fyller den rollen. Repo som appen skapar läggs till i installationen direkt.
 - `auto_init` README content and how fast it is readable via the Contents API: not documented; spike S11 measures it. The step polls a 404 for up to 3 minutes.
 
 ## Spikresultat (2026-10-14)
 
-App "Humblebrag Spelstudio" (App ID 5312120), installation 171274645 på HumblebragAB, "Only select repositories". Behörigheter: Administration RW, Contents RW, Repository creation RW, Metadata R. JWT med `iss` = client id fungerar.
+App "ComputerCat Studio" (App ID 5312120; hette "Humblebrag Spelstudio" till 2026-10-15), installation 171274645 på HumblebragAB, "Only select repositories". Behörigheter: Administration RW, Contents RW, Repository creation RW, Metadata R. JWT med `iss` = client id fungerar.
 
 - S8: `POST /orgs/HumblebragAB/repos` med `private: true, auto_init: true` ger 201 och `private: true` med installationstoken. Appen har "Repository creation: write" (Erik valde att lägga till den före test), så frågan om Administration räcker ensam är inte prövad.
 - S9: token utfärdad före skapandet når det nya repot direkt.
@@ -115,3 +115,5 @@ App "Humblebrag Spelstudio" (App ID 5312120), installation 171274645 på Humbleb
 - S17: `PATCH archived: true` med installationstoken ger 200 och `archived: true`.
 - S6: en engångs-routine i molnmiljön "Spelstudio" pushade direkt till `main` (ingen ny gren); `npm ci` nådde registret och `npm run check` var grön.
 - Repo som appen skapar läggs till i installationen direkt (syns i `GET /installation/repositories`).
+
+Namnbyte 2026-10-15 (Eriks beslut: studion heter ComputerCat): appen heter "ComputerCat Studio" (slug `computercat-studio`; "ComputerCat" är reserverat för kontot @computercat), repona heter `computercat-ankare` och `computercat-release`. App ID, installation och repo-id är oförändrade; koden använder bara App ID och repots namn. `computercat-release` ingår i installationen sedan 2026-10-15.

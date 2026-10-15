@@ -12,7 +12,7 @@ Ersätter delprojekt 3 i tidigare specar ("dokument-samlingar och AI-mallar"), s
 
 ## Eriks beslut (2026-10-14)
 
-1. Faktabanken gäller **spelen** (Spelstudion), inte alla Humblebrag-projekt.
+1. Faktabanken gäller **spelen** (ComputerCat Studio), inte alla Humblebrag-projekt.
 2. Innehållet skrivs som **Markdown i computercat-api**, versionerat i git och deployat med API:t. Ingen redigering i Filament.
 3. Säkerhetskontrollerna är en **spärr i bygget**.
 4. Upplägg **A**: artiklar i repot och MCP-verktyg för att lista, söka och läsa. Ingen databas, inga embeddings.

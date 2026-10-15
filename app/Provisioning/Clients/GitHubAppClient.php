@@ -21,7 +21,7 @@ use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
 use Lcobucci\JWT\Token\Builder;
 
-// GitHub App "Humblebrag Spelstudio" (bilaga B). Appen har Administration:
+// GitHub App "ComputerCat Studio" (bilaga B). Appen har Administration:
 // write och kan alltså radera repon. Klienten har därför ingen metod för
 // DELETE och vägrar metoden i github(); TestCase vaktar hela sviten.
 class GitHubAppClient
