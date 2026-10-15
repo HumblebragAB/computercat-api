@@ -66,9 +66,10 @@ class ReleaseNotifierTest extends TestCase
 
     public function test_test_stage_sends_nothing(): void
     {
-        $game = $this->releasableGame('kattsvep', ['app_store']);
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
+        $game = $this->releasableGame('kattsvep', ['play_store']);
         $this->demoBuild($game);
-        $release = app(ReleaseService::class)->promote($game, $this->ownerOf($game), 'app_store', 'testflight', null);
+        $release = app(ReleaseService::class)->promote($game, $this->ownerOf($game), 'play_store', 'play_internal', null);
 
         $this->assertNull(app(ReleaseNotifier::class)->afterPromote($release));
         Http::assertNothingSent();

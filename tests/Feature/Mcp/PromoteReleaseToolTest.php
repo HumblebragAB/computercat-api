@@ -30,7 +30,7 @@ class PromoteReleaseToolTest extends McpTestCase
         ProvisioningFakes::configure();
         $this->startHttpTransactionGuard();
         Http::fake([ProvisioningFakes::SLACK => fn () => Http::response('ok', $this->slackStatus)]);
-        $this->game = $this->releasableGame('kattsvep', ['web', 'app_store']);
+        $this->game = $this->releasableGame('kattsvep', ['web', 'app_store', 'play_store']);
         $this->owner = $this->ownerOf($this->game);
     }
 
@@ -47,9 +47,10 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_test_stage_defaults_to_the_latest_demo_commit_and_stops_at_requested(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game, $this->sha('b'));
 
-        $result = $this->promote(['target' => 'app_store', 'stage' => 'testflight']);
+        $result = $this->promote(['target' => 'play_store', 'stage' => 'play_internal']);
 
         $this->assertTrue($result['ok'], $result['text']);
         $json = json_decode($result['text'], true);
@@ -57,7 +58,7 @@ class PromoteReleaseToolTest extends McpTestCase
         $this->assertSame($this->sha('b'), $json['commit_sha']);
         $this->assertSame('queued_for_build', $json['state']);
         // R1: inget byggs i 1a, och svaret säger det.
-        $this->assertStringContainsString('etapp 2', $json['next']);
+        $this->assertStringContainsString('etapp 3', $json['next']);
         $this->assertNull($json['notification']);
         Http::assertNothingSent();
     }
@@ -118,10 +119,11 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_only_the_owner_may_promote(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
         $member = $this->staffMember($this->game);
 
-        $result = $this->promote(['target' => 'app_store', 'stage' => 'testflight'], $member);
+        $result = $this->promote(['target' => 'play_store', 'stage' => 'play_internal'], $member);
 
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('Only the game owner', $result['text']);
@@ -150,6 +152,8 @@ class PromoteReleaseToolTest extends McpTestCase
     public function test_gate_refusals_are_errors_without_side_effects(): void
     {
         $this->demoBuild($this->game, $this->sha('b'));
+        // play_store är på i setUp (play_internal ersätter testflight som allmänt teststeg); stängs här för fallet "not enabled".
+        $this->game->forceFill(['release_targets' => ['web', 'app_store']])->save();
 
         $cases = [
             [['target' => 'web', 'stage' => 'web_production'], 'commit_sha is required for production stages'],
@@ -170,9 +174,10 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_empty_commit_sha_counts_as_omitted(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game, $this->sha('b'));
 
-        $result = $this->promote(['target' => 'app_store', 'stage' => 'testflight', 'commit_sha' => '']);
+        $result = $this->promote(['target' => 'play_store', 'stage' => 'play_internal', 'commit_sha' => '']);
 
         $this->assertTrue($result['ok'], $result['text']);
         $this->assertSame($this->sha('b'), json_decode($result['text'], true)['commit_sha']);
@@ -180,10 +185,11 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_switch_off_stops_new_promotions(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
         $this->game->forceFill(['releases_enabled' => false])->save();
 
-        $result = $this->promote(['target' => 'app_store', 'stage' => 'testflight']);
+        $result = $this->promote(['target' => 'play_store', 'stage' => 'play_internal']);
 
         $this->assertFalse($result['ok']);
         $this->assertStringContainsString('switched off', $result['text']);
@@ -192,10 +198,11 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_second_call_while_pending_is_refused(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
-        $this->promote(['target' => 'app_store', 'stage' => 'testflight']);
+        $this->promote(['target' => 'play_store', 'stage' => 'play_internal']);
 
-        $again = $this->promote(['target' => 'app_store', 'stage' => 'testflight']);
+        $again = $this->promote(['target' => 'play_store', 'stage' => 'play_internal']);
 
         $this->assertFalse($again['ok']);
         $this->assertStringContainsString('already pending', $again['text']);
@@ -218,12 +225,13 @@ class PromoteReleaseToolTest extends McpTestCase
 
     public function test_slack_failure_carries_a_warning_but_test_stage_does_not(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->slackStatus = 500;
         $this->demoBuild($this->game, $this->sha('b'));
         $json = json_decode($this->promote(['target' => 'web', 'stage' => 'web_production', 'commit_sha' => $this->sha('b')])['text'], true);
         $this->assertArrayHasKey('warning', $json);
 
-        $json = json_decode($this->promote(['target' => 'app_store', 'stage' => 'testflight'])['text'], true);
+        $json = json_decode($this->promote(['target' => 'play_store', 'stage' => 'play_internal'])['text'], true);
         $this->assertArrayNotHasKey('warning', $json);
     }
 }

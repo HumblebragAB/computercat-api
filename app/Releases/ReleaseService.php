@@ -7,6 +7,7 @@ use App\Models\DemoBuild;
 use App\Models\Game;
 use App\Models\Release;
 use App\Models\User;
+use App\Releases\TestFlight\TestFlightPreflight;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -25,8 +26,22 @@ final class ReleaseService
         // Utanför transaktionen: en utgången plats ska vara fri när låset tas.
         Release::expireStale();
 
+        // Steg som Computercat bygger läser spelrepot först (HTTP, därför före transaktionen).
+        // Commiten bestäms här och kontrolleras igen under låset.
+        $preflight = null;
+        if (ReleaseCatalog::isBuiltByComputercat($stage)) {
+            $commit ??= DemoBuild::latestFor($game)?->commit_sha;
+            if (($why = ReleaseGate::check($game, $target, $stage, $commit)) !== null) {
+                throw new ReleaseRefused($why);
+            }
+            if (Release::active()->where('game_id', $game->id)->where('target', $target)->where('stage', $stage)->exists()) {
+                throw new ReleaseRefused("A {$stage} release for {$target} is already pending; wait for it or ask Erik to cancel it.");
+            }
+            $preflight = app(TestFlightPreflight::class)->check($game->fresh(), $commit);
+        }
+
         try {
-            return DB::transaction(function () use ($game, $user, $target, $stage, $commit) {
+            return DB::transaction(function () use ($game, $user, $target, $stage, $commit, $preflight) {
                 // Spärr 4: spelets rad låses, så två samtidiga befordringar köas efter varandra.
                 // (SQLite i test ignorerar låset; det unika indexet är då det som håller.)
                 $locked = Game::query()->whereKey($game->getKey())->lockForUpdate()->firstOrFail();
@@ -48,6 +63,26 @@ final class ReleaseService
                 $first = $production && ! Release::where('game_id', $locked->id)->where('target', $target)
                     ->where('stage', $stage)->where('status', Release::SUCCEEDED)->exists();
 
+                $build = [];
+                if ($preflight !== null) {
+                    // R3 igen under låset: ett annat släpp kan ha lyckats sedan förkontrollen.
+                    $last = TestFlightPreflight::lastReleased($locked);
+                    if ($last !== null && ! $preflight->version->isHigherThan($last)) {
+                        throw new ReleaseRefused("Version {$preflight->version} is no longer higher than the latest TestFlight release {$last}; raise version in package.json and try again.");
+                    }
+                    // R5: nästa nummer, i samma transaktion som släppet. Luckor är tillåtna, upprepning aldrig.
+                    // Räknaren får aldrig ligga efter släppen (t.ex. efter en återställning): då hoppar vi
+                    // förbi högsta använda numret och loggar, i stället för att krocka med det unika indexet.
+                    $counter = (int) $locked->ios_build_number;
+                    $used = (int) Release::where('game_id', $locked->id)->max('build_number');
+                    if ($used > $counter) {
+                        Log::warning('ios_build_number låg efter släppen; hoppar förbi högsta använda byggnumret', ['game_id' => $locked->id, 'counter' => $counter, 'highest_used' => $used]);
+                    }
+                    $next = max($counter, $used) + 1;
+                    $locked->forceFill(['ios_build_number' => $next])->save();
+                    $build = ['marketing_version' => (string) $preflight->version, 'build_number' => $next, 'build_guide' => $preflight->buildGuide];
+                }
+
                 return Release::create([
                     'game_id' => $locked->id,
                     'target' => $target,
@@ -55,7 +90,7 @@ final class ReleaseService
                     'commit_sha' => $commit,
                     'status' => $first ? Release::AWAITING_APPROVAL : Release::REQUESTED,
                     'requested_by' => $user->id,
-                ]);
+                ] + $build);
             });
         } catch (UniqueConstraintViolationException) {
             throw new ReleaseRefused("A {$stage} release for {$target} is already pending; wait for it or ask Erik to cancel it.");

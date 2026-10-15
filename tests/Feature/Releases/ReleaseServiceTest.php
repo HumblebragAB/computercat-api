@@ -24,7 +24,7 @@ class ReleaseServiceTest extends TestCase
     {
         parent::setUp();
         $this->openProductionStages();
-        $this->game = $this->releasableGame('kattsvep', ['web', 'app_store']);
+        $this->game = $this->releasableGame('kattsvep', ['web', 'app_store', 'play_store']);
         $this->owner = $this->ownerOf($this->game);
     }
 
@@ -50,10 +50,11 @@ class ReleaseServiceTest extends TestCase
 
     public function test_test_stage_defaults_to_the_latest_receipt_and_is_requested(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game, $this->sha('a'), now()->subHour());
         $this->demoBuild($this->game, $this->sha('b'), now());
 
-        $release = $this->promote('app_store', 'testflight');
+        $release = $this->promote('play_store', 'play_internal');
 
         $this->assertSame(Release::REQUESTED, $release->status);
         $this->assertSame($this->sha('b'), $release->commit_sha);
@@ -63,22 +64,24 @@ class ReleaseServiceTest extends TestCase
 
     public function test_an_explicit_commit_wins_over_the_default(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game, $this->sha('a'), now()->subHour());
         $this->demoBuild($this->game, $this->sha('b'), now());
 
-        $this->assertSame($this->sha('a'), $this->promote('app_store', 'testflight', $this->sha('a'))->commit_sha);
+        $this->assertSame($this->sha('a'), $this->promote('play_store', 'play_internal', $this->sha('a'))->commit_sha);
     }
 
     public function test_only_the_owner_may_promote(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
         $member = User::factory()->staff()->create();
         $this->game->members()->attach($member, ['role' => 'member']);
 
-        $this->assertRefused(fn () => $this->promote('app_store', 'testflight', null, $member), 'Only the game owner');
+        $this->assertRefused(fn () => $this->promote('play_store', 'play_internal', null, $member), 'Only the game owner');
         $this->assertSame(0, Release::count());
         // Platform admin räknas som ägare (GameAccess::isOwner).
-        $this->assertSame(Release::REQUESTED, $this->promote('app_store', 'testflight', null, $this->adminUser())->status);
+        $this->assertSame(Release::REQUESTED, $this->promote('play_store', 'play_internal', null, $this->adminUser())->status);
     }
 
     public function test_first_production_release_awaits_approval_and_later_ones_do_not(): void // spärr 3
@@ -123,17 +126,19 @@ class ReleaseServiceTest extends TestCase
 
     public function test_second_promote_while_one_is_pending_is_refused(): void // spärr 4
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
-        $this->promote('app_store', 'testflight');
+        $this->promote('play_store', 'play_internal');
 
-        $this->assertRefused(fn () => $this->promote('app_store', 'testflight'), 'already pending');
+        $this->assertRefused(fn () => $this->promote('play_store', 'play_internal'), 'already pending');
         $this->assertSame(1, Release::count());
     }
 
     public function test_different_slots_can_be_pending_at_once(): void
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $this->demoBuild($this->game);
-        $this->promote('app_store', 'testflight');
+        $this->promote('play_store', 'play_internal');
         $this->promote('web', 'web_production', $this->sha());
 
         $this->assertSame(2, Release::active()->count());
@@ -253,8 +258,9 @@ class ReleaseServiceTest extends TestCase
 
     public function test_start_rechecks_everything(): void // spärr 7: bygget startar
     {
+        // play_internal: testflight byggs sedan etapp 2 och läser spelrepot (TestFlightPromoteTest).
         $build = $this->demoBuild($this->game);
-        $release = $this->promote('app_store', 'testflight');
+        $release = $this->promote('play_store', 'play_internal');
 
         $this->service()->assertCanStart($release);
 

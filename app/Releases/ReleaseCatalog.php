@@ -20,10 +20,18 @@ final class ReleaseCatalog
     public const BUILD_ETAPP = [
         'web_production' => '1b',
         'testflight' => '2',
-        'app_store' => '2',
+        'app_store' => '2 (App Store-delen)',
         'play_internal' => '3',
         'play_production' => '3',
     ];
+
+    /** Steg som Computercat själv bygger i den här etappen (etapp 2 del 1: bara TestFlight). */
+    public const BUILT_BY_COMPUTERCAT = ['testflight'];
+
+    public static function isBuiltByComputercat(string $stage): bool
+    {
+        return in_array($stage, self::BUILT_BY_COMPUTERCAT, true);
+    }
 
     public static function testStage(string $target): string
     {
