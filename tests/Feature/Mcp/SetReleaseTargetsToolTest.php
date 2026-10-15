@@ -2,11 +2,13 @@
 
 namespace Tests\Feature\Mcp;
 
+use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use Illuminate\Support\Facades\Queue;
 use Tests\Support\CreatesReleases;
 
 class SetReleaseTargetsToolTest extends McpTestCase
@@ -22,6 +24,7 @@ class SetReleaseTargetsToolTest extends McpTestCase
         parent::setUp();
         $this->game = $this->game('kattsvep');
         $this->admin = $this->adminUser();
+        Queue::fake();
     }
 
     private function set(string $targets, ?User $user = null, string $slug = 'kattsvep'): array
@@ -111,5 +114,38 @@ class SetReleaseTargetsToolTest extends McpTestCase
         // En avslutad release hindrar inte. Status ändras alltid via modellen (active_key sätts i saving-kroken).
         Release::where('game_id', $this->game->id)->get()->each->update(['status' => Release::CANCELLED]);
         $this->assertTrue($this->set('web')['ok']);
+    }
+
+    public function test_app_store_gets_a_bundle_id_and_queues_the_setup(): void
+    {
+        $result = $this->set('app_store');
+
+        $this->assertTrue($result['ok'], $result['text']);
+        $this->assertSame('se.computercat.kattsvep', $this->game->fresh()->bundle_id);
+        Queue::assertPushed(RunAppStoreSetup::class, fn (RunAppStoreSetup $job) => $job->gameId === $this->game->id);
+        $this->assertStringContainsString('bundle-id se.computercat.kattsvep', $result['text']);
+    }
+
+    public function test_colliding_bundle_id_is_refused(): void
+    {
+        $other = $this->game('ab-c');
+        $other->forceFill(['bundle_id' => 'se.computercat.abc'])->save();
+        $this->game('abc');
+
+        $result = $this->set('app_store', slug: 'abc');
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('se.computercat.abc', $result['text']);
+        $this->assertStringNotContainsString('ab-c', $result['text']);
+        $this->assertSame([], Game::where('slug', 'abc')->first()->releaseTargets());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_web_only_queues_nothing(): void
+    {
+        $this->set('web');
+
+        Queue::assertNothingPushed();
+        $this->assertNull($this->game->fresh()->bundle_id);
     }
 }

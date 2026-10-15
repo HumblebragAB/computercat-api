@@ -22,9 +22,11 @@ App Store Connect och Google Play låter inte ett API skapa själva appen, och d
 Stegen per mål och deras text (ordagrant som i `get_release_status`):
 
 - `web_public_address`: Erik sätter spelets publika webbadress (domänen) för produktionswebben.
-- `appstore_bundle_id`: Computercat registrerar spelets bundle-id i App Store Connect via API (byggs i etapp 2).
-- `appstore_create_app`: Erik skapar appen i App Store Connect med spelets bundle-id.
-- `appstore_privacy_and_age`: Erik fyller i appens integritetsuppgifter och åldersgräns i App Store Connect.
+- `appstore_bundle_id`: Computercat registrerar bundle-id {bundle_id} i App Store Connect via API.
+- `appstore_profile`: Computercat skapar App Store-profilen för {bundle_id} via API.
+- `appstore_create_app`: Erik skapar appen i App Store Connect (Appar, +, Ny app): plattform iOS, namn {name}, primärspråk svenska, bundle-id {bundle_id}, SKU {sku}, användaråtkomst full åtkomst. Är namnet upptaget väljer Erik ett annat. Computercat ser själv när appen finns.
+- `appstore_testflight_group`: Computercat skapar den interna TestFlight-gruppen ComputerCat intern och lägger till testarna via API.
+- `appstore_privacy_and_age`: Erik fyller i appens integritetsuppgifter och åldersgräns i App Store Connect. Krävs före App Store, inte före TestFlight.
 - `play_create_app`: Erik skapar appen i Play Console med spelets paketnamn.
 - `play_store_listing`: Erik fyller i innehållsklassning, dataskydd, målgrupp och butikstext i Play Console.
 - `play_app_signing`: Erik aktiverar Play App Signing för appen i Play Console.

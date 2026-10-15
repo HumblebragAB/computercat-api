@@ -3,9 +3,13 @@
 namespace App\Filament\Resources\GameResource\Pages;
 
 use App\Filament\Resources\GameResource;
+use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use App\Provisioning\Http\ExternalApiException;
+use App\Releases\AppStore\AppStoreConnectApi;
+use App\Releases\AppStore\AppStoreNotConfigured;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use App\Releases\ReleaseStatus;
@@ -140,8 +144,50 @@ class GameReleases extends Page
             return;
         }
 
+        // R8: app-posten räknas som klar först när Apple har appen med spelets bundle-id.
+        if (in_array($step->key, SetupSteps::VERIFIED, true)) {
+            $game = $this->getRecord();
+            if ($game->bundle_id === null) {
+                Notification::make()->danger()->title('Spelet saknar bundle-id. Sätt målet app_store med set_release_targets först.')->send();
+
+                return;
+            }
+            try {
+                $app = app(AppStoreConnectApi::class)->findApp((string) $game->bundle_id);
+            } catch (ExternalApiException|AppStoreNotConfigured $e) {
+                Notification::make()->danger()->title('App Store Connect svarade inte: '.$e->getMessage())->send();
+
+                return;
+            }
+            if ($app === null) {
+                Notification::make()->danger()->title("Appen med bundle-id {$game->bundle_id} finns inte i App Store Connect ännu.")->send();
+
+                return;
+            }
+            $game->forceFill(['app_store_ids' => array_merge($game->app_store_ids ?? [], ['app_id' => $app['id'], 'app_name' => $app['name']])])->save();
+        }
+
         $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => $admin->id, 'done_at' => now()]);
+
+        if ($step->target === 'app_store') {
+            RunAppStoreSetup::dispatch($this->getRecord()->id);
+        }
         Notification::make()->success()->title('Engångssteget är avbockat.')->send();
+    }
+
+    public function runAppStoreSetup(): void
+    {
+        $this->admin();
+        RunAppStoreSetup::dispatch($this->getRecord()->id);
+        Notification::make()->success()->title('Computercats engångssteg för App Store körs. Ladda om sidan om en minut.')->send();
+    }
+
+    /** @return array{bundle_id: ?string, ios_build_number: int, ids: array<string, string>} */
+    public function getAppStore(): array
+    {
+        $game = $this->getRecord()->fresh();
+
+        return ['bundle_id' => $game->bundle_id, 'ios_build_number' => (int) $game->ios_build_number, 'ids' => $game->app_store_ids ?? []];
     }
 
     public function toggleGameSwitch(): void

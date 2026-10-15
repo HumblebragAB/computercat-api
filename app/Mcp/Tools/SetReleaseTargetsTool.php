@@ -2,14 +2,17 @@
 
 namespace App\Mcp\Tools;
 
+use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use App\Releases\AppStore\BundleId;
 use App\Releases\ReleaseCatalog;
 use App\Releases\ReleaseStatus;
 use App\Releases\SetupSteps;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Validator;
 use Laravel\Mcp\Response;
 
@@ -17,7 +20,7 @@ class SetReleaseTargetsTool extends GameTool
 {
     protected string $name = 'set_release_targets';
 
-    protected string $description = 'Set which production targets a game has: any of web, app_store, play_store, as a comma-separated string ("web,app_store"; empty string = none). Creates the one-time setup steps for each target. Only a platform admin. Removing a target that has a pending release is refused.';
+    protected string $description = 'Set which production targets a game has: any of web, app_store, play_store, as a comma-separated string ("web,app_store"; empty string = none). Creates the one-time setup steps for each target. Only a platform admin. Removing a target that has a pending release is refused. Adding app_store gives the game its bundle id (se.computercat.<slug without hyphens>) and starts Computercat\'s App Store setup steps.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -56,8 +59,28 @@ class SetReleaseTargetsTool extends GameTool
             }
         }
 
-        $game->forceFill(['release_targets' => $targets])->save();
+        if (in_array('app_store', $targets, true) && $game->bundle_id === null) {
+            $bundle = BundleId::forSlug($game->slug);
+            // Specen: krockar två slugs vägrar verktyget, och Erik väljer ett annat id. Vilket spel som
+            // har id:t sägs inte (spelet kan tillhöra någon annan).
+            if (Game::where('bundle_id', $bundle)->whereKeyNot($game->getKey())->exists()) {
+                return self::bundleIdTaken($bundle);
+            }
+            $game->forceFill(['bundle_id' => $bundle]);
+        }
+
+        try {
+            $game->forceFill(['release_targets' => $targets])->save();
+        } catch (UniqueConstraintViolationException) {
+            // Ett annat anrop hann ta samma bundle-id mellan kontrollen och sparandet (unikt index).
+            return self::bundleIdTaken((string) $game->bundle_id);
+        }
         SetupSteps::sync($game);
+
+        if (in_array('app_store', $targets, true)) {
+            // Verktyget körs i en transaktion; jobbet (HTTP mot Apple) startar först efter commit.
+            RunAppStoreSetup::dispatch($game->id)->afterCommit();
+        }
 
         $game = $game->fresh();
         $status = ReleaseStatus::forGame($game);
@@ -69,5 +92,10 @@ class SetReleaseTargetsTool extends GameTool
                 ->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->get(['target', 'key', 'instruction'])->toArray(),
             'next' => $status['next'],
         ]);
+    }
+
+    private static function bundleIdTaken(string $bundle): Response
+    {
+        return Response::error("Bundle id {$bundle} is already used by another game. Ask Erik to choose another bundle id for this game.");
     }
 }

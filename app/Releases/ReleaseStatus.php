@@ -50,9 +50,10 @@ final class ReleaseStatus
     private static function forTarget(Game $game, string $target, ?DemoBuild $demo, ?string $disabled): array
     {
         $steps = ReleaseSetupStep::where('game_id', $game->id)->where('target', $target)->orderBy('id')->get();
-        $open = $steps->firstWhere('status', ReleaseSetupStep::OPEN);
         $test = ReleaseCatalog::testStage($target);
         $prod = ReleaseCatalog::productionStage($target);
+        // Öppna steg som stoppar nästa steg i flödet (teststeget, eller produktionen när testet är Demo).
+        $open = SetupSteps::openFor($game, $target, $test === 'demo' ? $prod : $test);
         $testRelease = $test === 'demo' ? null : self::latest($game, $target, $test);
         $prodRelease = self::latest($game, $target, $prod);
 
@@ -102,6 +103,10 @@ final class ReleaseStatus
         $prodForCommit = self::latest($game, $target, $prod, $commit);
         if ($prodForCommit !== null) {
             return self::releaseState($prodForCommit);
+        }
+
+        if (($prodOpen = SetupSteps::openFor($game, $target, $prod)) !== null && ReleaseCatalog::isBuildable($prod)) {
+            return ['setup_open', ['instruction' => $prodOpen->instruction]];
         }
 
         $testLabel = $test === 'demo' ? 'Demo' : $test;

@@ -5,7 +5,6 @@ namespace App\Releases;
 use App\Models\DemoBuild;
 use App\Models\Game;
 use App\Models\Release;
-use App\Models\ReleaseSetupStep;
 
 // Spärrarna 1, 2, 5, 6, 8 och 9 (spec Del 1). Samma kontroll körs när ett släpp
 // skapas, godkänns och startas (spärr 7). Spärr 3 (godkännande) och 4 (lås och
@@ -37,9 +36,8 @@ final class ReleaseGate
             return 'Produktion byggs i etapp '.(ReleaseCatalog::BUILD_ETAPP[$stage] ?? '?')."; {$stage} cannot be requested yet.";
         }
 
-        $open = ReleaseSetupStep::where('game_id', $game->id)->where('target', $target)
-            ->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->first();
-        if ($open !== null) { // 6
+        $open = SetupSteps::openFor($game, $target, $stage);
+        if ($open !== null) { // 6, per steg (R6)
             return "Setup is not finished for {$target}: {$open->instruction}";
         }
 

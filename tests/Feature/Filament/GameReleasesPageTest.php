@@ -4,6 +4,7 @@ namespace Tests\Feature\Filament;
 
 use App\Filament\Resources\GameResource;
 use App\Filament\Resources\GameResource\Pages\GameReleases;
+use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
@@ -11,7 +12,9 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
+use Tests\Support\AppStoreFakes;
 use Tests\Support\CreatesReleases;
 use Tests\Support\ProvisioningFakes;
 use Tests\TestCase;
@@ -240,5 +243,54 @@ class GameReleasesPageTest extends TestCase
 
         $page->call('toggleGameSwitch');
         $this->assertTrue($this->game->fresh()->releases_enabled);
+    }
+
+    public function test_marking_create_app_checks_apple_first(): void // R8
+    {
+        AppStoreFakes::configure();
+        Queue::fake();
+        $game = $this->testFlightGame('tinker-isle');
+        $step = ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->first();
+        $step->update(['status' => 'open']);
+        Http::fake([ProvisioningFakes::SLACK => Http::response('ok'), AppStoreFakes::API.'/v1/apps?*' => Http::sequence()
+            ->push(AppStoreFakes::many())
+            ->push(AppStoreFakes::many(AppStoreFakes::app('se.computercat.tinkerisle', '6800000001', 'Tinker Isle')))]);
+        $this->actingAs($admin = $this->adminUser());
+        $page = Livewire::test(GameReleases::class, ['record' => $game->getKey()]);
+
+        $page->call('markStepDone', $step->id);
+        $this->assertSame('open', $step->fresh()->status);
+
+        $page->call('markStepDone', $step->id);
+        $this->assertSame('done', $step->fresh()->status);
+        $this->assertSame($admin->id, $step->fresh()->done_by);
+        $this->assertSame('6800000001', $game->fresh()->appStoreId('app_id'));
+        Queue::assertPushed(RunAppStoreSetup::class);
+    }
+
+    public function test_new_automatic_steps_cannot_be_marked_by_hand(): void
+    {
+        $game = $this->testFlightGame('tinker-isle');
+        $step = ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')->first();
+        $step->update(['status' => 'open']);
+        $this->actingAs($this->adminUser());
+
+        Livewire::test(GameReleases::class, ['record' => $game->getKey()])->call('markStepDone', $step->id);
+
+        $this->assertSame('open', $step->fresh()->status);
+    }
+
+    public function test_run_setup_queues_the_job_and_shows_the_app_store_ids(): void
+    {
+        Queue::fake();
+        $game = $this->testFlightGame('tinker-isle');
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')->update(['status' => 'open', 'last_error' => 'App Store Connect POST /v1/profiles returned 409']);
+
+        $html = $this->actingAs($this->adminUser())->get(GameResource::getUrl('releases', ['record' => $game]))->assertOk()->getContent();
+        $this->assertStringContainsString('se.computercat.tinkerisle', $html);
+        $this->assertStringContainsString('returned 409', $html);
+
+        Livewire::test(GameReleases::class, ['record' => $game->getKey()])->call('runAppStoreSetup');
+        Queue::assertPushed(RunAppStoreSetup::class, fn ($job) => $job->gameId === $game->id);
     }
 }

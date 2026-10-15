@@ -20,6 +20,21 @@
             </div>
         </x-filament::section>
 
+        @if (in_array('app_store', $this->getRecord()->releaseTargets(), true))
+            @php($appStore = $this->getAppStore())
+            <x-filament::section>
+                <x-slot name="heading">App Store</x-slot>
+                <dl class="grid grid-cols-2 gap-2 text-sm">
+                    <dt>Bundle-id</dt><dd class="font-mono">{{ $appStore['bundle_id'] ?? 'saknas' }}</dd>
+                    <dt>Senaste byggnummer</dt><dd class="font-mono">{{ $appStore['ios_build_number'] }}</dd>
+                    @foreach ($appStore['ids'] as $key => $value)
+                        <dt>{{ $key }}</dt><dd class="font-mono">{{ is_array($value) ? implode(', ', $value) : $value }}</dd>
+                    @endforeach
+                </dl>
+                <x-filament::button class="mt-4" color="gray" wire:click="runAppStoreSetup">Kör Computercats steg</x-filament::button>
+            </x-filament::section>
+        @endif
+
         <x-filament::section>
             <x-slot name="heading">Engångssteg</x-slot>
             @forelse ($this->getSteps() as $step)
@@ -28,6 +43,9 @@
                         <span class="font-mono">{{ $step->target }}/{{ $step->key }}</span>
                         <span class="ml-2">{{ $step->status === 'done' ? '[klart]' : '[öppet]' }}</span>
                         <div>{{ $step->instruction }}</div>
+                        @if ($step->last_error)
+                            <div class="text-xs text-danger-600">{{ $step->last_error }}</div>
+                        @endif
                         @if ($step->status === 'done')
                             <div class="text-xs text-gray-500">{{ $step->done_at?->toDateTimeString() }} av {{ $step->doneBy?->email ?? 'okänd' }}</div>
                         @endif

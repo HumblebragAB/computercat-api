@@ -7,6 +7,7 @@ use App\Models\Game;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use App\Releases\AppStore\BundleId;
 use App\Releases\ReleaseCatalog;
 use App\Releases\SetupSteps;
 use App\Releases\TestFlight\IosBuildGuides;
@@ -46,6 +47,23 @@ trait CreatesReleases
     {
         $game = Game::firstOrCreate(['slug' => $slug], ['name' => ucfirst($slug), 'is_active' => true, 'settings' => []]);
         $game->forceFill(['release_targets' => $targets, 'is_active' => true, 'releases_enabled' => true])->save();
+        SetupSteps::sync($game);
+        ReleaseSetupStep::where('game_id', $game->id)->update(['status' => ReleaseSetupStep::DONE]);
+
+        return $game->fresh();
+    }
+
+    /** Spel med app_store klart för TestFlight: bundle-id, App Store-id:n (spike B) och alla engångssteg klara. */
+    protected function testFlightGame(string $slug = 'kattsvep'): Game
+    {
+        $game = $this->releasableGame($slug, ['app_store']);
+        $game->forceFill([
+            'bundle_id' => BundleId::forSlug($slug),
+            'app_store_ids' => [
+                'bundle_resource_id' => 'WN54V4BM5D', 'profile_id' => 'PROFTEST01', 'app_id' => '6823067635',
+                'app_name' => ucfirst($slug), 'beta_group_id' => '0f1e2d3c-0000-4000-8000-000000000001',
+            ],
+        ])->save();
         SetupSteps::sync($game);
         ReleaseSetupStep::where('game_id', $game->id)->update(['status' => ReleaseSetupStep::DONE]);
 
