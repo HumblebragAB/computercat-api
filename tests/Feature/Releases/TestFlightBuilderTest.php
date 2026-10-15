@@ -723,4 +723,26 @@ class TestFlightBuilderTest extends TestCase
         $this->assertNull($this->fresh()->last_error);
         Http::assertNothingSent();
     }
+
+    public function test_run_timeout_with_a_failing_cancel_is_retried_by_the_sweep(): void // fix round 2
+    {
+        Queue::fake();
+        $this->building(['dispatched_at' => now()->subMinutes(91)->toIso8601String()]);
+        $this->fake([
+            self::RELEASE_REPO.'/actions/runs/4711/cancel' => Http::sequence()->push(['message' => 'Server Error'], 502)->push('', 202),
+            self::RELEASE_REPO.'/actions/runs/4711' => Http::response(F::githubRun(4711, 'in_progress', null, $this->release->uuid)),
+        ]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+        $this->assertStringContainsString('did not finish within 90 minutes', $this->fresh()->last_error);
+        $this->assertTrue($this->fresh()->external['cancel_pending']);
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        $this->assertCount(2, collect(Http::recorded())->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/runs/4711/cancel')));
+        $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
+        $this->assertArrayHasKey('cancel_confirmed_at', $this->fresh()->external);
+    }
 }

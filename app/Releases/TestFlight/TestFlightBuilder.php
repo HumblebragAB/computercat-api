@@ -398,8 +398,8 @@ final class TestFlightBuilder
 
         if ($run['status'] !== 'completed') {
             if ($overdue) {
-                $this->cancelRunOf($release);
-                throw new ReleaseFailed("The GitHub run did not finish within {$limit} minutes (status {$run['status']}) and was cancelled.", runFinished: true);
+                // Körningen lever: fail() avbryter den och låter svepet försöka igen om det inte går (cancel_pending).
+                throw new ReleaseFailed("The GitHub run did not finish within {$limit} minutes (status {$run['status']}); Computercat cancels it.");
             }
 
             return $poll;
