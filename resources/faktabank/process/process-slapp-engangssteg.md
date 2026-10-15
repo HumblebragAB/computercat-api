@@ -2,20 +2,22 @@
 id: process-slapp-engangssteg
 title: Engångssteg före första släpp till en butik eller domän
 topic: process
-tags: [process, engångssteg, appstore, play, domän, bundle-id, release]
+tags: [process, engångssteg, appstore, play, bundle-id, release, testflight, profil]
 summary: Varje produktionsmål har engångssteg som Erik eller Computercat gör en gång per spel. Öppna steg stoppar befordran till målet.
-updated: "2026-10-14"
+updated: "2026-10-15"
 ---
 
 ## Regel
 
 1. Du kan inte göra engångsstegen. Säg till Erik att de väntar och vänta; `get_release_status` visar vilket steg som är öppet.
-2. Gissa aldrig att ett steg är klart. Bara en platform admin markerar ett steg som klart, i Filament. Bundle-id sätts av Computercat själv (etapp 2) och kan inte bockas av för hand.
-3. Ett mål med ett öppet steg kan inte befordras alls, varken teststeget eller produktionssteget. Försök inte komma runt det.
+2. Gissa aldrig att ett steg är klart. Bundle-id, profil och TestFlight-grupp gör Computercat själv; appen i App Store Connect skapar Erik, och Computercat ser själv när den finns. Övriga steg bockar en platform admin av i Filament.
+3. Ett öppet steg stoppar de steg det gäller. Integritetsuppgifter och åldersgräns stoppar bara App Store, inte TestFlight. Försök inte komma runt ett steg.
 
 ## Varför
 
 App Store Connect och Google Play låter inte ett API skapa själva appen, och den publika adressen är ett beslut. Sådant görs en gång för hand, och först därefter är det meningsfullt att bygga.
+
+Spelets bundle-id är `se.computercat.<slug utan bindestreck>`. Det är samma värde som `appId` i spelets `capacitor.config.ts`; `get_release_status` visar det.
 
 ## Så gör du
 

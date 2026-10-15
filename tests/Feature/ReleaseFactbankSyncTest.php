@@ -85,6 +85,44 @@ class ReleaseFactbankSyncTest extends TestCase
         }
     }
 
+    // Eriks beslut 2026-10-15: "Skicka till TestFlight" betyder samma sak i API:t, faktabanken och spelens CLAUDE.md.
+    public function test_testflight_flow_is_verbatim_in_the_article_the_next_text_and_every_ios_build_guide(): void
+    {
+        $flow = ReleaseNext::TESTFLIGHT_FLOW;
+        $line = '/^'.preg_quote($flow, '/').'$/m';
+
+        $this->assertMatchesRegularExpression($line, (string) file_get_contents(resource_path('faktabank/process/process-slappflode.md')));
+        $this->assertStringContainsString($flow, ReleaseNext::for('ready_for_testflight', ['commit' => 'x', 'last_version' => 'ingen']));
+
+        // Låsta och olåsta versioner: v3-planen ska få fel innan låsningen, inte efter.
+        foreach (glob(resource_path('byggguide/v*/manifest.json')) ?: [] as $manifest) {
+            if (! isset(json_decode((string) file_get_contents($manifest), true)['ios'])) {
+                continue;
+            }
+            $claude = dirname($manifest).'/files/CLAUDE.md';
+            $this->assertFileExists($claude);
+            $this->assertMatchesRegularExpression($line, (string) file_get_contents($claude), basename(dirname($manifest)).': CLAUDE.md saknar flödestexten ordagrant.');
+        }
+    }
+
+    public function test_articles_name_the_version_rule_and_the_tag(): void
+    {
+        $text = (string) file_get_contents(resource_path('faktabank/process/process-slappflode.md'));
+
+        foreach (['package.json', 'v<version>', 'byggnummer', 'ComputerCat intern', 'TestFlight'] as $needle) {
+            $this->assertStringContainsString($needle, $text, $needle);
+        }
+    }
+
+    // Regel 3 i artikeln får inte lova senaste commit som standard: flödet anger commit_sha.
+    public function test_the_article_does_not_promise_a_default_commit_for_testflight(): void
+    {
+        $text = (string) file_get_contents(resource_path('faktabank/process/process-slappflode.md'));
+
+        $this->assertStringNotContainsString('som standard', $text);
+        $this->assertStringContainsString('commit_sha', ReleaseNext::TESTFLIGHT_FLOW);
+    }
+
     // Den gamla artikeln får inte peka på det ersatta verktyget som sättet att gå live.
     public function test_the_old_go_live_article_points_to_the_release_tools(): void
     {

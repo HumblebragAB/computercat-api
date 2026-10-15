@@ -2,25 +2,38 @@
 id: process-slappflode
 title: Släppflödet från Demo till telefon och produktion
 topic: process
-tags: [process, slapp, release, promote_release, get_release_status, testflight, produktion, godkännande]
-summary: get_release_status säger vad som gäller och vad nästa steg är. promote_release befordrar en exakt commit; första produktionssläppet per mål godkänns av Erik i Filament.
-updated: "2026-10-14"
+tags: [process, slapp, promote_release, get_release_status, testflight, version, package.json, byggnummer]
+summary: "TestFlight byggs bara när version i package.json höjs: höj, pusha, vänta på grönt Demo, anropa promote_release. get_release_status säger nästa steg. Erik godkänner första produktionssläppet."
+updated: "2026-10-15"
 ---
 
 ## Regel
 
 1. Fråga `get_release_status` först. Svaret har en rad `next` som säger vad du ska göra nu; gör det och inget annat.
-2. En ny commit på main bygger Demo som vanligt. Den går vidare först när du ber om det med `promote_release(target, stage, commit_sha?)`. Bara spelets ägare kan göra det.
-3. Teststeg (`testflight`, `play_internal`) tar som standard senaste commit med lyckat Demo-bygge. Produktionssteg (`web_production`, `app_store`, `play_production`) kräver att du anger `commit_sha`, och den commiten måste ha lyckats i teststeget (för webben: ha ett lyckat Demo-bygge).
-4. Det första produktionssläppet per spel och mål godkänns av Erik i Filament. Du kan inte godkänna det själv och ska inte försöka. Därefter kan ägaren släppa utan nytt godkännande.
-5. Mål (`web`, `app_store`, `play_store`) och engångssteg sätts av Erik. Ett mål med öppna engångssteg kan inte befordras.
-6. Produktionsstegen öppnas etapp för etapp. Så länge `get_release_status` säger `production_not_open` går det inte att begära produktion, och du ska inte försöka.
+2. En ny commit på main bygger Demo som vanligt. Ingen app byggs vid en vanlig push. Commiten går vidare först när du ber om det med `promote_release(target, stage, commit_sha?)`. Bara spelets ägare kan göra det.
+3. TestFlight byggs bara när versionen höjs. `version` i `package.json` (MAJOR.MINOR.PATCH) är det enda stället versionen sätts. Den ska vara högre än den senast släppta till TestFlight och inte använd förut; varje ny commit till TestFlight får en ny version. Samma commit kan skickas igen med samma version om släppet misslyckades. Ange alltid `commit_sha` för den commit som ska byggas.
+4. Computercat sätter taggen `v<version>` på commiten i spelrepot, väljer byggnumret och bygger appen. Ändra eller flytta aldrig taggen och sätt aldrig byggnummer själv.
+5. Produktionssteg (`web_production`, `app_store`, `play_production`) kräver att du anger `commit_sha`, och den commiten måste ha lyckats i teststeget (för webben: ha ett lyckat Demo-bygge). Det första produktionssläppet per spel och mål godkänns av Erik i Filament; du kan inte godkänna det själv och ska inte försöka.
+6. Mål (`web`, `app_store`, `play_store`) och engångssteg sätts av Erik och Computercat. Ett öppet engångssteg stoppar de steg det gäller.
+7. Produktionsstegen öppnas etapp för etapp. Så länge `get_release_status` inte föreslår produktion går det inte att begära den, och du ska inte försöka.
 
 ## Varför
 
 Produktion är ett beslut som en människa tar första gången. Computercat stoppar det som inte är tillåtet och säger vad nästa steg är, så att du inte behöver gissa. Samma text står i API-svaret och här.
 
+Ett iOS-bygge tar en macOS-maskin i GitHub Actions och ett byggnummer hos Apple, så det görs bara när en ny version faktiskt ska testas på telefon. Taggen visar i efterhand exakt vilken commit som blev vilken version.
+
 ## Så gör du
+
+### Skicka till TestFlight
+
+Ordagrant samma text som `next` i `get_release_status` och som spelets `CLAUDE.md`:
+
+Skicka till TestFlight (kräver byggguide v3 eller senare i spelet, den med iOS-stöd). En push utan höjd version bygger aldrig appen; bara promote_release efter en versionshöjning gör det. 1. Höj version i package.json (MAJOR.MINOR.PATCH): högre än den senast släppta till TestFlight och inte använd förut. 2. Kör npm run check, committa och pusha till main. 3. Vänta tills Demo-bygget för commiten är grönt (get_provisioning_status visar demo.state live). 4. Anropa promote_release(target: app_store, stage: testflight, commit_sha: <commiten>). 5. Följ get_release_status tills släppet är klart. Computercat sätter taggen v<version>, väljer byggnummer, bygger appen och lägger den i TestFlight-gruppen ComputerCat intern.
+
+Svarar `promote_release` att versionen är för låg eller att taggen redan finns: höj `version` som svaret säger och börja om från steg 1. Svarar det att byggguiden inte kan byggas för iOS: flytta spelet till senaste byggguiden först (`get_build_guide`).
+
+### Tillstånden
 
 Tillstånden i `get_release_status` och vad `next` säger i varje (texten är ordagrant den som API:t returnerar, `{...}` fylls i av API:t):
 
@@ -51,3 +64,5 @@ Ett släpp som väntar på godkännande eller byggstart i sju dygn avbryts av si
 - app/Mcp/Tools/GetReleaseStatusTool.php
 - app/Mcp/Tools/PromoteReleaseTool.php
 - app/Mcp/Tools/SetReleaseTargetsTool.php
+- app/Releases/TestFlight/TestFlightPreflight.php
+- app/Releases/TestFlight/TestFlightBuilder.php

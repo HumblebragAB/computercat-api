@@ -47,6 +47,8 @@ class FactBankContentTest extends TestCase
             'deploy_failed' => 'process-provisioning-status', 'analytics' => 'stack-ingen-tredjepartssparning',
             'lint regel' => 'security-lint-regler', 'npm run check' => 'testing-npm-run-check', 'sparfil' => 'security-sparfiler',
             'offline kö' => 'practice-offline-kon', 'fråga en människa' => 'process-fraga-manniska',
+            'skicka till testflight' => 'process-slappflode', 'höja version package.json' => 'process-slappflode',
+            'bundle-id app store' => 'process-slapp-engangssteg',
         ] as $query => $id) {
             $this->assertSame($id, $bank->search($query)[0]['id'] ?? null, $query);
         }
