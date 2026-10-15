@@ -4,7 +4,7 @@
 
 **Goal:** Spelets Claude höjer `version` i `package.json`, pushar, väntar på grönt Demo och anropar `promote_release(target: app_store, stage: testflight)`. Computercat nekar om versionen inte är högre än den senast släppta, taggar commiten `v<version>` i spelrepot, delar ut nästa byggnummer, startar `release-ios.yml` i släpprepot och följer körningen och Apples bearbetning tills bygget ligger i TestFlight-gruppen "ComputerCat intern", eller fäller släppet med orsak och Slack-larm. Engångsstegen för App Store (bundle-id, profil, TestFlight-grupp och testare) sköts via API; appposten skapar Erik med exakta värden som Computercat visar och sedan själv upptäcker.
 
-**Architecture:** En ny App Store Connect-klient (`App\Releases\AppStore\AppStoreConnectApi`, ES256-JWT med lcobucci/jwt) bredvid den befintliga `GitHubAppClient`, som får läsning vid commit, taggar, dispatch och körningar. `ReleaseService::promote` får en förkontroll för TestFlight (`TestFlightPreflight`: läser `package.json` och `CLAUDE.md` vid commiten, versionsspärren, taggkollen) som körs före transaktionen, och delar ut byggnumret i transaktionen. Jobbet `AdvanceRelease` (samma mönster som `AdvanceProvisioningRun`) driver släppet genom `TestFlightBuilder`: starta (spärr 7/9 igen, profilkoll, tagg, dispatch med `return_run_details`), följa GitHub-körningen var 30:e sekund (60 min), följa Apples bearbetning var 2:a minut (90 min), lägga bygget i gruppen. Engångsstegen för `app_store` körs av jobbet `RunAppStoreSetup` (`AppStoreSetup`), idempotent och i ordning. Alla `next`-texter och flödestexten "Skicka till TestFlight" bor i `ReleaseNext`; ett test jämför dem med faktabanken och med byggguidens `CLAUDE.md` för varje version som stöder iOS. Släpprepot får `release-ios.yml` (fetch/build/sign) via PR.
+**Architecture:** En ny App Store Connect-klient (`App\Releases\AppStore\AppStoreConnectApi`, ES256-JWT med lcobucci/jwt) bredvid den befintliga `GitHubAppClient`, som får läsning vid commit, taggar, dispatch och körningar. `ReleaseService::promote` får en förkontroll för TestFlight (`TestFlightPreflight`: läser `package.json` och `CLAUDE.md` vid commiten, versionsspärren, taggkollen) som körs före transaktionen, och delar ut byggnumret i transaktionen. Jobbet `AdvanceRelease` (samma mönster som `AdvanceProvisioningRun`) driver släppet genom `TestFlightBuilder`: starta (spärr 7/9 igen, profilkoll, besittning under radlås, tagg, dispatch med `return_run_details`; okänt dispatchutfall leder till uppslag via `run-name`), följa GitHub-körningen var 30:e sekund (90 min), följa Apples bearbetning var 2:a minut (90 min), lägga bygget i gruppen. Engångsstegen för `app_store` körs av jobbet `RunAppStoreSetup` (`AppStoreSetup`), idempotent och i ordning. Alla `next`-texter och flödestexten "Skicka till TestFlight" bor i `ReleaseNext`; ett test jämför dem med faktabanken och med byggguidens `CLAUDE.md` för varje version som stöder iOS. Släpprepot får `release-ios.yml` (fetch/build/sign) via PR.
 
 **Tech Stack:** Laravel 12, PHP 8.4, laravel/mcp 1.0.2, Filament 3.3, lcobucci/jwt 5.6 (`Signer\Ecdsa\Sha256`), PHPUnit 11 (klasser), SQLite i minnet för test, MySQL i prod. GitHub REST API 2022-11-28. App Store Connect API (OpenAPI 4.5.1). GitHub Actions: `ubuntu-24.04`, `macos-26` (Xcode 26), Node 22, Capacitor 8.5.3 (SPM).
 
@@ -36,29 +36,39 @@
 - Engångssteg `app_store`: bundle-id och profil automatiskt via API; appposten manuellt av Erik (namn, bundle-id, SKU = slug, svenska); TestFlight-gruppen "ComputerCat intern" och interna testare via API.
 - Släpprepot ändras bara via PR; `release-ios.yml` ersätter `release-ios-spike.yml`; jobben `fetch` (ubuntu, ComputerCat Release Reader via `CC_READER_APP_ID`/`CC_READER_PRIVATE_KEY`), `build` (`macos-26`, inga hemligheter), `sign` (`ASC_*`, `IOS_DIST_CERT_*`, uppladdning via `buildUploads`). `cc-gate.mjs` körs i `build` med sha256 ur manifestet för spelets byggguideversion.
 - Computercat i prod har ASC-nyckeln som `storage/app/private/asc-release.p8`; key id, issuer och certifikat-id i config/env.
+- R2 (indata `build_guide`) och R3 (taggen flyttas aldrig; ny commit kräver ny version; samma commit kan försökas igen) är godkända (2026-10-15).
+- TestFlight-testarna är fyra användare i App Store Connect, sparade som **användar-id i config** (inte e-post): `02c9745a-c3d8-423e-9d54-2bec1cdab856`, `57b3db4f-6777-41af-a555-bd0b32ed9f45`, `d64532b0-55e1-402e-8854-16468c523d07`, `e6939074-f8cc-48f0-b0c6-a510d6b2d4ba`. E-postadressen hämtas med `GET /v1/users/{id}` (fältet `username`, OpenAPI 4.5.1) när testaren läggs till och skrivs aldrig i loggar (R18).
+- Spikens resurser: profil `74R2J9RJM4` (uuid `93518960-f7a5-49eb-b3d6-cd4073c3ee25`) för `se.computercat.test`, app `6823067635`, TestFlight-gruppen "ComputerCat intern" `342f40c7-366f-4b70-9b09-6621ded72ab1` (skapad med `hasAccessToAllBuilds: true`).
+- Acceptansspelet väljs i Task 12 med AskUserQuestion.
 
 **Rulings i denna plan (Erik ska känna till dem)**
 - **R1: byggguide v3 får egen plan.** Achievements-delen är för stor för samma plan: serverändringar i `AchievementController` med egna tester, en ny klientmodul med kö, ändrad bakgrundssynk, integrationsmanualen, och en öppen fråga till Erik om rimlighetskontrollen (specens fråga 1). v3 kan bara låsas en gång, så achievements och Capacitor iOS måste in i samma version. Förslag: planen "Byggguide v3: achievements och Capacitor iOS" skrivs efter denna, uppfyller kontraktet i Task 4 och Task 9:s synktest, och denna plans Task 12 väntar på att v3 är live.
-- **R2: indata `build_guide` utöver Eriks sju.** Släpprepot måste veta vilken sha256 `cc-gate.mjs` ska ha; den står per version i flödet (specen: "hashen står i släpprepots flöde"). Computercat läser versionen ur spelets `CLAUDE.md` vid commiten (`Byggguide: **vN**`) och kräver att versionen stöder iOS (Task 4), så att ett spel inte kan välja en äldre spärr. *Fråga till Erik i rapporten.*
-- **R3: versionsspärren och taggen.** Versionen jämförs med den högsta `marketing_version` bland `succeeded`-släpp till TestFlight för spelet (Eriks regel). Dessutom: finns taggen `v<version>` redan på en annan commit nekas släppet och svaret säger att versionen ska höjas. Samma commit kan alltså försökas igen med samma version efter ett misslyckat släpp, men en ny commit kräver alltid en ny version. Taggen flyttas aldrig. *Fråga till Erik i rapporten.*
+- **R2 (godkänd): indata `build_guide` utöver Eriks sju.** Släpprepot måste veta vilken sha256 `cc-gate.mjs` ska ha; den står per version i flödet (specen: "hashen står i släpprepots flöde"). Computercat läser versionen ur spelets `CLAUDE.md` vid commiten (`Byggguide: **vN**`) och kräver att versionen stöder iOS (Task 4), så att ett spel inte kan välja en äldre spärr.
+- **R3: versionsspärren och taggen.** Versionen jämförs med den högsta `marketing_version` bland `succeeded`-släpp till TestFlight för spelet (Eriks regel). Dessutom: finns taggen `v<version>` redan på en annan commit nekas släppet och svaret säger att versionen ska höjas. Samma commit kan alltså försökas igen med samma version efter ett misslyckat släpp, men en ny commit kräver alltid en ny version. Taggen flyttas aldrig. (Godkänd.)
 - **R4: taggen sätts av jobbet, inte av verktyget**, precis före dispatch, som lättviktig tagg (`POST /git/refs`). Verktyget kontrollerar bara att taggen är ledig eller redan pekar på commiten, så att Claude får nej direkt.
 - **R5: byggnumret delas ut i befordrans transaktion** (`games.ios_build_number + 1`, spelets rad är redan låst, spärr 4). Ett misslyckat släpp lämnar en lucka; ett nummer används aldrig två gånger (unikt index `(game_id, build_number)` på `releases`).
 - **R6: engångsstegen gäller per steg.** `appstore_privacy_and_age` stoppar bara produktionssteget `app_store`, inte `testflight` (internt TestFlight kräver det inte, bilagan "Avtal"). Övriga steg stoppar båda. `SetupSteps::BLOCKS` styr det; spärr 6 och statusen använder `SetupSteps::openFor()`.
-- **R7: gruppen skapas med `hasAccessToAllBuilds: false`** och varje bygge läggs till uttryckligen (`POST /v1/betaGroups/{id}/relationships/builds`, 204). Spike B använde `true`; med `false` är "lägga bygget i gruppen" ett dokumenterat anrop i stället för ett implicit beteende. Kontrolleras i Task 12.
+- **R7: en intern grupp "ComputerCat intern" per app, skapad med `hasAccessToAllBuilds: true`, och Computercat kontrollerar ändå att varje bygge finns i gruppen.** Skäl: `true` är den väg spike B9 bevisade (spikens grupp `342f40c7-…` är skapad så), Apple släpper bara in byggen med `processingState: VALID`, och alla byggen till appen kommer från Computercat, så "alla byggen" och "Computercats byggen" är samma mängd. `false` skulle vara ett oprövat läge i Apple och två sätt att ha grupper. Invarianten "bygget ligger i gruppen" hålls ändå uttryckligen: efter `VALID` frågar Computercat `GET /v1/builds?filter[betaGroups]&filter[id]`, och bara om bygget saknas länkas det med `POST /v1/betaGroups/{id}/relationships/builds` (204). En grupp är per app (Apple), så spikens grupp återanvänds bara för spikappen.
 - **R8: appposten upptäcks av Computercat.** Steget `appstore_create_app` är Eriks, men både jobbet och Filaments "Bocka av" kontrollerar med `GET /v1/apps?filter[bundleId]` och sätter steget klart först när appen finns. Erik behöver alltså bara skapa appen.
 - **R9: `get_release_status` gör fortfarande inga externa anrop** (1a R11). Versionen i Demo-commitens `package.json` är därför okänd i statusen; den kontrolleras i `promote_release`, som svarar exakt vad som ska höjas.
 - **R10: inga Actions-loggar kopieras in.** Felorsaken vid en misslyckad körning är jobbets och stegets namn från `GET …/actions/runs/{id}/jobs` (namnen står i släpprepots flöde). Revisionen sparar släpprepots `head_sha` för körningen ("vilken version av släppflödet som kördes", specens Säkerhet).
-- **R11: tidsgränser** räknas från dispatch (GitHub, 60 min; körningen avbryts med `POST …/cancel` för att spara macOS-minuter) och från körningens slut (Apple, 90 min). Pollning var 30:e sekund (GitHub) och 120:e (Apple). Ett svep var femte minut (`computercat:advance-releases`) köar om jobbet för pågående TestFlight-släpp; `ShouldBeUnique` hindrar dubbletter.
+- **R11: tidsgränser, avstämda mot varandra.** Flödets jobb har `timeout-minutes` 10 + 40 + 30 = 80 min. Computercats gräns för GitHub-körningen är 90 min från dispatch (80 + tio minuters kö), så Computercat fäller aldrig en körning som GitHub själv fortfarande låter leva; därefter avbryts den med `POST …/cancel`. Apples bearbetning: 90 min från körningens slut. Jobbets `retryUntil` = 90 + 90 + 30 = 210 min. Nattkontrollens `stuck_minutes` (120) mäts från `updated_at`, som sätts vid varje fasbyte (besittning, körnings-id, `processing`); den längsta fasen är 90 min, så ett levande släpp larmar aldrig, och ett vars jobb dött larmar senast 30 min efter fasens gräns. Testat i `CheckReleasesTest`. Pollning var 30:e sekund (GitHub) och 120:e (Apple). Ett svep var femte minut (`computercat:advance-releases`) köar om jobbet för pågående TestFlight-släpp; `ShouldBeUnique` hindrar dubbletter.
 - **R12: bundle-id i Computercat är sanningen.** Byggjobbet ändrar inget i spelets iOS-projekt; det kontrollerar att `appId` efter `cap sync` och varje `PRODUCT_BUNDLE_IDENTIFIER` i `project.pbxproj` är `bundle_id`, att `package.json` har `marketing_version`, och att `ITSAppUsesNonExemptEncryption` är `false`, och fäller annars med ett namngivet steg.
 - **R13: profilen förnyas inte automatiskt.** Före varje dispatch läses profilen; är den inte `ACTIVE` eller går ut inom ett dygn fälls släppet med en text till Erik. Certifikatet gäller till 2027-10-15.
 - **R14: släpp registrerade i 1a utan version** (`requested` för `testflight` utan `marketing_version`) fälls av svepet med texten "registrerat innan TestFlight-byggen fanns; begär ett nytt", i stället för att byggas med gissade värden.
+- **R15: dispatchens utfall kan vara okänt.** Svarar GitHub 5xx, bryts anslutningen eller saknas `workflow_run_id` kan körningen ändå ha startat. Då fälls släppet inte: det står kvar med markören `dispatch_requested_at`, och nästa kontroll letar upp körningen via `run-name` (release_uuid) i upp till 3 min. Bara ett 4xx-svar fäller direkt (GitHub tog inte emot begäran). När ett släpp fälls och en körning finns eller hittas via `run-name` avbryts den (`POST …/cancel`), både i `fail()` och i jobbets `failed()`.
+- **R16: släppet tas i besittning före första skrivningen utåt.** Efter spärrkontroll och profilkoll låser jobbet släppets rad (`lockForUpdate`) i en transaktion, kontrollerar att det fortfarande är `requested`, och sätter `building` med markören `claimed_at` innan taggen och dispatchen görs. `ReleaseService::cancel` nekar ett släpp i `building` (som i 1a), så Erik kan inte avbryta ett släpp vars körning kanske redan startat; ett släpp som avbröts före besittningstagandet byggs aldrig.
+- **R17: id:n som saknas öppnar steget igen.** Ett automatiskt eller verifierat engångssteg som är `done` men saknar sitt id (`bundle_resource_id`, `profile_id`, `app_id`, `beta_group_id`) öppnas igen, av migrationen (1a-data: `appstore_create_app` kunde bockas av för hand utan app-id) och av varje körning av `AppStoreSetup`. Så kan ett spel aldrig stå "klart" men sakna det som bygget behöver.
+- **R18: testarna är användar-id.** `AppStoreSetup` hämtar e-postadressen med `GET /v1/users/{id}` (`username`) per testare och registrerar den hos `Redactor` som hemlighet (rå och URL-kodad) innan den används, så att den maskeras i loggade URL:er, kroppar och fel. Inga loggrader skriver e-post; de skriver användar-id.
+- **R19: slugs som börjar med `computercat` är reserverade.** Läsappens token begränsas till repot som heter som spelet; ett spel med namnet `computercat-release` skulle annars kunna läsa släpprepot. `create_game` nekar sådana slugs (Task 2).
 
 **Värden**
 - Bundle-id: `se.computercat.` + slug utan `-`; mönster `^se\.computercat\.[a-z][a-z0-9]{1,39}\z`. SKU = slug. Appnamn = spelets `name`. Primärspråk svenska.
 - Version: `^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\z`. Tagg: `v` + version.
 - Släpprepot: `HumblebragAB/computercat-release`, flöde `release-ios.yml`, ref `main`. `run-name`: `ios <game> <release_uuid>`.
-- TestFlight-grupp: `ComputerCat intern`, intern. Testare: `ASC_TESTFLIGHT_TESTERS` (kommaseparerade e-postadresser för användare i App Store Connect).
-- Env (namn, inga värden i repot): `ASC_RELEASE_KEY_ID`, `ASC_RELEASE_ISSUER_ID`, `ASC_RELEASE_PRIVATE_KEY_PATH` (standard `app/private/asc-release.p8`), `ASC_RELEASE_CERTIFICATE_ID`, `ASC_TESTFLIGHT_TESTERS`.
+- TestFlight-grupp: `ComputerCat intern`, intern, `hasAccessToAllBuilds: true` (R7). Testare: `config('releases.app_store.tester_user_ids')`, de fyra användar-id:na ovan (inte hemliga; i config enligt Erik).
+- Env (namn, inga värden i repot): `ASC_RELEASE_KEY_ID`, `ASC_RELEASE_ISSUER_ID`, `ASC_RELEASE_PRIVATE_KEY_PATH` (standard `app/private/asc-release.p8`), `ASC_RELEASE_CERTIFICATE_ID`.
+- HTTP-tidsgräns mot App Store Connect: 15 s per anrop (`releases.app_store.http_timeout_seconds`). `RunAppStoreSetup` gör en enhet arbete per körning (högst fyra anrop) och köar sig själv för nästa (Task 5). `AdvanceRelease` har `failOnTimeout = false`: ett långsamt anrop ger ett nytt försök, aldrig ett fällt släpp; släppets egna tidsgränser (R11) avgör när det fälls, och markörerna (R15, R16) hindrar en andra dispatch.
 - v2:s `scripts/cc-gate.mjs`: sha256 `e4460881ca534a085c500bb0c768e4ea9a1d6c7d7c2f33babf4e7ef8c8969009` (manifestet). v3:s läggs till i släpprepot när v3 är låst (Task 12).
 - Team-id i ExportOptions: `CUDL7PSFD2` (spikflödet).
 
@@ -69,7 +79,7 @@
 De fem fel som lätt passerar oupptäckta. Varje rad har ett test i den task som äger koden.
 
 1. **Versionsspärren släpper igenom fel version eller stoppar ett rättmätigt omförsök.** Lägre eller lika med senast `succeeded`, ett misslyckat släpp som felaktigt räknas som släppt, versioner som jämförs som strängar (`1.10.0` mot `1.9.0`), en tagg på en annan commit. Test: `TestFlightPromoteTest::test_version_must_be_higher_than_the_latest_succeeded_release`, `test_versions_compare_numerically`, `test_failed_release_does_not_block_a_retry_of_the_same_commit`, `test_tag_on_another_commit_is_refused_with_bump_advice` (Task 6).
-2. **Ett byggnummer används två gånger, eller dispatchen sker två gånger.** Två jobb för samma släpp, ett dispatch-svar som går förlorat, en omkörning efter krasch. Test: `ReleaseModelTest::test_build_number_is_unique_per_game` (Task 3), `TestFlightPromoteTest::test_build_numbers_never_repeat` (Task 6), `TestFlightBuilderTest::test_lost_dispatch_response_is_recovered_by_run_name` och `test_start_never_dispatches_twice` (Task 7).
+2. **Ett byggnummer används två gånger, dispatchen sker två gånger, eller en körning blir föräldralös.** Två jobb för samma släpp, ett dispatch-svar som går förlorat (5xx, bruten anslutning, inget id), ett släpp som avbryts medan jobbet startar det, en omkörning efter krasch. Test: `ReleaseModelTest::test_build_number_is_unique_per_game` (Task 3), `TestFlightPromoteTest::test_build_numbers_never_repeat` (Task 6), `TestFlightBuilderTest::test_lost_dispatch_response_is_recovered_by_run_name`, `test_start_never_dispatches_twice`, `test_dispatch_5xx_keeps_the_release_and_the_run_is_found_next_time`, `test_dispatch_with_broken_connection_keeps_the_release`, `test_release_cancelled_before_it_is_claimed_is_never_built`, `test_a_claimed_release_cannot_be_cancelled_in_computercat`, `AdvanceReleaseTest::test_failed_handler_marks_the_release_failed_and_cancels_its_run` (Task 7).
 3. **Släppet fastnar tyst.** En körning som avbryts utanför Computercat, en körning som aldrig blir klar, ett bygge Apple aldrig bearbetar, ett jobb som dör i kön. Test: `TestFlightBuilderTest::test_run_cancelled_outside_computercat_fails_with_its_conclusion`, `test_run_timeout_cancels_and_alerts`, `test_apple_timeout_fails_and_alerts`, `AdvanceReleaseTest::test_failed_handler_marks_the_release_failed`, `test_sweep_requeues_active_releases` (Task 7), `CheckReleasesTest::test_testflight_release_stuck_in_requested_is_reported` (Task 7).
 4. **Hemligheter läcker.** JWT, p8-nyckeln eller installationstoken i `last_error`, i loggen vid 4xx/5xx, i Slack eller i verktygssvar. Test: `AppStoreConnectApiTest::test_4xx_is_logged_with_request_and_response_and_the_jwt_never_appears`, `test_world_readable_key_is_refused_before_any_request` (Task 1), `TestFlightBuilderTest::test_failure_text_is_redacted` (Task 7).
 5. **Engångsstegen räknas fel.** Integritetssteget stoppar TestFlight, ett manuellt steg bockas av fast appen inte finns, ett automatiskt steg kan bockas av för hand, två slugs får samma bundle-id. Test: `SetupStepsTest::test_privacy_step_blocks_only_the_app_store_stage`, `AppStoreSetupTest::test_create_app_step_is_done_only_when_apple_has_the_app`, `GameReleasesPageTest::test_marking_create_app_checks_apple_first`, `SetReleaseTargetsToolTest::test_colliding_bundle_id_is_refused` (Task 5).
@@ -126,9 +136,9 @@ Spara sista raden som `$WT`. `SCRATCH=<scratchpad>/slapp-testflight && mkdir -p 
 2. I samma avsnitt, punkten `app_store`, ersätt med: "`app_store`: registrera bundle-id och skapa App Store-profilen (automatiskt via API), skapa appen i App Store Connect med namn, bundle-id, SKU = slug och svenska (Erik, manuellt; Computercat ser själv när appen finns), skapa TestFlight-gruppen "ComputerCat intern" och lägg till de interna testarna (automatiskt), och integritetsuppgifter och åldersgräns (Erik; stoppar bara produktionssteget `app_store`)."
 3. Under spärr 6, lägg till meningen: "Ett engångssteg stoppar de steg det gäller (`SetupSteps::BLOCKS`); integritetsuppgifter och åldersgräns stoppar inte TestFlight."
 4. I "Versionsflöde: Skicka till TestFlight", punkt 3, lägg till efter första meningen: "Finns taggen `v<version>` redan på en annan commit nekas släppet också: samma commit kan försökas igen med samma version, en ny commit kräver en ny version. Taggen flyttas aldrig." Lägg till sist i avsnittet: "Indata till `release-ios.yml`: `game`, `commit_sha`, `release_uuid`, `build_number`, `marketing_version`, `bundle_id`, `profile_id` och `build_guide` (byggguideversionen ur spelets `CLAUDE.md` vid commiten, som väljer sha256 för `cc-gate.mjs`)."
-5. Under "Statusläsning", lägg till: "TestFlight-gruppen skapas med `hasAccessToAllBuilds: false` och varje bygge läggs till i gruppen när Apple satt `processingState` till `VALID`."
+5. Under "Statusläsning", lägg till: "TestFlight-gruppen skapas per app med `hasAccessToAllBuilds: true` (som i spike B9); när Apple satt `processingState` till `VALID` kontrollerar Computercat att bygget finns i gruppen och länkar det annars. GitHub-körningens gräns är 90 min (flödets jobb har sammanlagt 80 min). Testarna är användar-id i config; e-post hämtas från App Store Connect och loggas aldrig."
 
-- [ ] **Steg 3: Bilagan.** Lägg till sist i bilagan ett avsnitt `## Etapp 2 del 1: vad koden bygger på` med en mening per punkt: dispatch med `return_run_details` (G1b) är huvudvägen, `run-name` reserven (G2); `buildUploads` sker i sign-jobbet och Computercat läser bara `GET /v1/builds`; gruppen med `hasAccessToAllBuilds: false` (R7) är inte prövad i spiken och kontrolleras i Task 12; GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.
+- [ ] **Steg 3: Bilagan.** Lägg till sist i bilagan ett avsnitt `## Etapp 2 del 1: vad koden bygger på` med en mening per punkt: dispatch med `return_run_details` (G1b) är huvudvägen, `run-name` reserven (G2); `buildUploads` sker i sign-jobbet och Computercat läser bara `GET /v1/builds`; gruppen skapas med `hasAccessToAllBuilds: true` som i B9, men att Computercat ser bygget i gruppen via `filter[betaGroups]` kontrolleras i Task 10 och 12; GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.
 
 - [ ] **Steg 4: Commit.**
 
@@ -147,11 +157,11 @@ cd $WT && git add docs/superpowers/specs && git commit -m "Spec: bundle-id se.co
 
 **Interfaces:**
 - Produces (används av Task 5 och 7):
-  - `AppStoreConfig::missing(): list<string>`, `assertKeyReady(): void`, `keyId()`, `issuerId()`, `certificateId()`, `privateKeyFile()`, `testers(): list<string>`, `betaGroup(): string`.
-  - `AppStoreConnectApi`: `jwt(?DateTimeImmutable): string`, `findBundleId(string): ?array{id,identifier}`, `createBundleId(string $identifier, string $name): array{id,identifier}`, `findApp(string $bundleId): ?array{id,name,sku,bundle_id}`, `findProfile(string $name): ?array{id,uuid,state,expires_at}`, `createProfile(string $name, string $bundleResourceId, string $certificateId): array{id,uuid,state,expires_at}`, `profile(string $id): ?array{id,uuid,state,expires_at}`, `findBetaGroup(string $appId, string $name): ?array{id,name}`, `createInternalBetaGroup(string $appId, string $name): array{id,name}`, `findBetaTester(string $email, ?string $groupId = null): ?array{id,email}`, `createBetaTester(string $email, string $groupId): array{id,email}`, `addTestersToGroup(string $groupId, list<string> $testerIds): void`, `findBuild(string $appId, string $marketingVersion, int $buildNumber): ?array{id,state,version,expired}`, `buildIsInGroup(string $groupId, string $buildId): bool`, `addBuildToGroup(string $groupId, string $buildId): void`.
+  - `AppStoreConfig::missing(): list<string>`, `assertKeyReady(): void`, `keyId()`, `issuerId()`, `certificateId()`, `privateKeyFile()`, `testerUserIds(): list<string>`, `betaGroup(): string`.
+  - `AppStoreConnectApi`: `jwt(?DateTimeImmutable): string`, `findBundleId(string): ?array{id,identifier}`, `createBundleId(string $identifier, string $name): array{id,identifier}`, `findApp(string $bundleId): ?array{id,name,sku,bundle_id}`, `findProfile(string $name): ?array{id,uuid,state,expires_at}`, `createProfile(string $name, string $bundleResourceId, string $certificateId): array{id,uuid,state,expires_at}`, `profile(string $id): ?array{id,uuid,state,expires_at}`, `findBetaGroup(string $appId, string $name): ?array{id,name}`, `createInternalBetaGroup(string $appId, string $name): array{id,name}`, `userEmail(string $userId): string` (registreras hos `Redactor`), `findBetaTester(string $email, ?string $groupId = null): ?array{id}`, `createBetaTester(string $email, string $groupId): array{id}`, `addTestersToGroup(string $groupId, list<string> $testerIds): void`, `findBuild(string $appId, string $marketingVersion, int $buildNumber): ?array{id,state,version,expired}`, `buildIsInGroup(string $groupId, string $buildId): bool`, `addBuildToGroup(string $groupId, string $buildId): void`.
   - Fel: `ExternalApiException` (redigerat, `SafeMessage`), `AppStoreNotConfigured` (`SafeMessage`).
 
-- [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset`. Ytor: den privata nyckeln (fil 600, läses bara av `InMemory::file`, aldrig in i en sträng som loggas), JWT (15 min, maskeras av `Redactor`s `eyJ…`-mönster), loggning vid 4xx/5xx (request och response, redigerat, 4 KB), id:n från Apple som hamnar i URL:er (valideras), inga skrivande anrop utöver de listade, ingen DELETE. Skriv resultatet som kommentar överst i `AppStoreConnectApi.php` (redan med i koden nedan).
+- [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset`. Ytor: den privata nyckeln (fil 600, läses bara av `InMemory::file`, aldrig in i en sträng som loggas), JWT (15 min, maskeras av `Redactor`s `eyJ…`-mönster), loggning vid 4xx/5xx (request och response, redigerat, 4 KB), id:n från Apple som hamnar i URL:er (valideras), testarnas e-post (hämtas per användar-id och registreras hos `Redactor` innan den används, R18), inga skrivande anrop utöver de listade, ingen DELETE. Skriv resultatet som kommentar överst i `AppStoreConnectApi.php` (redan med i koden nedan).
 
 - [ ] **Steg 2: Konfigurationen.** Lägg till sist i arrayen i `config/releases.php` (före `];`):
 
@@ -166,8 +176,16 @@ cd $WT && git add docs/superpowers/specs && git commit -m "Spec: bundle-id se.co
         'private_key_path' => env('ASC_RELEASE_PRIVATE_KEY_PATH', 'app/private/asc-release.p8'),
         'certificate_id' => env('ASC_RELEASE_CERTIFICATE_ID'),
         'beta_group' => 'ComputerCat intern',
-        // Interna testare måste vara användare i App Store Connect (spike B9). Kommaseparerade e-postadresser.
-        'testers' => env('ASC_TESTFLIGHT_TESTERS', ''),
+        // Interna testare måste vara användare i App Store Connect (spike B9). Användar-id, inte e-post
+        // (Eriks beslut 2026-10-15); e-postadressen hämtas med GET /v1/users/{id} och loggas aldrig.
+        'tester_user_ids' => [
+            '02c9745a-c3d8-423e-9d54-2bec1cdab856',
+            '57b3db4f-6777-41af-a555-bd0b32ed9f45',
+            'd64532b0-55e1-402e-8854-16468c523d07',
+            'e6939074-f8cc-48f0-b0c6-a510d6b2d4ba',
+        ],
+        // Per anrop. Jobben gör högst fyra anrop per körning och har timeout under köns retry_after (90 s).
+        'http_timeout_seconds' => 15,
     ],
 
     // Släpprepots flöde. Computercat startar det alltid på släpprepots egen huvudgren.
@@ -178,7 +196,8 @@ cd $WT && git add docs/superpowers/specs && git commit -m "Spec: bundle-id se.co
     ],
 
     'timeouts' => [
-        'github_run_minutes' => 60,
+        // Flödets jobb har timeout-minutes 10 + 40 + 30 = 80; tio minuters kö utöver det (R11).
+        'github_run_minutes' => 90,
         'apple_processing_minutes' => 90,
         // Så länge letas en körning upp via run-name när dispatch-svaret gick förlorat.
         'dispatch_lookup_minutes' => 3,
@@ -201,7 +220,6 @@ ASC_RELEASE_KEY_ID=
 ASC_RELEASE_ISSUER_ID=
 ASC_RELEASE_PRIVATE_KEY_PATH=app/private/asc-release.p8
 ASC_RELEASE_CERTIFICATE_ID=
-ASC_TESTFLIGHT_TESTERS=
 ```
 
 I `phpunit.xml`, lägg till bredvid de andra tomma env-raderna (så att en lokal `.env` aldrig når testerna):
@@ -211,7 +229,6 @@ I `phpunit.xml`, lägg till bredvid de andra tomma env-raderna (så att en lokal
         <env name="ASC_RELEASE_ISSUER_ID" value=""/>
         <env name="ASC_RELEASE_PRIVATE_KEY_PATH" value=""/>
         <env name="ASC_RELEASE_CERTIFICATE_ID" value=""/>
-        <env name="ASC_TESTFLIGHT_TESTERS" value=""/>
 ```
 
 - [ ] **Steg 3: Fejkarna.** Skapa `tests/Support/AppStoreFakes.php`:
@@ -236,7 +253,9 @@ final class AppStoreFakes
 
     public const CERT = 'TESTCERT01';
 
-    public const TESTERS = 'erik@example.test,mattias@example.test';
+    public const TESTER_IDS = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2'];
+
+    public const TESTER_EMAILS = ['00000000-0000-4000-8000-0000000000a1' => 'erik@example.test', '00000000-0000-4000-8000-0000000000a2' => 'mattias@example.test'];
 
     public const BUNDLE_RESOURCE = 'WN54V4BM5D';
 
@@ -274,7 +293,7 @@ final class AppStoreFakes
             'releases.app_store.issuer_id' => self::ISSUER,
             'releases.app_store.private_key_path' => self::KEY_FILE,
             'releases.app_store.certificate_id' => self::CERT,
-            'releases.app_store.testers' => self::TESTERS,
+            'releases.app_store.tester_user_ids' => self::TESTER_IDS,
         ]);
     }
 
@@ -308,7 +327,13 @@ final class AppStoreFakes
 
     public static function betaGroup(string $id = self::GROUP, string $name = 'ComputerCat intern', bool $internal = true): array
     {
-        return ['type' => 'betaGroups', 'id' => $id, 'attributes' => ['name' => $name, 'isInternalGroup' => $internal, 'hasAccessToAllBuilds' => false]];
+        return ['type' => 'betaGroups', 'id' => $id, 'attributes' => ['name' => $name, 'isInternalGroup' => $internal, 'hasAccessToAllBuilds' => true]];
+    }
+
+    /** GET /v1/users/{id} (User: username är inloggningens e-postadress). */
+    public static function user(string $id, string $email): array
+    {
+        return ['type' => 'users', 'id' => $id, 'attributes' => ['username' => $email, 'firstName' => 'Test', 'lastName' => 'Testare', 'roles' => ['APP_MANAGER']]];
     }
 
     public static function betaTester(string $email, string $id): array
@@ -458,7 +483,7 @@ class AppStoreConnectApiTest extends TestCase
         Http::assertSent(fn (Request $r) => str_contains(urldecode($r->url()), 'fields[profiles]=name,profileState,expirationDate,uuid'));
     }
 
-    public function test_beta_group_is_found_by_exact_internal_name_and_created_without_access_to_all_builds(): void
+    public function test_beta_group_is_found_by_exact_internal_name_and_created_with_access_to_all_builds(): void // R7
     {
         Http::fake([
             A::API.'/v1/betaGroups?*' => Http::response(A::many(A::betaGroup('ext-1', 'ComputerCat intern', false), A::betaGroup())),
@@ -469,9 +494,41 @@ class AppStoreConnectApiTest extends TestCase
         $this->assertSame('new-1', $this->api()->createInternalBetaGroup(A::APP, 'ComputerCat intern')['id']);
         Http::assertSent(fn (Request $r) => $r->method() === 'POST' && $r->data() === ['data' => [
             'type' => 'betaGroups',
-            'attributes' => ['name' => 'ComputerCat intern', 'isInternalGroup' => true, 'hasAccessToAllBuilds' => false],
+            'attributes' => ['name' => 'ComputerCat intern', 'isInternalGroup' => true, 'hasAccessToAllBuilds' => true],
             'relationships' => ['app' => ['data' => ['type' => 'apps', 'id' => A::APP]]],
         ]]);
+    }
+
+    public function test_user_email_is_read_by_id_and_never_reaches_a_log(): void // R18
+    {
+        Log::spy();
+        $id = A::TESTER_IDS[0];
+        Http::fake([
+            A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(A::user($id, 'erik@example.test'))),
+            A::API.'/v1/betaTesters?*' => Http::response(A::error(500, 'UNEXPECTED_ERROR', 'erik@example.test failed'), 500),
+        ]);
+
+        $email = $this->api()->userEmail($id);
+        $this->assertSame('erik@example.test', $email);
+        Http::assertSent(fn (Request $r) => str_contains(urldecode($r->url()), 'fields[users]=username'));
+
+        try {
+            $this->api()->findBetaTester($email);
+            $this->fail('500 kastades inte.');
+        } catch (ExternalApiException $e) {
+            $this->assertStringNotContainsString('erik@example.test', $e->getMessage());
+            $this->assertStringNotContainsString('erik%40example.test', $e->getMessage());
+        }
+        Log::shouldHaveReceived('warning')->withArgs(fn (string $msg, array $ctx) => ! str_contains(json_encode($ctx), 'erik@example.test') && ! str_contains(json_encode($ctx), 'erik%40example.test'))->once();
+    }
+
+    public function test_user_without_username_fails_loud(): void
+    {
+        $id = A::TESTER_IDS[0];
+        Http::fake([A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(['type' => 'users', 'id' => $id, 'attributes' => []]))]);
+
+        $this->expectException(ExternalApiException::class);
+        $this->api()->userEmail($id);
     }
 
     public function test_beta_tester_is_created_in_the_group_and_existing_ones_are_linked(): void
@@ -588,9 +645,9 @@ final class AppStoreConfig
             $missing[] = 'ASC_RELEASE_CERTIFICATE_ID';
         }
         try {
-            self::testers();
+            self::testerUserIds();
         } catch (AppStoreNotConfigured) {
-            $missing[] = 'ASC_TESTFLIGHT_TESTERS';
+            $missing[] = 'releases.app_store.tester_user_ids';
         }
 
         return $missing;
@@ -634,15 +691,21 @@ final class AppStoreConfig
         return (string) config('releases.app_store.beta_group');
     }
 
-    /** @return list<string> */
-    public static function testers(): array
+    /** @return list<string> användar-id i App Store Connect (R18) */
+    public static function testerUserIds(): array
     {
-        $emails = array_values(array_filter(array_map('trim', explode(',', (string) config('releases.app_store.testers'))), fn (string $e) => $e !== ''));
-        if ($emails === [] || count(array_filter($emails, fn (string $e) => filter_var($e, FILTER_VALIDATE_EMAIL) === false)) > 0) {
-            throw new AppStoreNotConfigured('App Store Connect is not configured: ASC_TESTFLIGHT_TESTERS (comma-separated e-mail addresses of App Store Connect users).');
+        $ids = array_values((array) config('releases.app_store.tester_user_ids'));
+        foreach ($ids as $id) {
+            if (! is_string($id) || preg_match(self::ISSUER, $id) !== 1) {
+                $ids = [];
+                break;
+            }
+        }
+        if ($ids === []) {
+            throw new AppStoreNotConfigured('App Store Connect is not configured: releases.app_store.tester_user_ids (user ids of App Store Connect users).');
         }
 
-        return $emails;
+        return $ids;
     }
 
     /** @return list<string> */
@@ -675,6 +738,7 @@ final class AppStoreConfig
 namespace App\Releases\AppStore;
 
 use App\Provisioning\Http\ExternalApiException;
+use App\Provisioning\Http\Redactor;
 use App\Provisioning\Http\SendsApiRequests;
 use DateTimeImmutable;
 use Illuminate\Http\Client\PendingRequest;
@@ -812,40 +876,62 @@ final class AppStoreConnectApi
     {
         $row = $this->create('/v1/betaGroups', [
             'type' => 'betaGroups',
-            // R7: inga automatiska byggen; Computercat lägger till varje bygge.
-            'attributes' => ['name' => $name, 'isInternalGroup' => true, 'hasAccessToAllBuilds' => false],
+            // R7: samma läge som spike B9; Computercat kontrollerar ändå att varje bygge finns i gruppen.
+            'attributes' => ['name' => $name, 'isInternalGroup' => true, 'hasAccessToAllBuilds' => true],
             'relationships' => ['app' => ['data' => ['type' => 'apps', 'id' => $this->pathId($appId)]]],
         ]);
 
         return ['id' => $this->id($row), 'name' => $name];
     }
 
-    /** @return array{id: string, email: string}|null */
+    // R18: e-postadressen läses bara här och registreras som hemlighet innan den används i något
+    // anrop, så att den maskeras i loggade URL:er, kroppar och fel (rå och URL-kodad).
+    public function userEmail(string $userId): string
+    {
+        $json = $this->get('/v1/users/'.$this->pathId($userId), ['fields[users]' => 'username']);
+        $email = $json['data']['attributes']['username'] ?? null;
+        if (! is_string($email) || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw new ExternalApiException($this->serviceName(), 'GET', '/v1/users/{id}', 200, 'user without a valid username');
+        }
+        self::protect($email);
+
+        return $email;
+    }
+
+    /** @return array{id: string}|null */
     public function findBetaTester(string $email, ?string $groupId = null): ?array
     {
+        self::protect($email);
         $query = ['filter[email]' => $email, 'fields[betaTesters]' => 'email', 'limit' => 10];
         if ($groupId !== null) {
             $query['filter[betaGroups]'] = $this->pathId($groupId);
         }
         foreach ($this->list('/v1/betaTesters', $query) as $row) {
             if (strcasecmp((string) ($row['attributes']['email'] ?? ''), $email) === 0) {
-                return ['id' => $this->id($row), 'email' => $email];
+                return ['id' => $this->id($row)];
             }
         }
 
         return null;
     }
 
-    /** @return array{id: string, email: string} */
+    /** @return array{id: string} */
     public function createBetaTester(string $email, string $groupId): array
     {
+        self::protect($email);
         $row = $this->create('/v1/betaTesters', [
             'type' => 'betaTesters',
             'attributes' => ['email' => $email],
             'relationships' => ['betaGroups' => ['data' => [['type' => 'betaGroups', 'id' => $this->pathId($groupId)]]]],
         ]);
 
-        return ['id' => $this->id($row), 'email' => $email];
+        return ['id' => $this->id($row)];
+    }
+
+    private static function protect(string $email): void
+    {
+        Redactor::registerSecret($email);
+        Redactor::registerSecret(rawurlencode($email));
     }
 
     /** @param list<string> $testerIds */
@@ -942,7 +1028,7 @@ final class AppStoreConnectApi
         return Http::baseUrl($this->baseUrl())
             ->withToken($this->token())
             ->acceptJson()
-            ->timeout((int) config('provisioning.http_timeout_seconds'))
+            ->timeout((int) config('releases.app_store.http_timeout_seconds'))
             ->connectTimeout(5);
     }
 
@@ -998,7 +1084,8 @@ s = json.load(open(sys.argv[1])); P = s['paths']
 need = {('/v1/bundleIds','get'):['filter[identifier]','filter[platform]','limit'], ('/v1/apps','get'):['filter[bundleId]','fields[apps]','limit'],
  ('/v1/profiles','get'):['filter[name]','filter[profileType]','fields[profiles]'], ('/v1/profiles/{id}','get'):['fields[profiles]'],
  ('/v1/betaGroups','get'):['filter[app]','filter[name]','filter[isInternalGroup]'], ('/v1/betaTesters','get'):['filter[email]','filter[betaGroups]','fields[betaTesters]'],
- ('/v1/builds','get'):['filter[app]','filter[version]','filter[preReleaseVersion.version]','filter[betaGroups]','filter[id]','fields[builds]']}
+ ('/v1/builds','get'):['filter[app]','filter[version]','filter[preReleaseVersion.version]','filter[betaGroups]','filter[id]','fields[builds]'],
+ ('/v1/users/{id}','get'):['fields[users]']}
 for (p,m), names in need.items():
     have = {x.get('name') for x in P[p][m]['parameters']}
     print(p, m, 'OK' if set(names) <= have else 'SAKNAS: '+str(set(names)-have))
@@ -1012,7 +1099,7 @@ Förväntat: varje rad `OK`, och POST-svaren innehåller `201` (skapande) respek
 - [ ] **Steg 7: Kör testerna.**
 
 Run: `cd $WT && php artisan test --filter=AppStoreConnectApiTest`
-Expected: PASS (13 tester).
+Expected: PASS (15 tester).
 
 - [ ] **Steg 8: Commit.**
 
@@ -1029,6 +1116,7 @@ git commit -m "App Store Connect-klient för släppflödet (ES256, bara etapp 2:
 - Modify: `app/Provisioning/Clients/GitHubAppClient.php`
 - Modify: `tests/Support/ProvisioningFakes.php`
 - Create: `tests/Feature/Provisioning/GitHubReleaseCallsTest.php`
+- Modify: `app/Rules/GameSlug.php`, `tests/Unit/GameSlugTest.php` (R19)
 
 **Interfaces:**
 - Produces (Task 6 och 7):
@@ -1437,11 +1525,40 @@ Expected: FAIL.
 Run: `cd $WT && php artisan test --filter='GitHubReleaseCallsTest|GitHubAppClientTest|RepoStepTest'`
 Expected: PASS (befintliga GitHub-tester oförändrade).
 
-- [ ] **Steg 6: Commit.**
+- [ ] **Steg 6: Reservera `computercat*` (R19).** Test först, i `tests/Unit/GameSlugTest.php`:
+
+```php
+    public function test_computercat_prefix_is_reserved(): void // R19: läsappens token följer spelets namn
+    {
+        config(['provisioning.reserved_slugs' => []]);
+
+        foreach (['computercat', 'computercat-release', 'computercat-ankare', 'computercatx'] as $slug) {
+            $this->assertTrue(GameSlug::isReserved($slug), $slug);
+        }
+        $this->assertFalse(GameSlug::isReserved('kattsvep'));
+    }
+```
+
+I `GameSlug::isReserved`:
+
+```php
+    public static function isReserved(string $slug): bool
+    {
+        // R19 (plan 2026-10-15-slapp-testflight): släpprepots läsapp får en token för repot som heter
+        // som spelet; computercat-* är Computercats egna repon och får aldrig bli ett spel.
+        return str_starts_with($slug, 'computercat')
+            || in_array($slug, (array) config('provisioning.reserved_slugs', []), true);
+    }
+```
+
+Run: `cd $WT && php artisan test --filter='GameSlugTest|CreateGameToolTest'`
+Expected: PASS. (Finns ett spel med ett sådant namn i prod kontrolleras det i Task 12 steg 3.)
+
+- [ ] **Steg 7: Commit.**
 
 ```bash
-cd $WT && git add app/Provisioning/Clients/GitHubAppClient.php tests/Support/ProvisioningFakes.php tests/Feature/Provisioning/GitHubReleaseCallsTest.php docs/superpowers/specs/bilagor/2026-10-15-github-actions-ios.md
-git commit -m "GitHub-klienten: fil vid commit, taggar, dispatch med return_run_details och körningar"
+cd $WT && git add app/Provisioning/Clients/GitHubAppClient.php app/Rules/GameSlug.php tests/Support/ProvisioningFakes.php tests/Feature/Provisioning/GitHubReleaseCallsTest.php tests/Unit/GameSlugTest.php docs/superpowers/specs/bilagor/2026-10-15-github-actions-ios.md
+git commit -m "GitHub-klienten: fil vid commit, taggar, dispatch med return_run_details och körningar; computercat-slugs reserverade"
 ```
 
 ---
@@ -2081,6 +2198,7 @@ use App\Releases\AppStore\AppStoreSetup;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\Support\AppStoreFakes as A;
 use Tests\Support\AssertsNoHttpInTransaction;
 use Tests\Support\CreatesReleases;
@@ -2117,10 +2235,21 @@ class AppStoreSetupTest extends TestCase
         return ReleaseSetupStep::where('game_id', $game->id)->pluck('status', 'key')->all();
     }
 
+    /** GET /v1/users/{id}: de två testarnas e-post. */
+    private function users(): array
+    {
+        return [A::API.'/v1/users/*' => function (Request $r) {
+            $id = (string) preg_replace('#^.*/v1/users/([^?]+).*$#', '$1', $r->url());
+
+            return Http::response(A::one(A::user($id, A::TESTER_EMAILS[$id])));
+        }];
+    }
+
     public function test_all_automatic_steps_run_in_order_when_the_app_exists(): void
     {
+        Log::spy();
         $game = $this->freshAppStoreGame();
-        Http::fake([
+        Http::fake($this->users() + [
             A::API.'/v1/bundleIds?*' => Http::response(A::many()),
             A::API.'/v1/bundleIds' => Http::response(A::one(A::bundleId('se.computercat.kattsvep')), 201),
             A::API.'/v1/profiles?*' => Http::response(A::many()),
@@ -2138,8 +2267,35 @@ class AppStoreSetupTest extends TestCase
         $this->assertSame('open', $this->status($game)['appstore_privacy_and_age']);
         $ids = $game->fresh()->app_store_ids;
         $this->assertSame([A::BUNDLE_RESOURCE, A::PROFILE, A::APP, A::GROUP], [$ids['bundle_resource_id'], $ids['profile_id'], $ids['app_id'], $ids['beta_group_id']]);
+        $this->assertSame(A::TESTER_IDS, $ids['testers_added']);
         Http::assertSent(fn (Request $r) => $r->url() === A::API.'/v1/profiles' && $r->data()['data']['relationships']['certificates']['data'][0]['id'] === A::CERT);
         $this->assertNull(ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->value('done_by'));
+        // R18: inga e-postadresser i loggen, varken råa eller URL-kodade.
+        foreach (['notice', 'info', 'warning', 'error'] as $level) {
+            Log::shouldHaveReceived($level)->withArgs(fn (...$args) => preg_match('/example\.test|%40example/', json_encode($args)) === 1)->never();
+        }
+    }
+
+    public function test_one_unit_makes_at_most_four_calls(): void // timeout-budgeten (R11, Task 5)
+    {
+        $game = $this->freshAppStoreGame();
+        Http::fake($this->users() + [
+            A::API.'/v1/bundleIds?*' => Http::response(A::many(A::bundleId('se.computercat.kattsvep'))),
+            A::API.'/v1/profiles?*' => Http::response(A::many(A::profile())),
+            A::API.'/v1/apps?*' => Http::response(A::many(A::app('se.computercat.kattsvep'))),
+            A::API.'/v1/betaGroups?*' => Http::response(A::many(A::betaGroup())),
+            A::API.'/v1/betaTesters?*' => Http::response(A::many()),
+            A::API.'/v1/betaTesters' => Http::response(A::one(A::betaTester('x@example.test', 't-9')), 201),
+        ]);
+
+        $setup = app(AppStoreSetup::class);
+        $before = 0;
+        do {
+            [$outcome] = $setup->runOne($game->fresh());
+            $calls = count(Http::recorded());
+            $this->assertLessThanOrEqual(4, $calls - $before);
+            $before = $calls;
+        } while ($outcome === AppStoreSetup::PROGRESS);
     }
 
     public function test_create_app_step_is_done_only_when_apple_has_the_app(): void // R8
@@ -2160,12 +2316,31 @@ class AppStoreSetupTest extends TestCase
         Http::assertNotSent(fn (Request $r) => $r->method() === 'POST');
     }
 
+    public function test_done_steps_without_ids_are_reopened(): void // R17: 1a-data
+    {
+        $game = $this->releasableGame('kattsvep', ['app_store']); // alla steg klara, inga id:n
+        $game->forceFill(['bundle_id' => 'se.computercat.kattsvep'])->save();
+        Http::fake([
+            A::API.'/v1/bundleIds?*' => Http::response(A::many(A::bundleId('se.computercat.kattsvep'))),
+            A::API.'/v1/profiles?*' => Http::response(A::many(A::profile())),
+            A::API.'/v1/apps?*' => Http::response(A::many()),
+        ]);
+
+        app(AppStoreSetup::class)->run($game->fresh());
+
+        $status = $this->status($game);
+        $this->assertSame(['done', 'done', 'open', 'open'], [$status['appstore_bundle_id'], $status['appstore_profile'], $status['appstore_create_app'], $status['appstore_testflight_group']]);
+        $this->assertStringContainsString('app_id saknas', ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->value('last_error'));
+        $this->assertSame('done', $status['appstore_privacy_and_age']); // Eriks steg utan id rörs inte
+    }
+
     public function test_a_second_run_creates_nothing_new(): void
     {
         $game = $this->testFlightGame();
+        $game->forceFill(['app_store_ids' => $game->app_store_ids + ['testers_added' => A::TESTER_IDS]])->save();
         Http::fake();
 
-        $this->assertSame([], app(AppStoreSetup::class)->run($game));
+        $this->assertSame([], app(AppStoreSetup::class)->run($game->fresh()));
         Http::assertNothingSent();
     }
 
@@ -2173,8 +2348,8 @@ class AppStoreSetupTest extends TestCase
     {
         $game = $this->freshAppStoreGame();
         ReleaseSetupStep::where('game_id', $game->id)->where('key', '!=', 'appstore_testflight_group')->update(['status' => ReleaseSetupStep::DONE]);
-        $game->forceFill(['app_store_ids' => ['app_id' => A::APP]])->save();
-        Http::fake([
+        $game->forceFill(['app_store_ids' => ['bundle_resource_id' => A::BUNDLE_RESOURCE, 'profile_id' => A::PROFILE, 'app_id' => A::APP]])->save();
+        Http::fake($this->users() + [
             A::API.'/v1/betaGroups?*' => Http::response(A::many(A::betaGroup())),
             // erik är redan med i gruppen; mattias finns som testare men inte i gruppen.
             A::API.'/v1/betaTesters?*' => function (Request $r) {
@@ -2252,66 +2427,116 @@ use App\Releases\SetupSteps;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-// Computercats engångssteg för app_store, i definitionsordning. Varje steg letar först och skapar
-// sedan, så att en omkörning efter ett fel aldrig skapar dubbletter. Inga HTTP-anrop i transaktioner.
+// Computercats engångssteg för app_store, i definitionsordning, en enhet arbete (högst fyra anrop)
+// per runOne(), så att jobbet håller sig under köns retry_after. Varje steg letar först och skapar
+// sedan, så att en omkörning aldrig skapar dubbletter. Ett klart steg utan sitt id öppnas igen (R17).
+// Testare är användar-id; e-post hämtas per testare och loggas aldrig (R18). Inga HTTP-anrop i transaktioner.
 final class AppStoreSetup
 {
+    public const PROGRESS = 'progress';
+
+    public const IDLE = 'idle';
+
+    /** Steg => id:t som steget ger Computercat. */
+    public const STEP_IDS = [
+        'appstore_bundle_id' => 'bundle_resource_id',
+        'appstore_profile' => 'profile_id',
+        'appstore_create_app' => 'app_id',
+        'appstore_testflight_group' => 'beta_group_id',
+    ];
+
     public function __construct(private AppStoreConnectApi $asc) {}
 
-    /** @return list<string> steg som blev klara i den här körningen */
-    public function run(Game $game): array
+    /** Kör enheter tills inget mer går att göra (tester och Filament). @return list<string> steg som blev klara */
+    public function run(Game $game, int $maxUnits = 50): array
     {
-        if (! in_array('app_store', $game->releaseTargets(), true) || $game->bundle_id === null) {
-            return [];
+        $done = [];
+        for ($i = 0; $i < $maxUnits; $i++) {
+            [$outcome, $finished] = $this->runOne($game->refresh());
+            if ($finished !== null) {
+                $done[] = $finished;
+            }
+            if ($outcome === self::IDLE) {
+                break;
+            }
         }
 
-        $done = [];
+        return $done;
+    }
+
+    /** @return array{0: string, 1: string|null} [PROGRESS|IDLE, steget som blev klart] */
+    public function runOne(Game $game): array
+    {
+        if (! in_array('app_store', $game->releaseTargets(), true) || $game->bundle_id === null) {
+            return [self::IDLE, null];
+        }
+        self::reopenStepsWithoutIds($game);
+
         foreach (array_keys(SetupSteps::DEFINITIONS['app_store']) as $key) {
             $step = ReleaseSetupStep::where('game_id', $game->id)->where('target', 'app_store')->where('key', $key)->first();
-            if ($step === null || $step->status === ReleaseSetupStep::DONE) {
-                continue;
+            if ($step === null || $step->status === ReleaseSetupStep::DONE || ! isset(self::STEP_IDS[$key])) {
+                continue; // klart, eller Eriks steg som inte kan kontrolleras via API (integritet, åldersgräns)
             }
 
             try {
-                $finished = match ($key) {
+                $result = match ($key) {
                     'appstore_bundle_id' => $this->bundleId($game),
                     'appstore_profile' => $this->profile($game),
                     'appstore_create_app' => $this->detectApp($game),
                     'appstore_testflight_group' => $this->group($game),
-                    default => null, // Eriks steg som inte kan kontrolleras via API (integritet, åldersgräns)
                 };
             } catch (Throwable $e) {
                 $step->update(['last_error' => $e instanceof SafeMessage ? $e->getMessage() : 'Internal error ('.class_basename($e).').']);
                 throw $e;
             }
 
-            if ($finished === null) {
-                continue;
+            if ($result === 'wait') {
+                return [self::IDLE, null]; // appen finns inte än; gruppen kräver den
             }
-            if ($finished === false) {
-                break; // appen finns inte än: gruppen kräver den
+            if ($result === 'more') {
+                return [self::PROGRESS, null];
             }
 
             $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => null, 'done_at' => now(), 'last_error' => null]);
             Log::notice('Engångssteg klart via App Store Connect', ['game' => $game->slug, 'step' => $key]);
-            $done[] = $key;
-            $game->refresh();
+
+            return [self::PROGRESS, $key];
         }
 
-        return $done;
+        return [self::IDLE, null];
     }
 
-    private function bundleId(Game $game): bool
+    // R17: anropas också av migrationen 2026_10_17_100002 (bara databasen).
+    public static function reopenStepsWithoutIds(Game $game): int
+    {
+        $reopened = 0;
+        foreach (self::STEP_IDS as $key => $idKey) {
+            if ($game->appStoreId($idKey) !== null) {
+                continue;
+            }
+            $count = ReleaseSetupStep::where('game_id', $game->id)->where('target', 'app_store')->where('key', $key)
+                ->where('status', ReleaseSetupStep::DONE)
+                ->update(['status' => ReleaseSetupStep::OPEN, 'done_by' => null, 'done_at' => null, 'last_error' => "Öppnat igen: {$idKey} saknas hos Computercat.", 'updated_at' => now()]);
+            if ($count > 0) {
+                Log::warning('Engångssteg öppnat igen: id saknas', ['game' => $game->slug, 'step' => $key, 'id' => $idKey]);
+                $reopened += $count;
+            }
+        }
+
+        return $reopened;
+    }
+
+    private function bundleId(Game $game): string
     {
         $found = $this->asc->findBundleId($game->bundle_id)
             ?? $this->asc->createBundleId($game->bundle_id, 'ComputerCat '.str_replace('-', ' ', $game->slug));
         $this->remember($game, ['bundle_resource_id' => $found['id']]);
 
-        return true;
+        return 'done';
     }
 
-    // R13: en profil som inte är ACTIVE förnyas inte här; sign-jobbet skulle falla, så det syns.
-    private function profile(Game $game): bool
+    // R13: en profil som inte är ACTIVE förnyas inte här; felet syns på steget och i Slack.
+    private function profile(Game $game): string
     {
         $bundle = $game->appStoreId('bundle_resource_id') ?? throw new AppStoreSetupFailed('The bundle id is not registered yet.');
         $name = 'ComputerCat '.str_replace('-', ' ', $game->slug).' App Store';
@@ -2323,40 +2548,53 @@ final class AppStoreSetup
         $profile ??= $this->asc->createProfile($name, $bundle, AppStoreConfig::certificateId());
         $this->remember($game, ['profile_id' => $profile['id']]);
 
-        return true;
+        return 'done';
     }
 
-    private function detectApp(Game $game): bool
+    private function detectApp(Game $game): string
     {
         $app = $this->asc->findApp($game->bundle_id);
         if ($app === null) {
-            return false;
+            return 'wait';
         }
         $this->remember($game, ['app_id' => $app['id'], 'app_name' => $app['name']]);
 
-        return true;
+        return 'done';
     }
 
-    private function group(Game $game): bool
+    // Enheter: (1) hitta eller skapa gruppen, (2) en testare per enhet (högst fyra anrop), (3) klart.
+    private function group(Game $game): string
     {
         $appId = $game->appStoreId('app_id') ?? throw new AppStoreSetupFailed('The app does not exist in App Store Connect yet.');
-        $testers = AppStoreConfig::testers();
 
-        $group = $this->asc->findBetaGroup($appId, AppStoreConfig::betaGroup())
-            ?? $this->asc->createInternalBetaGroup($appId, AppStoreConfig::betaGroup());
-        $this->remember($game, ['beta_group_id' => $group['id']]);
+        $groupId = $game->appStoreId('beta_group_id');
+        if ($groupId === null) {
+            $group = $this->asc->findBetaGroup($appId, AppStoreConfig::betaGroup())
+                ?? $this->asc->createInternalBetaGroup($appId, AppStoreConfig::betaGroup());
+            $this->remember($game, ['beta_group_id' => $group['id']]);
 
-        foreach ($testers as $email) {
-            if ($this->asc->findBetaTester($email, $group['id']) !== null) {
-                continue;
-            }
-            $existing = $this->asc->findBetaTester($email);
-            $existing !== null
-                ? $this->asc->addTestersToGroup($group['id'], [$existing['id']])
-                : $this->asc->createBetaTester($email, $group['id']);
+            return 'more';
         }
 
-        return true;
+        $added = (array) (($game->app_store_ids ?? [])['testers_added'] ?? []);
+        foreach (AppStoreConfig::testerUserIds() as $userId) {
+            if (in_array($userId, $added, true)) {
+                continue;
+            }
+            $email = $this->asc->userEmail($userId); // registreras hos Redactor (R18)
+            if ($this->asc->findBetaTester($email, $groupId) === null) {
+                $existing = $this->asc->findBetaTester($email);
+                $existing !== null
+                    ? $this->asc->addTestersToGroup($groupId, [$existing['id']])
+                    : $this->asc->createBetaTester($email, $groupId);
+            }
+            $this->remember($game, ['testers_added' => array_values(array_merge($added, [$userId]))]);
+            Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
+
+            return 'more';
+        }
+
+        return 'done';
     }
 
     private function remember(Game $game, array $ids): void
@@ -2365,6 +2603,8 @@ final class AppStoreSetup
     }
 }
 ```
+
+`Game::appStoreId()` returnerar bara strängar, så listan `testers_added` (användar-id, aldrig e-post) läses direkt ur `app_store_ids`.
 
 `app/Jobs/RunAppStoreSetup.php`:
 
@@ -2382,28 +2622,38 @@ use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
-// Kör Computercats engångssteg för app_store. Köas när app_store läggs till, när Erik bockar av
-// app-posten och från Filament. Ett fel stannar på steget (last_error) och larmar; ingen omförsöksloop.
+// Kör Computercats engångssteg för app_store, en enhet (högst fyra anrop à 15 s) per körning, och
+// släpper sig själv till nästa enhet. Köas när app_store läggs till, när Erik bockar av app-posten och
+// från Filament. Ett fel stannar på steget (last_error) och larmar; ingen omförsöksloop.
+// $tries = 0 med retryUntil (som AdvanceProvisioningRun): varje release() räknas som ett försök.
 class RunAppStoreSetup implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
-    public int $tries = 1;
+    public int $tries = 0;
 
-    // Under databasköns retry_after (90 s).
-    public int $timeout = 80;
+    // Under databasköns retry_after (90 s): fyra anrop à 15 s plus JWT och databas.
+    public int $timeout = 75;
 
-    public int $uniqueFor = 600;
+    public int $backoff = 30;
+
+    public int $uniqueFor = 1800;
 
     public function __construct(public int $gameId) {}
 
     public function uniqueId(): string
     {
         return 'appstore-setup-'.$this->gameId;
+    }
+
+    public function retryUntil(): Carbon
+    {
+        return now()->addMinutes(30);
     }
 
     public function handle(AppStoreSetup $setup, SlackAlert $slack): void
@@ -2414,15 +2664,39 @@ class RunAppStoreSetup implements ShouldBeUnique, ShouldQueue
         }
 
         try {
-            $setup->run($game);
+            [$outcome] = $setup->runOne($game);
         } catch (Throwable $e) {
             $ref = (string) Str::uuid();
-            Log::error('Engångssteg för App Store misslyckades', ['ref' => $ref, 'game' => $game->slug, 'exception' => $e]);
+            Log::error('Engångssteg för App Store misslyckades', ['ref' => $ref, 'game' => $game->slug, 'exception' => get_class($e), 'message' => $e instanceof SafeMessage ? $e->getMessage() : null]);
             $why = $e instanceof SafeMessage ? $e->getMessage() : "internt fel (ref {$ref})";
             $slack->send("appstore-setup-failed:{$game->slug}", 'Engångsstegen för App Store stannade för `'.SlackAlert::escape($game->slug).'`: '.SlackAlert::escape($why).' Kör igen från Filament när orsaken är åtgärdad.');
+
+            return;
+        }
+
+        if ($outcome === AppStoreSetup::PROGRESS) {
+            $this->release(1);
         }
     }
 }
+```
+
+(Loggen får klassnamn och det redigerade meddelandet, inte undantaget med dess kontext, så att ingen e-post från en stackspårning hamnar i loggen.)
+
+Test i `AppStoreSetupTest` för jobbet:
+
+```php
+    public function test_job_does_one_unit_per_run(): void
+    {
+        $game = $this->freshAppStoreGame();
+        Http::fake([A::API.'/v1/bundleIds?*' => Http::response(A::many(A::bundleId('se.computercat.kattsvep')))]);
+
+        app()->call([new \App\Jobs\RunAppStoreSetup($game->id), 'handle']);
+
+        $this->assertSame('done', $this->status($game)['appstore_bundle_id']);
+        $this->assertSame('open', $this->status($game)['appstore_profile']);
+        Http::assertSentCount(1);
+    }
 ```
 
 Run: `cd $WT && php artisan test --filter=AppStoreSetupTest`
@@ -2501,14 +2775,16 @@ Expected: PASS.
 <?php
 
 use App\Models\Game;
+use App\Releases\AppStore\AppStoreSetup;
 use App\Releases\AppStore\BundleId;
 use App\Releases\SetupSteps;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\Log;
 
-// Spel som fick app_store i etapp 1a får bundle-id och de nya engångsstegen. En krock fäller
-// migrationen (unikt index): fail loud, Erik väljer id. Automatiska steg körs först när Erik trycker
-// "Kör Computercats steg" i Filament (inga anrop mot Apple från en migration).
+// Spel som fick app_store i etapp 1a får bundle-id och de nya engångsstegen, och steg som bockats av
+// utan det id Computercat behöver öppnas igen (R17; i 1a kunde appstore_create_app bockas av för hand
+// utan app-id). En krock fäller migrationen (unikt index): fail loud, Erik väljer id. Automatiska steg
+// körs först när Erik trycker "Kör Computercats steg" i Filament (inga anrop mot Apple från en migration).
 return new class extends Migration
 {
     public function up(): void
@@ -2521,7 +2797,8 @@ return new class extends Migration
                 $game->forceFill(['bundle_id' => BundleId::forSlug($game->slug)])->save();
             }
             SetupSteps::sync($game);
-            Log::notice('Etapp 2: bundle-id och App Store-steg', ['game' => $game->slug, 'bundle_id' => $game->bundle_id]);
+            $reopened = AppStoreSetup::reopenStepsWithoutIds($game);
+            Log::notice('Etapp 2: bundle-id och App Store-steg', ['game' => $game->slug, 'bundle_id' => $game->bundle_id, 'reopened' => $reopened]);
         }
     }
 
@@ -2546,6 +2823,9 @@ Test i `SetupStepsTest`:
 
         $this->assertSame('se.computercat.tinkerisle', $game->fresh()->bundle_id);
         $this->assertSame('open', ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')->value('status'));
+        // R17: appstore_create_app var avbockat för hand i 1a utan app-id; det öppnas igen.
+        $this->assertSame('open', ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->value('status'));
+        $this->assertSame('done', ReleaseSetupStep::where('game_id', $game->id)->where('key', 'web_public_address')->value('status'));
         $this->assertNull($web->fresh()->bundle_id);
     }
 ```
@@ -2669,7 +2949,7 @@ Importera `App\Jobs\RunAppStoreSetup`, `App\Releases\AppStore\AppStoreConnectApi
                     <dt>Bundle-id</dt><dd class="font-mono">{{ $appStore['bundle_id'] ?? 'saknas' }}</dd>
                     <dt>Senaste byggnummer</dt><dd class="font-mono">{{ $appStore['ios_build_number'] }}</dd>
                     @foreach ($appStore['ids'] as $key => $value)
-                        <dt>{{ $key }}</dt><dd class="font-mono">{{ $value }}</dd>
+                        <dt>{{ $key }}</dt><dd class="font-mono">{{ is_array($value) ? implode(', ', $value) : $value }}</dd>
                     @endforeach
                 </dl>
                 <x-filament::button class="mt-4" color="gray" wire:click="runAppStoreSetup">Kör Computercats steg</x-filament::button>
@@ -2867,6 +3147,18 @@ class TestFlightPromoteTest extends TestCase
         $this->refused('"1.2"', 'MAJOR.MINOR.PATCH');
     }
 
+    public function test_a_huge_version_value_is_cut_in_the_answer(): void
+    {
+        $this->repo(str_repeat('9', 5000));
+
+        try {
+            $this->promote();
+            $this->fail('Släppet nekades inte.');
+        } catch (ReleaseRefused $e) {
+            $this->assertLessThan(500, strlen($e->getMessage()));
+        }
+    }
+
     public function test_build_guide_without_ios_is_refused(): void
     {
         $this->repo('1.2.0', guide: 'v2');
@@ -2998,7 +3290,7 @@ class TestFlightPreflight
         $raw = is_array($json) ? ($json['version'] ?? null) : null;
         $version = MarketingVersion::parse($raw);
         if ($version === null) {
-            throw new ReleaseRefused("package.json at commit {$short} has version ".json_encode($raw).'; use MAJOR.MINOR.PATCH (for example 1.0.0), run npm run check, push to main, wait for the Demo build and call promote_release again.');
+            throw new ReleaseRefused("package.json at commit {$short} has version ".mb_strimwidth((string) json_encode($raw, JSON_UNESCAPED_UNICODE), 0, 100, '…').'; use MAJOR.MINOR.PATCH (for example 1.0.0), run npm run check, push to main, wait for the Demo build and call promote_release again.');
         }
 
         $guide = $claude === null ? null : BuildGuide::versionFromClaudeMd($claude['text']);
@@ -3144,7 +3436,7 @@ git commit -m "promote_release för TestFlight: version och byggguide vid commit
 
 **Interfaces:**
 - Consumes: `GitHubAppClient` (Task 2), `AppStoreConnectApi` (Task 1), `ReleaseService::assertCanStart` (1a), `Game::appStoreId` (Task 3).
-- Produces: `TestFlightBuilder::handles(Release): bool`, `advance(Release): ?int` (sekunder till nästa kontroll, `null` = klart eller fällt), `fail(Release, Throwable): void`. `AdvanceRelease` (jobb, unikt per släpp). `computercat:advance-releases` (var femte minut). `releases.external` för TestFlight: `tag`, `dispatch_requested_at`, `github_run_id`, `github_run_url`, `dispatched_at`, `run_completed_at`, `workflow_sha`, `apple_build_id`, `succeeded_at`.
+- Produces: `TestFlightBuilder::handles(Release): bool`, `advance(Release): ?int` (sekunder till nästa kontroll, `null` = klart eller fällt), `fail(Release, Throwable): void`. `AdvanceRelease` (jobb, unikt per släpp). `computercat:advance-releases` (var femte minut). `releases.external` för TestFlight: `claimed_at`, `tag`, `dispatch_requested_at`, `github_run_id`, `github_run_url`, `dispatched_at`, `run_completed_at`, `workflow_sha`, `apple_build_id`, `succeeded_at`.
 
 - [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset` för jobbet: vad som får skrivas i GitHub (en tagg per släpp i spelets repo, en dispatch per släpp i släpprepot, cancel av egen körning) och i Apple (länka bygget till gruppen); att indata till flödet bara kommer från Computercats egna kolumner (aldrig från spelrepot); att `last_error` och Slack bara får redigerade texter; att en dispatch aldrig upprepas. Skriv slutsatsen som kommentar överst i `TestFlightBuilder` (med i koden nedan).
 
@@ -3184,6 +3476,7 @@ class TestFlightBuilderTest extends TestCase
         parent::setUp();
         F::configure();
         A::configure();
+        Http::preventStrayRequests(); // ett ofejkat anrop är ett testfel, aldrig ett riktigt anrop
         $this->startHttpTransactionGuard();
         $this->game = $this->testFlightGame();
         $this->demoBuild($this->game, $this->sha('a'));
@@ -3208,6 +3501,8 @@ class TestFlightBuilderTest extends TestCase
             self::GAME_REPO.'/git/ref/tags/v1.2.0' => Http::response(['message' => 'Not Found'], 404),
             self::GAME_REPO.'/git/refs' => Http::response(F::githubTagRef('v1.2.0', $this->sha('a')), 201),
             self::RELEASE_REPO.'/actions/workflows/release-ios.yml/dispatches' => Http::response(F::githubDispatch(4711)),
+            self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['total_count' => 0, 'workflow_runs' => []]),
+            self::RELEASE_REPO.'/actions/runs/*/cancel' => Http::response('', 202),
         ]);
     }
 
@@ -3225,7 +3520,14 @@ class TestFlightBuilderTest extends TestCase
 
     private function building(array $external = []): void
     {
-        $this->release->update(['status' => Release::BUILDING, 'external' => $external + ['tag' => 'v1.2.0', 'github_run_id' => 4711, 'dispatched_at' => now()->toIso8601String(), 'dispatch_requested_at' => now()->toIso8601String()]]);
+        $this->release->update(['status' => Release::BUILDING, 'external' => $external + ['claimed_at' => now()->toIso8601String(), 'tag' => 'v1.2.0', 'github_run_id' => 4711, 'dispatched_at' => now()->toIso8601String(), 'dispatch_requested_at' => now()->toIso8601String()]]);
+    }
+
+    /** I besittning och dispatch begärd, men inget körnings-id (R15). */
+    private function dispatchPending(int $minutesAgo = 0): void
+    {
+        $at = now()->subMinutes($minutesAgo)->toIso8601String();
+        $this->release->update(['status' => Release::BUILDING, 'external' => ['claimed_at' => $at, 'tag' => 'v1.2.0', 'dispatch_requested_at' => $at]]);
     }
 
     private function processing(array $external = []): void
@@ -3307,7 +3609,7 @@ class TestFlightBuilderTest extends TestCase
 
     public function test_lost_dispatch_response_is_recovered_by_run_name(): void // Review Focus 2
     {
-        $this->release->update(['external' => ['tag' => 'v1.2.0', 'dispatch_requested_at' => now()->subMinute()->toIso8601String()]]);
+        $this->dispatchPending(1);
         $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['total_count' => 1, 'workflow_runs' => [F::githubRun(4712, 'in_progress', null, $this->release->uuid)]])]);
 
         $this->advance();
@@ -3318,8 +3620,8 @@ class TestFlightBuilderTest extends TestCase
 
     public function test_start_never_dispatches_twice(): void
     {
-        $this->release->update(['external' => ['tag' => 'v1.2.0', 'dispatch_requested_at' => now()->toIso8601String()]]);
-        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['total_count' => 0, 'workflow_runs' => []])]);
+        $this->dispatchPending();
+        $this->fake();
 
         $this->assertSame(15, $this->advance());
         $this->travel(4)->minutes();
@@ -3327,6 +3629,86 @@ class TestFlightBuilderTest extends TestCase
 
         $this->assertStringContainsString('no run was found', $this->fresh()->last_error);
         Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/dispatches'));
+    }
+
+    public function test_lost_dispatch_found_after_the_window_is_adopted(): void // R15: uppslaget går före tidsgränsen
+    {
+        $this->dispatchPending(5);
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['total_count' => 1, 'workflow_runs' => [F::githubRun(4713, 'completed', 'success', $this->release->uuid)]])]);
+
+        $this->advance();
+
+        $this->assertSame([Release::BUILDING, 4713], [$this->fresh()->status, $this->fresh()->external['github_run_id']]);
+    }
+
+    public function test_dispatch_5xx_keeps_the_release_and_the_run_is_found_next_time(): void // R15
+    {
+        $this->fake([
+            self::RELEASE_REPO.'/actions/workflows/release-ios.yml/dispatches' => Http::response(['message' => 'Server Error'], 502),
+            self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::sequence()
+                ->push(['total_count' => 1, 'workflow_runs' => [F::githubRun(4714, 'queued', null, $this->release->uuid)]]),
+        ]);
+
+        $this->assertSame(15, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertArrayHasKey('dispatch_requested_at', $this->fresh()->external);
+        $this->assertNull($this->fresh()->last_error);
+
+        $this->advance();
+
+        $this->assertSame(4714, $this->fresh()->external['github_run_id']);
+        Http::assertSentCount(1 + 1 + 1 + 1 + 1 + 1); // token, profil, tagg (GET), tagg (POST), dispatch, uppslag
+    }
+
+    public function test_dispatch_with_broken_connection_keeps_the_release(): void // R15
+    {
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/dispatches' => fn () => throw new \Illuminate\Http\Client\ConnectionException('reset')]);
+
+        $this->assertSame(15, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertArrayNotHasKey('github_run_id', $this->fresh()->external);
+    }
+
+    public function test_dispatch_204_without_a_run_id_keeps_the_release(): void // R15
+    {
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/dispatches' => Http::response('', 204)]);
+
+        $this->assertSame(15, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+    }
+
+    public function test_dispatch_4xx_fails_without_a_lookup(): void // R15
+    {
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/dispatches' => Http::response(['message' => 'Unexpected inputs provided: ["x"]'], 422)]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertStringContainsString('GitHub refused to start the release workflow', $this->fresh()->last_error);
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/runs'));
+    }
+
+    public function test_release_cancelled_before_it_is_claimed_is_never_built(): void // R16
+    {
+        $release = $this->release;
+        $this->fake([A::API.'/v1/profiles/'.A::PROFILE.'?*' => function () use ($release) {
+            // Erik avbryter i Filament medan jobbet läser profilen.
+            Release::whereKey($release->id)->update(['status' => Release::CANCELLED]);
+
+            return Http::response(A::one(A::profile()));
+        }]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::CANCELLED, $this->fresh()->status);
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'github.com'));
+    }
+
+    public function test_a_claimed_release_cannot_be_cancelled_in_computercat(): void // R16
+    {
+        $this->dispatchPending();
+
+        $this->expectException(\App\Releases\ReleaseRefused::class);
+        app(\App\Releases\ReleaseService::class)->cancel($this->fresh(), $this->adminUser());
     }
 
     public function test_successful_run_moves_to_processing_and_records_the_workflow_version(): void
@@ -3373,11 +3755,25 @@ class TestFlightBuilderTest extends TestCase
         $this->advance();
 
         $this->assertStringContainsString('ended with cancelled', $this->fresh()->last_error);
+        Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/cancel')); // redan slut
+    }
+
+    public function test_timed_out_conclusion_fails_with_it(): void
+    {
+        $this->building();
+        $this->fake([
+            self::RELEASE_REPO.'/actions/runs/4711/jobs*' => Http::response(F::githubRunJobs(['sign', 'Ladda upp till App Store Connect'])),
+            self::RELEASE_REPO.'/actions/runs/4711' => Http::response(F::githubRun(4711, 'completed', 'timed_out', $this->release->uuid)),
+        ]);
+
+        $this->advance();
+
+        $this->assertStringContainsString('ended with timed_out in job sign', $this->fresh()->last_error);
     }
 
     public function test_run_timeout_cancels_and_alerts(): void // R11
     {
-        $this->building(['dispatched_at' => now()->subMinutes(61)->toIso8601String()]);
+        $this->building(['dispatched_at' => now()->subMinutes(91)->toIso8601String()]);
         $this->fake([
             self::RELEASE_REPO.'/actions/runs/4711/cancel' => Http::response('', 202),
             self::RELEASE_REPO.'/actions/runs/4711' => Http::response(F::githubRun(4711, 'queued', null, $this->release->uuid)),
@@ -3385,8 +3781,8 @@ class TestFlightBuilderTest extends TestCase
 
         $this->assertNull($this->advance());
 
-        $this->assertStringContainsString('did not finish within 60 minutes', $this->fresh()->last_error);
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4711/cancel'));
+        $this->assertStringContainsString('did not finish within 90 minutes', $this->fresh()->last_error);
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/runs/4711/cancel')));
         Http::assertSent(fn (Request $r) => $r->url() === F::SLACK && str_contains($r['text'], 'kattsvep'));
     }
 
@@ -3440,6 +3836,17 @@ class TestFlightBuilderTest extends TestCase
         $this->assertSame('Apple marked build 5 (version 1.2.0) as INVALID.', $this->fresh()->last_error);
     }
 
+    public function test_failed_processing_state_fails(): void
+    {
+        $this->processing();
+        $this->fake([A::API.'/v1/builds?*' => Http::response(A::many(A::build('b', 5, 'FAILED')))]);
+
+        $this->advance();
+
+        $this->assertSame('Apple marked build 5 (version 1.2.0) as FAILED.', $this->fresh()->last_error);
+        Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/cancel'));
+    }
+
     public function test_apple_timeout_fails_and_alerts(): void // R11
     {
         $this->processing(['run_completed_at' => now()->subMinutes(91)->toIso8601String()]);
@@ -3460,6 +3867,8 @@ class TestFlightBuilderTest extends TestCase
 
         $this->assertStringNotContainsString('ghs_abcdefghijklmnopqrstuvwxyz0123456789', $this->fresh()->last_error);
         $this->assertStringContainsString('returned 500', $this->fresh()->last_error);
+        // R15: körningen kan leva vidare och avbryts.
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4711/cancel'));
     }
 
     public function test_internal_error_shows_only_a_reference(): void
@@ -3487,7 +3896,14 @@ namespace App\Releases\TestFlight;
 use App\Provisioning\SafeMessage;
 
 // Orsaken till att ett TestFlight-släpp fälls. Meddelandet skrivs av Computercat och får visas.
-final class ReleaseFailed extends \RuntimeException implements SafeMessage {}
+// $runFinished: körningen är redan slut eller avbruten, så fail() ska inte avbryta den igen.
+final class ReleaseFailed extends \RuntimeException implements SafeMessage
+{
+    public function __construct(string $message, public readonly bool $runFinished = false)
+    {
+        parent::__construct($message);
+    }
+}
 ```
 
 ```php
@@ -3497,24 +3913,31 @@ namespace App\Releases\TestFlight;
 
 use App\Models\Release;
 use App\Provisioning\Clients\GitHubAppClient;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\SafeMessage;
 use App\Releases\AppStore\AppStoreConnectApi;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use App\Support\SlackAlert;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
-// Ett TestFlight-släpp från requested till succeeded eller failed (spec "Statusläsning", plan R11).
+// Ett TestFlight-släpp från requested till succeeded eller failed (spec "Statusläsning", plan R11, R15, R16).
 //
 // Hotmodell (Task 7): i GitHub skrivs bara taggen v<version> i spelets repo (aldrig flyttad), en
-// dispatch per släpp i släpprepot och, vid tidsgräns, cancel av den egna körningen. I Apple länkas
-// bara bygget till gruppen. Flödets indata kommer bara från Computercats egna kolumner. Markören
-// dispatch_requested_at sparas före dispatch, så att en krasch leder till uppslag via run-name och
-// aldrig till en andra körning. last_error och Slack får bara SafeMessage-texter (redigerade av
-// Release-modellen och SlackAlert); allt annat blir "Internal error (ref …)". Inga Actions-loggar läses.
+// dispatch per släpp i släpprepot och cancel av släppets egen körning. I Apple länkas bara bygget till
+// gruppen. Flödets indata kommer bara från Computercats egna kolumner. Släppet tas i besittning
+// (requested -> building under radlås) före första skrivningen utåt, så att ett avbrutet släpp aldrig
+// byggs och ett startat aldrig kan avbrytas i Computercat utan att körningen avbryts. Markören
+// dispatch_requested_at sparas före dispatch; ett okänt utfall (5xx, bruten anslutning, inget
+// körnings-id) leder till uppslag via run-name, aldrig till en andra körning. last_error och Slack får
+// bara SafeMessage-texter; allt annat blir "Internal error (ref …)". Inga Actions-loggar läses.
+//
+// Tillstånd: requested -> building (claimed_at) -> building (dispatch_requested_at) ->
+// building (github_run_id) -> processing (run_completed_at) -> succeeded. Varje steg kan bli failed.
 final class TestFlightBuilder
 {
     public function __construct(
@@ -3530,14 +3953,18 @@ final class TestFlightBuilder
             && in_array($release->status, [Release::REQUESTED, Release::BUILDING, Release::PROCESSING], true);
     }
 
-    /** @return int|null sekunder till nästa kontroll; null när släppet är klart eller fällt */
+    /** @return int|null sekunder till nästa kontroll; null när släppet är klart, fällt eller inte längre vårt */
     public function advance(Release $release): ?int
     {
         try {
-            return match ($release->status) {
-                Release::REQUESTED => $this->start($release),
-                Release::BUILDING => $this->followRun($release),
-                Release::PROCESSING => $this->followApple($release),
+            $external = $release->external ?? [];
+
+            return match (true) {
+                $release->status === Release::REQUESTED => $this->start($release),
+                $release->status === Release::BUILDING && isset($external['github_run_id']) => $this->followRun($release),
+                $release->status === Release::BUILDING && isset($external['dispatch_requested_at']) => $this->recoverDispatch($release),
+                $release->status === Release::BUILDING => $this->dispatch($release), // tagits i besittning, dispatch inte gjord
+                $release->status === Release::PROCESSING => $this->followApple($release),
             };
         } catch (Throwable $e) {
             $this->fail($release, $e);
@@ -3558,6 +3985,11 @@ final class TestFlightBuilder
         }
         $fresh->update(['status' => Release::FAILED, 'last_error' => $message]);
 
+        // R15: en körning som kan leva vidare avbryts, så att den inte laddar upp ett bygge för ett fällt släpp.
+        if (! ($e instanceof ReleaseFailed && $e->runFinished)) {
+            $this->cancelRunOf($fresh);
+        }
+
         $this->slack->send(
             "release-failed:{$fresh->uuid}",
             'TestFlight-släppet av `'.SlackAlert::escape($fresh->game->slug).'` version '.SlackAlert::escape((string) $fresh->marketing_version)
@@ -3565,13 +3997,8 @@ final class TestFlightBuilder
         );
     }
 
-    private function start(Release $release): int
+    private function start(Release $release): ?int
     {
-        $external = $release->external ?? [];
-        if (isset($external['dispatch_requested_at'])) {
-            return $this->recoverDispatch($release);
-        }
-
         // R14: rader från 1a saknar version och byggnummer; de byggs aldrig med gissade värden.
         if ($release->marketing_version === null || $release->build_number === null || $release->build_guide === null) {
             throw new ReleaseFailed('This release was registered before TestFlight builds existed; request a new one with promote_release.');
@@ -3580,13 +4007,34 @@ final class TestFlightBuilder
         // Spärr 7 och 9: samma kontroll som vid begäran, nu mot dagens läge.
         $this->releases->assertCanStart($release);
 
-        $game = $release->game;
-        $profileId = $game->appStoreId('profile_id') ?? throw new ReleaseFailed('The game has no App Store profile; ask Erik to run the setup steps in Filament.');
+        $profileId = $release->game->appStoreId('profile_id') ?? throw new ReleaseFailed('The game has no App Store profile; ask Erik to run the setup steps in Filament.');
         $profile = $this->asc->profile($profileId);
         if ($profile === null || $profile['state'] !== 'ACTIVE' || Carbon::parse($profile['expires_at'])->lt(now()->addDay())) {
             throw new ReleaseFailed('The App Store provisioning profile is not active or expires within a day; Erik must renew it before the next TestFlight build.');
         }
 
+        // R16: i besittning under radlås, före taggen och dispatchen. Avbröts släppet under tiden: inget görs.
+        $claimed = DB::transaction(function () use ($release) {
+            $locked = Release::whereKey($release->getKey())->lockForUpdate()->first();
+            if ($locked === null || $locked->status !== Release::REQUESTED) {
+                return false;
+            }
+            $locked->update(['status' => Release::BUILDING, 'external' => array_merge($locked->external ?? [], ['claimed_at' => now()->toIso8601String()])]);
+
+            return true;
+        });
+        if (! $claimed) {
+            Log::notice('TestFlight-släpp ändrades före start; inget byggs', ['release' => $release->uuid]);
+
+            return null;
+        }
+
+        return $this->dispatch($release->fresh(['game']));
+    }
+
+    private function dispatch(Release $release): int
+    {
+        $game = $release->game;
         $tag = 'v'.$release->marketing_version;
         $existing = $this->github->getTag($game->slug, $tag);
         if ($existing === null) {
@@ -3595,15 +4043,26 @@ final class TestFlightBuilder
             throw new ReleaseFailed("Tag {$tag} now points at another commit; raise the version in package.json and request a new release.");
         }
 
-        $release->update(['external' => array_merge($external, ['tag' => $tag, 'dispatch_requested_at' => now()->toIso8601String()])]);
+        $release->update(['external' => array_merge($release->external ?? [], ['tag' => $tag, 'dispatch_requested_at' => now()->toIso8601String()])]);
 
-        $run = $this->github->dispatchWorkflow(
-            (string) config('releases.ios_workflow.repo'),
-            (string) config('releases.ios_workflow.workflow'),
-            (string) config('releases.ios_workflow.ref'),
-            $this->inputs($release),
-        );
-        $this->building($release, $run['run_id'], $run['html_url']);
+        try {
+            $run = $this->github->dispatchWorkflow(
+                (string) config('releases.ios_workflow.repo'),
+                (string) config('releases.ios_workflow.workflow'),
+                (string) config('releases.ios_workflow.ref'),
+                $this->inputs($release),
+            );
+        } catch (ExternalApiException $e) {
+            // R15: bara 4xx betyder att GitHub inte tog emot begäran. 5xx, bruten anslutning (0) och ett
+            // svar utan körnings-id kan ha startat en körning: den letas upp via run-name.
+            if ($e->status >= 400 && $e->status < 500) {
+                throw new ReleaseFailed('GitHub refused to start the release workflow: '.$e->getMessage(), runFinished: true);
+            }
+            Log::warning('Dispatch med okänt utfall; letar upp körningen via run-name', ['release' => $release->uuid, 'status' => $e->status]);
+
+            return 15;
+        }
+        $this->started($release, $run['run_id'], $run['html_url']);
 
         return (int) config('releases.poll_seconds.github');
     }
@@ -3611,14 +4070,9 @@ final class TestFlightBuilder
     private function recoverDispatch(Release $release): int
     {
         $since = Carbon::parse($release->external['dispatch_requested_at']);
-        $run = $this->github->findWorkflowRun(
-            (string) config('releases.ios_workflow.repo'),
-            (string) config('releases.ios_workflow.workflow'),
-            $release->uuid,
-            $since->copy()->subMinute(),
-        );
+        $run = $this->findRun($release);
         if ($run !== null) {
-            $this->building($release, $run['id'], $run['html_url']);
+            $this->started($release, $run['id'], $run['html_url']);
 
             return (int) config('releases.poll_seconds.github');
         }
@@ -3631,10 +4085,10 @@ final class TestFlightBuilder
         return 15;
     }
 
-    private function building(Release $release, int $runId, string $url): void
+    private function started(Release $release, int $runId, string $url): void
     {
         $release->update(['status' => Release::BUILDING, 'external' => array_merge($release->external ?? [], [
-            'github_run_id' => $runId, 'github_run_url' => $url, 'dispatched_at' => now()->toIso8601String(),
+            'github_run_id' => $runId, 'github_run_url' => $url, 'dispatched_at' => $release->external['dispatch_requested_at'] ?? now()->toIso8601String(),
         ])]);
         Log::notice('TestFlight-bygge startat', ['release' => $release->uuid, 'run' => $runId, 'commit' => $release->commit_sha, 'version' => $release->marketing_version, 'build' => $release->build_number]);
     }
@@ -3659,9 +4113,9 @@ final class TestFlightBuilder
     private function followRun(Release $release): ?int
     {
         $external = $release->external ?? [];
-        $runId = $external['github_run_id'] ?? null;
+        $runId = $external['github_run_id'];
         if (! is_int($runId)) {
-            throw new \LogicException('BUILDING-släpp utan github_run_id.');
+            throw new \LogicException('BUILDING-släpp med ogiltigt github_run_id.');
         }
         $repo = (string) config('releases.ios_workflow.repo');
         $run = $this->github->workflowRun($repo, $runId);
@@ -3669,12 +4123,8 @@ final class TestFlightBuilder
         if ($run['status'] !== 'completed') {
             $limit = (int) config('releases.timeouts.github_run_minutes');
             if (Carbon::parse($external['dispatched_at'])->lt(now()->subMinutes($limit))) {
-                try {
-                    $this->github->cancelWorkflowRun($repo, $runId);
-                } catch (Throwable $e) {
-                    Log::warning('Kunde inte avbryta GitHub-körningen', ['release' => $release->uuid, 'run' => $runId, 'error' => get_class($e)]);
-                }
-                throw new ReleaseFailed("The GitHub run did not finish within {$limit} minutes (status {$run['status']}) and was cancelled.");
+                $this->cancelRunOf($release);
+                throw new ReleaseFailed("The GitHub run did not finish within {$limit} minutes (status {$run['status']}) and was cancelled.", runFinished: true);
             }
 
             return (int) config('releases.poll_seconds.github');
@@ -3685,7 +4135,7 @@ final class TestFlightBuilder
                 ->first(fn (array $job) => in_array($job['conclusion'], ['failure', 'timed_out', 'cancelled'], true));
             $where = $failed === null ? '' : " in job {$failed['name']}".($failed['failed_step'] === null ? '' : ", step \"{$failed['failed_step']}\"");
 
-            throw new ReleaseFailed('The GitHub run ended with '.($run['conclusion'] ?? 'no conclusion')."{$where}.");
+            throw new ReleaseFailed('The GitHub run ended with '.($run['conclusion'] ?? 'no conclusion')."{$where}.", runFinished: true);
         }
 
         $release->update(['status' => Release::PROCESSING, 'external' => array_merge($external, [
@@ -3699,24 +4149,24 @@ final class TestFlightBuilder
     {
         $external = $release->external ?? [];
         $game = $release->game;
-        $appId = $game->appStoreId('app_id') ?? throw new ReleaseFailed('The game has no App Store app id; ask Erik to check the setup steps.');
-        $groupId = $game->appStoreId('beta_group_id') ?? throw new ReleaseFailed('The game has no TestFlight group; ask Erik to run the setup steps in Filament.');
+        $appId = $game->appStoreId('app_id') ?? throw new ReleaseFailed('The game has no App Store app id; ask Erik to check the setup steps.', runFinished: true);
+        $groupId = $game->appStoreId('beta_group_id') ?? throw new ReleaseFailed('The game has no TestFlight group; ask Erik to run the setup steps in Filament.', runFinished: true);
 
         $build = $this->asc->findBuild($appId, (string) $release->marketing_version, (int) $release->build_number);
         if ($build === null || $build['state'] === 'PROCESSING') {
             $limit = (int) config('releases.timeouts.apple_processing_minutes');
             if (Carbon::parse($external['run_completed_at'])->lt(now()->subMinutes($limit))) {
-                throw new ReleaseFailed("Apple did not finish processing build {$release->build_number} (version {$release->marketing_version}) within {$limit} minutes.");
+                throw new ReleaseFailed("Apple did not finish processing build {$release->build_number} (version {$release->marketing_version}) within {$limit} minutes.", runFinished: true);
             }
 
             return (int) config('releases.poll_seconds.apple');
         }
 
         if ($build['state'] !== 'VALID') {
-            throw new ReleaseFailed("Apple marked build {$release->build_number} (version {$release->marketing_version}) as {$build['state']}.");
+            throw new ReleaseFailed("Apple marked build {$release->build_number} (version {$release->marketing_version}) as {$build['state']}.", runFinished: true);
         }
 
-        // R7: gruppen har inte tillgång till alla byggen; bygget läggs till uttryckligen.
+        // R7: gruppen har tillgång till alla byggen, men invarianten kontrolleras uttryckligen.
         if (! $this->asc->buildIsInGroup($groupId, $build['id'])) {
             $this->asc->addBuildToGroup($groupId, $build['id']);
         }
@@ -3724,9 +4174,41 @@ final class TestFlightBuilder
         $release->update(['status' => Release::SUCCEEDED, 'external' => array_merge($external, [
             'apple_build_id' => $build['id'], 'succeeded_at' => now()->toIso8601String(),
         ])]);
-        Log::notice('TestFlight-bygge klart', ['release' => $release->uuid, 'game' => $game->slug, 'version' => $release->marketing_version, 'build' => $release->build_number]);
+        Log::notice('TestFlight-bygge klart', [
+            'release' => $release->uuid, 'game' => $game->slug, 'commit' => $release->commit_sha,
+            'version' => $release->marketing_version, 'build' => $release->build_number, 'workflow_sha' => $external['workflow_sha'] ?? null,
+        ]);
 
         return null;
+    }
+
+    /** @return array{id: int, html_url: string}|null */
+    private function findRun(Release $release): ?array
+    {
+        $since = Carbon::parse($release->external['dispatch_requested_at'] ?? now()->toIso8601String());
+
+        return $this->github->findWorkflowRun(
+            (string) config('releases.ios_workflow.repo'),
+            (string) config('releases.ios_workflow.workflow'),
+            $release->uuid,
+            $since->copy()->subMinute(),
+        );
+    }
+
+    // Avbryter släppets körning om den finns (känd eller hittad via run-name). Fel loggas; de får inte dölja orsaken.
+    private function cancelRunOf(Release $release): void
+    {
+        $external = $release->external ?? [];
+        try {
+            $runId = is_int($external['github_run_id'] ?? null) ? $external['github_run_id']
+                : (isset($external['dispatch_requested_at']) ? $this->findRun($release)['id'] ?? null : null);
+            if ($runId !== null) {
+                $this->github->cancelWorkflowRun((string) config('releases.ios_workflow.repo'), $runId);
+                Log::notice('GitHub-körning avbruten för fällt släpp', ['release' => $release->uuid, 'run' => $runId]);
+            }
+        } catch (Throwable $e) {
+            Log::warning('Kunde inte avbryta GitHub-körningen', ['release' => $release->uuid, 'error' => get_class($e)]);
+        }
     }
 }
 ```
@@ -3796,16 +4278,22 @@ class AdvanceReleaseTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_failed_handler_marks_the_release_failed(): void // Review Focus 3
+    public function test_failed_handler_marks_the_release_failed_and_cancels_its_run(): void // Review Focus 3, R15
     {
-        Http::fake([F::SLACK => Http::response('ok')]);
         F::configure();
-        $release = $this->testflightRelease(Release::BUILDING);
+        Http::preventStrayRequests();
+        Http::fake([
+            F::SLACK => Http::response('ok'),
+            F::GITHUB.'/app/installations/4242/access_tokens' => Http::response(F::githubToken(), 201),
+            F::GITHUB.'/repos/HumblebragAB/computercat-release/actions/runs/4711/cancel' => Http::response('', 202),
+        ]);
+        $release = $this->testflightRelease(Release::BUILDING, ['external' => ['claimed_at' => now()->toIso8601String(), 'github_run_id' => 4711, 'dispatched_at' => now()->toIso8601String()]]);
 
-        (new AdvanceRelease($release->id))->failed(new \RuntimeException('timeout'));
+        (new AdvanceRelease($release->id))->failed(new \RuntimeException('retry window'));
 
         $this->assertSame(Release::FAILED, $release->fresh()->status);
         $this->assertStringContainsString('did not finish in time', $release->fresh()->last_error);
+        Http::assertSent(fn ($r) => str_ends_with($r->url(), '/runs/4711/cancel'));
     }
 
     public function test_finished_release_is_left_alone(): void
@@ -3864,18 +4352,21 @@ use Throwable;
 
 // Driver ett TestFlight-släpp ett steg i taget och släpper sig självt (release) tills nästa kontroll,
 // som AdvanceProvisioningRun. Workern körs med --tries=1: $tries = 0 tar bort taket och retryUntil()
-// sätter gränsen i tid (båda tidsgränserna plus marginal). TestFlightBuilder fångar allt och fäller
-// släppet själv; failed() täcker det som dör i kön. Unikt per släpp, så att svepet aldrig ger två jobb.
+// sätter gränsen i tid (båda tidsgränserna plus marginal, R11). failOnTimeout = false: ett långsamt
+// anrop ger ett nytt försök, inte ett fällt släpp; markörerna i external hindrar en andra dispatch
+// (R15, R16). TestFlightBuilder fångar allt och fäller släppet själv; failed() täcker det som dör i
+// kön och avbryter då släppets körning. Unikt per släpp, så att svepet aldrig ger två jobb.
 class AdvanceRelease implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
     public int $tries = 0;
 
-    // Under databasköns retry_after (90 s).
-    public int $timeout = 60;
+    // Under databasköns retry_after (90 s). En körning gör högst fem anrop (token, profil, tagg x2,
+    // dispatch) à högst 20 s; går den över gäller failOnTimeout = false och jobbet körs om.
+    public int $timeout = 85;
 
-    public bool $failOnTimeout = true;
+    public bool $failOnTimeout = false;
 
     public int $backoff = 30;
 
@@ -4002,6 +4493,15 @@ Expected: PASS.
         ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')->update(['status' => 'open', 'last_error' => 'App Store Connect POST /v1/profiles returned 409']);
 
         $this->assertStringContainsString('appstore_profile', $this->runCheck());
+    }
+
+    public function test_testflight_release_inside_its_phase_limit_is_not_reported(): void // R11
+    {
+        $game = $this->testFlightGame();
+        $release = $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::BUILDING, 'build_number' => 1, 'marketing_version' => '1.0.0', 'build_guide' => 'v3']);
+        Release::whereKey($release->id)->update(['updated_at' => now()->subMinutes(89)]);
+
+        $this->assertStringNotContainsString($release->uuid, $this->runCheck());
     }
 ```
 
@@ -4375,6 +4875,7 @@ git commit -m "Faktabanken: Skicka till TestFlight ordagrant, versions- och tagg
 - Create: `.github/workflows/release-ios.yml`
 - Delete: `.github/workflows/release-ios-spike.yml`
 - Modify: `scripts/asc-profile.mjs` (använder `asc.mjs`, kontrollerar `ACTIVE`)
+- Modify: `scripts/asc-upload.mjs` (exakt jämförelse av bundle-id)
 - Modify: `README.md`
 - Modify (computercat-api): `docs/superpowers/specs/bilagor/2026-10-15-github-actions-ios.md` (testkörningens resultat)
 
@@ -4382,7 +4883,13 @@ git commit -m "Faktabanken: Skicka till TestFlight ordagrant, versions- och tagg
 - Consumes: indata från `TestFlightBuilder::inputs()` (Task 7): `game`, `commit_sha`, `release_uuid`, `build_number`, `marketing_version`, `bundle_id`, `profile_id`, `build_guide`; `run-name` `ios <game> <release_uuid>` (Task 2:s `findWorkflowRun`). Jobb- och stegnamnen nedan är de som `last_error` visar (R10).
 - Produces: ett bygge i App Store Connect för `bundle_id` med `CFBundleShortVersionString = marketing_version` och `CFBundleVersion = build_number`, eller en misslyckad körning med ett namngivet steg.
 
-- [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset` för flödet. Kontrollera mot specens Del 2 och bilagan: indata valideras i första steget innan något annat körs och används bara via `env:` (aldrig `${{ }}` direkt i ett skript); `permissions: {}` överst; `fetch` har bara läsappens token, begränsad till spelrepot och `contents: read`, och laddar upp källan utan `.git`; `build` har inga hemligheter och kör spelets kod (`npm ci --ignore-scripts`, `npm run build`, `cap sync`); `sign` checkar inte ut spelrepot, får bara `xcarchive` och har nycklarna; nyckelringen och nyckelfilen tas bort i `if: always()`. `concurrency` per spel hindrar två samtidiga byggen av samma app.
+- [ ] **Steg 1: Hotmodell.** Invokera `security-first-mindset` för flödet. Kontrollera mot specens Del 2 och bilagan: indata valideras i första steget innan något annat körs och används bara via `env:` (aldrig `${{ }}` direkt i ett skript); `permissions: {}` överst; `fetch` har bara läsappens token, begränsad till spelrepot och `contents: read`, och laddar upp källan utan `.git`; `build` har inga hemligheter och kör spelets kod (`npm ci --ignore-scripts`, `npm run build`, `cap sync`); `sign` checkar inte ut spelrepot, får bara `xcarchive` och har nycklarna; nyckelringen och nyckelfilen tas bort i `if: always()`. `concurrency` per spel hindrar två samtidiga byggen av samma app. Dessutom (granskningen 2026-10-15):
+  - **Arkivet granskas innan någon hemlighet skrivs**: inga absoluta sökvägar eller `..` i zip-filen, bara `App.xcarchive`, inga symlänkar ut ur arkivet, och arkivets `Info.plist` har `CFBundleIdentifier`, `CFBundleShortVersionString`, `CFBundleVersion` = indata och `ITSAppUsesNonExemptEncryption` = `false` (R12 bindande i sign-jobbet; byggjobbets kontroller är tidig återkoppling, inte skyddet, eftersom byggjobbet kör spelets kod med sudo).
+  - **p8-nyckeln finns bara under två steg** (profil, uppladdning), skrivs med `umask 077` till en fil som tas bort av `trap` direkt efter. Certifikatets p12 likaså.
+  - **Ingen cache** i något jobb (`actions/cache` eller `setup-*` med `cache:`): byggjobbet har `ACTIONS_RUNTIME_TOKEN` och sudo och kunde förgifta en cache som ett jobb med hemligheter läser.
+  - **Skripten är fästa**: ComputerCat Studio har Contents write på släpprepot men inte Workflows. Den kan alltså ändra `scripts/*.mjs` men inte `release-ios.yml`, så skriptens sha256 står i flödet och kontrolleras först i sign-jobbet, och `git diff --exit-code -- scripts` körs före uppladdningen.
+  - **Släpprepot saknar grenskydd** och den här planen sätter inget (kräver Eriks beslut och en admin). Skriptfästningen ovan är skyddet mot en ändring via Studio-appen; en ändring av flödesfilen kräver en människa med Workflows-rätt.
+  - **Slugs `computercat*` är reserverade** (R19, Task 2), så läsappens token för `game` kan aldrig peka på släpprepot eller ankarrepot.
 
 - [ ] **Steg 2: Klona och skapa gren (bara lokalt).**
 
@@ -4533,45 +5040,76 @@ jobs:
     needs: build
     runs-on: macos-26
     timeout-minutes: 30
-    # Bara läsrätt till släpprepot självt (skripten). Spelrepot checkas aldrig ut här.
+    # Bara läsrätt till släpprepot självt (skripten). Spelrepot checkas aldrig ut här. Ingen cache och
+    # inga setup-* med cache: byggjobbet (sudo, ACTIONS_RUNTIME_TOKEN) skulle kunna förgifta den.
     permissions:
       contents: read
     env:
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       BID: ${{ inputs.bundle_id }}
       PID: ${{ inputs.profile_id }}
+      VER: ${{ inputs.marketing_version }}
+      BUILD: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@v4
-        with: { name: xcarchive }
-      - name: Packa upp arkivet
+      - name: Kontrollera skripten
+        # ComputerCat Studio har Contents write men inte Workflows: den kan ändra scripts/ men inte den här
+        # filen. Därför står skriptens sha256 här och kontrolleras innan något körs.
         run: |
-          ditto -x -k xcarchive.zip "$RUNNER_TEMP"
-          test -x "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app/App"
-      - name: Nyckel, certifikat och profil
+          shasum -a 256 -c - <<'SUMS'
+          <sha256 av scripts/asc.mjs>  scripts/asc.mjs
+          <sha256 av scripts/asc-profile.mjs>  scripts/asc-profile.mjs
+          <sha256 av scripts/asc-upload.mjs>  scripts/asc-upload.mjs
+          SUMS
+      - uses: actions/download-artifact@v4
+        with: { name: xcarchive, path: "${{ runner.temp }}/in" }
+      - name: Packa upp och granska arkivet
+        # Före varje hemlighet: arkivet kommer från byggjobbet, som körde spelets kod.
+        run: |
+          ZIP="$RUNNER_TEMP/in/xcarchive.zip"
+          if zipinfo -1 "$ZIP" | grep -qE '(^/|(^|/)\.\.(/|$))'; then echo "::error::arkivet har absoluta sökvägar eller .."; exit 1; fi
+          ditto -x -k "$ZIP" "$RUNNER_TEMP/unpacked"
+          [ "$(ls -A "$RUNNER_TEMP/unpacked")" = "App.xcarchive" ] || { echo "::error::arkivet ska bara innehålla App.xcarchive"; exit 1; }
+          ARCH="$RUNNER_TEMP/unpacked/App.xcarchive"
+          ROOT=$(cd "$ARCH" && pwd -P)
+          while IFS= read -r -d '' LINK; do
+            TARGET=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LINK")
+            case "$TARGET" in "$ROOT"/*) ;; *) echo "::error::symlänk pekar ut ur arkivet: ${LINK#"$ROOT"/}"; exit 1 ;; esac
+          done < <(find "$ARCH" -type l -print0)
+          APP="$ARCH/Products/Applications/App.app"
+          test -x "$APP/App" || { echo "::error::App.app/App saknas"; exit 1; }
+          for PAIR in "CFBundleIdentifier=$BID" "CFBundleShortVersionString=$VER" "CFBundleVersion=$BUILD" "ITSAppUsesNonExemptEncryption=false"; do
+            KEY=${PAIR%%=*}; WANT=${PAIR#*=}
+            GOT=$(/usr/libexec/PlistBuddy -c "Print :$KEY" "$APP/Info.plist" 2>/dev/null || echo saknas)
+            [ "$GOT" = "$WANT" ] || { echo "::error::arkivets Info.plist: $KEY är $GOT, Computercat väntade $WANT"; exit 1; }
+          done
+          echo "ARCH=$ARCH" >> "$GITHUB_ENV"
+      - name: Certifikat
         env:
-          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
         run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_P8_BASE64" | base64 -D > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
-          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
           KC="$RUNNER_TEMP/sign.keychain-db"; KCP=$(openssl rand -hex 16)
+          P12="$RUNNER_TEMP/dist.p12"; trap 'rm -f "$P12"' EXIT
           security create-keychain -p "$KCP" "$KC"
           security set-keychain-settings -lut 1800 "$KC"
           security unlock-keychain -p "$KCP" "$KC"
-          echo "$P12_BASE64" | base64 -D > "$RUNNER_TEMP/dist.p12"
-          security import "$RUNNER_TEMP/dist.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          rm -f "$RUNNER_TEMP/dist.p12"
+          (umask 077; echo "$P12_BASE64" | base64 -D > "$P12")
+          security import "$P12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KCP" "$KC" > /dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          ASC_KEY_P8_PATH=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 node scripts/asc-profile.mjs "$PID" "$RUNNER_TEMP/app.mobileprovision" | tee "$RUNNER_TEMP/profile.txt"
+      - name: Profil
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          P8="$RUNNER_TEMP/asc.p8"; trap 'rm -f "$P8"' EXIT
+          (umask 077; echo "$ASC_KEY_P8_BASE64" | base64 -D > "$P8")
+          ASC_KEY_P8_PATH="$P8" node scripts/asc-profile.mjs "$PID" "$RUNNER_TEMP/app.mobileprovision" | tee "$RUNNER_TEMP/profile.txt"
           UUID=$(sed -n 's/^uuid=//p' "$RUNNER_TEMP/profile.txt")
           [[ "$UUID" =~ ^[0-9A-Fa-f-]{36}$ ]] || { echo "::error::profilen saknar uuid"; exit 1; }
-          for d in ~/Library/MobileDevice/Provisioning\ Profiles ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles; do mkdir -p "$d"; cp "$RUNNER_TEMP/app.mobileprovision" "$d/$UUID.mobileprovision"; done
+          for D in ~/Library/MobileDevice/Provisioning\ Profiles ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles; do mkdir -p "$D"; cp "$RUNNER_TEMP/app.mobileprovision" "$D/$UUID.mobileprovision"; done
           echo "PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
       - name: Signera och exportera
         run: |
@@ -4587,21 +5125,26 @@ jobs:
             <key>destination</key><string>export</string>
           </dict></plist>
           PLIST
-          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" | tail -5
+          xcodebuild -exportArchive -archivePath "$ARCH" -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" | tail -5
           test -f "$RUNNER_TEMP/export/App.ipa"
       - name: Ladda upp till App Store Connect
         env:
-          VER: ${{ inputs.marketing_version }}
-          BUILD: ${{ inputs.build_number }}
-        run: ASC_KEY_P8_PATH=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 node scripts/asc-upload.mjs "$RUNNER_TEMP/export/App.ipa" "$BID" "$VER" "$BUILD"
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          git diff --exit-code -- scripts || { echo "::error::scripts/ har ändrats under jobbet"; exit 1; }
+          P8="$RUNNER_TEMP/asc.p8"; trap 'rm -f "$P8"' EXIT
+          (umask 077; echo "$ASC_KEY_P8_BASE64" | base64 -D > "$P8")
+          ASC_KEY_P8_PATH="$P8" node scripts/asc-upload.mjs "$RUNNER_TEMP/export/App.ipa" "$BID" "$VER" "$BUILD"
       - name: Städa
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/sign.keychain-db" 2>/dev/null || true
-          rm -rf ~/.appstoreconnect "$RUNNER_TEMP/app.mobileprovision" "$RUNNER_TEMP/export" "$RUNNER_TEMP/dist.p12"
+          rm -rf "$RUNNER_TEMP/asc.p8" "$RUNNER_TEMP/dist.p12" "$RUNNER_TEMP/app.mobileprovision" "$RUNNER_TEMP/export" "$RUNNER_TEMP/unpacked"
 ```
 
-Skillnader mot spikflödet, alla avsiktliga: indata `build_guide` och sha256 per version (R2), strängare mönster för `release_uuid`, `build_number`, `marketing_version` och `bundle_id`, kontroll av version, bundle-id och exportdeklaration i byggjobbet (R12), felande kontroller i stället för utskrifter (G3, G4, G6), `concurrency`, profilens uuid kontrolleras.
+Skillnader mot spikflödet, alla avsiktliga: indata `build_guide` och sha256 per version (R2), strängare mönster för `release_uuid`, `build_number`, `marketing_version` och `bundle_id`, tidig kontroll av version, bundle-id och exportdeklaration i byggjobbet och bindande kontroll av arkivet i sign-jobbet (R12), felande kontroller i stället för utskrifter (G3, G4, G6), `concurrency`, profilens uuid kontrolleras, p8 bara i två steg, skripten fästa med sha256.
 
 - [ ] **Steg 4: `scripts/asc-profile.mjs`.** Ersätt filen (samma utdata som förut, en JWT-implementation i stället för två):
 
@@ -4620,19 +5163,31 @@ console.log(`profil ${attrs.name} type=${attrs.profileType}`);
 console.log(`uuid=${attrs.uuid}`);
 ```
 
-`README.md`: lägg till ett avsnitt "## release-ios.yml" med indata, de tre jobben, att v3:s sha256 läggs till i `Bygg och säkerhetskontroll` när byggguide v3 är låst, och att flödet bara startas av Computercat.
+`scripts/asc-upload.mjs`: ersätt raderna som slår upp appen (resten av spikfilen är oförändrad):
+
+```js
+const apps = await asc('GET', `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&fields[apps]=bundleId&limit=10`);
+// Exakt jämförelse: filtret får inte vara det enda som avgör vilken app bygget laddas upp till.
+const appId = (apps.data ?? []).find((a) => a.attributes?.bundleId === bundleId)?.id;
+if (!appId) throw new Error(`ingen app med bundle-id ${bundleId} i App Store Connect`);
+```
+
+`README.md`: lägg till ett avsnitt "## release-ios.yml" med indata, de tre jobben, att v3:s sha256 läggs till i `Bygg och säkerhetskontroll` när byggguide v3 är låst, att skriptens sha256 i `Kontrollera skripten` ska uppdateras i samma PR som ändrar ett skript, och att flödet bara startas av Computercat.
 
 - [ ] **Steg 5: Lokala kontroller.**
 
 ```bash
 cd $SCRATCH/computercat-release && git rm -q .github/workflows/release-ios-spike.yml
-command -v actionlint >/dev/null && actionlint .github/workflows/release-ios.yml || ruby -ryaml -e 'YAML.load_file(ARGV[0]); puts "yaml ok"' .github/workflows/release-ios.yml
-node --check scripts/asc-profile.mjs && echo "js ok"
-grep -c '\${{ inputs\.' .github/workflows/release-ios.yml
-grep -nE 'run: .*\$\{\{ inputs\.' .github/workflows/release-ios.yml || echo "inga inputs direkt i run"
+# Skriptens sha256 in i flödet (ersätter de tre raderna <sha256 av …>):
+shasum -a 256 scripts/asc.mjs scripts/asc-profile.mjs scripts/asc-upload.mjs
+grep -c '<sha256 av' .github/workflows/release-ios.yml   # förväntat efter inklistring: 0
+node --check scripts/asc.mjs && node --check scripts/asc-profile.mjs && node --check scripts/asc-upload.mjs && echo "js ok"
+command -v actionlint && command -v shellcheck
+actionlint -shellcheck="$(command -v shellcheck)" .github/workflows/release-ios.yml && echo "actionlint ok"
+grep -n 'cache' .github/workflows/release-ios.yml || echo "ingen cache"
 ```
 
-Förväntat: `yaml ok` (eller actionlint utan fel), `js ok`, och raden "inga inputs direkt i run" (indata går bara via `env:`, `with:`, `run-name` och `concurrency`). Saknas både actionlint och ruby: fråga Erik innan något installeras.
+Förväntat: `0`, `js ok`, `actionlint ok` (actionlint kontrollerar uttryck, behörigheter och `${{ }}` i skript; shellcheck varje `run:`), och `ingen cache`. Saknas actionlint eller shellcheck: fråga Erik (AskUserQuestion) innan `brew install actionlint shellcheck` körs; utan dem lämnas ingen PR.
 
 - [ ] **Steg 6: Fråga Erik (AskUserQuestion) och öppna PR.** "Släpprepot: push av grenen feat/release-ios och en PR mot main i HumblebragAB/computercat-release (release-ios.yml ersätter spikflödet; diffen bifogad). Inget körs förrän du har mergat. OK?" Med OK:
 
@@ -4644,18 +5199,18 @@ gh pr create --repo HumblebragAB/computercat-release --base main --head feat/rel
 
 Erik granskar och mergar. Merga aldrig själv.
 
-- [ ] **Steg 7: Testkörning mot spikappen (efter Eriks merge, eget OK).** Fråga Erik (AskUserQuestion): "Testkörning av release-ios.yml mot spikrepot ccspike-ios (byggguide v2, appen ComputerCat Test, se.computercat.test): en dispatch med byggnummer 10 och version från ccspike-ios package.json, som laddar upp ett bygge till ComputerCat Test i App Store Connect. Vilket profil-id har spikprofilen för se.computercat.test (spike B2)? OK?" Med OK och profil-id:
+- [ ] **Steg 7: Testkörning mot spikappen (efter Eriks merge, eget OK).** Fråga Erik (AskUserQuestion): "Testkörning av release-ios.yml mot spikrepot ccspike-ios (byggguide v2, appen ComputerCat Test, se.computercat.test): en dispatch med byggnummer 10 och version från ccspike-ios package.json, som laddar upp ett bygge till ComputerCat Test (app 6823067635) i App Store Connect med spikprofilen 74R2J9RJM4. OK?" Med OK:
 
 ```bash
 gh workflow run release-ios.yml --repo HumblebragAB/computercat-release --ref main \
   -f game=ccspike-ios -f commit_sha=$(gh api repos/HumblebragAB/ccspike-ios/commits/main --jq .sha) \
   -f release_uuid=$(uuidgen | tr 'A-Z' 'a-z') -f build_number=10 \
   -f marketing_version=$(gh api repos/HumblebragAB/ccspike-ios/contents/package.json --jq .content | base64 -d | jq -r .version) \
-  -f bundle_id=se.computercat.test -f profile_id=<profil-id> -f build_guide=v2
+  -f bundle_id=se.computercat.test -f profile_id=74R2J9RJM4 -f build_guide=v2
 gh run watch --repo HumblebragAB/computercat-release $(gh run list --repo HumblebragAB/computercat-release --workflow release-ios.yml --limit 1 --json databaseId --jq '.[0].databaseId')
 ```
 
-Förväntat: alla tre jobben gröna, `Kontrollera bundle-id och exportdeklaration` passerar (bekräftar sökvägen `ios/App/App/capacitor.config.json` efter `cap sync`), uppladdningen når `COMPLETE`. Faller ett steg på något annat än spelets kod: stanna och fråga Erik; ändra flödet bara via ny PR.
+Förväntat: alla tre jobben gröna, `Kontrollera bundle-id och exportdeklaration` passerar (bekräftar sökvägen `ios/App/App/capacitor.config.json` efter `cap sync`), `Packa upp och granska arkivet` passerar (bekräftar att arkivets `Info.plist` har version och byggnummer från indata), uppladdningen når `COMPLETE`, och bygget syns i spikgruppen `342f40c7-366f-4b70-9b09-6621ded72ab1` (`hasAccessToAllBuilds: true`, R7). Faller ett steg på något annat än spelets kod: stanna och fråga Erik; ändra flödet bara via ny PR.
 
 - [ ] **Steg 8: Bilagan.** Skriv i bilagan, avsnittet "Etapp 2 del 1", körningens id, jobbtider, Xcode-version och resultatet av kontrollstegen. Commit i worktreen:
 
@@ -4701,11 +5256,25 @@ Avsluta med `~/.claude/bin/wt-finish $WT --keep-db` först när Erik beordrat me
 
 Detta är en "stor lansering" i CLAUDE.md:s mening (nytt subsystem live, första skrivande operationer mot Apple och GitHub från Computercat, och Mattias ska informeras). Ordningen nedan är tvingande: deploy, verifiera, först därefter berättas det för Mattias.
 
-- [ ] **Steg 1: Prod-miljön (AskUserQuestion först, secret-fil).** Fråga Erik: "Prod-.env på api.computercat.co (/home/computercat/api.computercat.co/shared/.env eller motsvarande) får fem nya rader: ASC_RELEASE_KEY_ID=N2SC66KSLW, ASC_RELEASE_ISSUER_ID=8850ac41-1ee7-41bd-b588-250700218b39, ASC_RELEASE_PRIVATE_KEY_PATH=app/private/asc-release.p8, ASC_RELEASE_CERTIFICATE_ID=9W6K83MH5B och ASC_TESTFLIGHT_TESTERS=<e-postadresserna du anger>. Sedan php artisan config:cache. Rollback: ta bort raderna och config:cache. OK, och vilka testare?" Gör ändringen bara med OK, via `ssh-claude`, och skriv aldrig ut filens övriga innehåll.
+- [ ] **Steg 1: Före deploy, bara läsning (AskUserQuestion först).** Fråga Erik: "Före deploy av etapp 2 del 1 vill jag läsa, utan att ändra något: (a) Forge-sajtens deployskript för api.computercat.co via Forge-API:t, för att se om det kör php artisan migrate självt; (b) i prod med tinker: vilka spel som har app_store i målen, vilka bundle-id de skulle få och om två krockar, och om något spel har en slug som börjar med computercat. OK?" Med OK:
+  - (a) Läs deployskriptet med `laravel-forge`-skillen (GET, inget annat). Skriv i Pejl om `migrate` körs automatiskt. Ordningen nedan beror på svaret: kör skriptet `migrate`, så måste (b) vara grön **före** deploy, och steg 3 blir en kontroll i efterhand i stället för ett eget kommando.
+  - (b) Via `ssh-claude --via-home forge@46.246.48.182`, katalogen `/home/computercat/api.computercat.co/current`:
 
-- [ ] **Steg 2: Kontroll i prod (bara läsning).** `sudo -n -u computercat php8.4 artisan tinker --execute='print_r(App\Releases\AppStore\AppStoreConfig::missing());'` ger en tom lista; `stat -c %a storage/app/private/asc-release.p8` ger `600`; en läsning `app(App\Releases\AppStore\AppStoreConnectApi::class)->findApp("se.computercat.test")` ger app-id `6823067635` (spike B3). Kön kör (`AdvanceRelease` behöver workern; kontrollera Forge-daemonen) och schemat har `computercat:advance-releases`.
+```bash
+sudo -n -u computercat php8.4 artisan tinker --execute='
+$games = App\Models\Game::orderBy("id")->get();
+$app = $games->filter(fn ($g) => in_array("app_store", $g->release_targets ?? [], true));
+echo "app_store-spel: ", $app->pluck("slug")->implode(", "), "\n";
+$ids = $app->mapWithKeys(fn ($g) => [$g->slug => "se.computercat.".str_replace("-", "", $g->slug)]);
+echo "krockar: ", $ids->countBy()->filter(fn ($n) => $n > 1)->keys()->implode(", ") ?: "inga", "\n";
+echo "computercat-slugs: ", $games->filter(fn ($g) => str_starts_with($g->slug, "computercat"))->pluck("slug")->implode(", ") ?: "inga", "\n";'
+```
 
-- [ ] **Steg 3: Migrationerna (OK före).** `php artisan migrate --pretend` först, sedan `php artisan migrate` med OK. Invariant direkt efter: för varje spel med `app_store` i målen har `bundle_id` formen `se.computercat.*` och fem `appstore_*`-steg; inga andra spel har fått `bundle_id`. Läs SQL-resultatet, gissa inte.
+  (Koden körs före deploy, så den använder inte klasserna från den här planen.) Krockar något, eller finns en `computercat*`-slug: stanna och fråga Erik.
+
+- [ ] **Steg 2: Prod-miljön (AskUserQuestion först, secret-fil).** Fråga Erik: "Prod-.env på api.computercat.co får fyra nya rader: ASC_RELEASE_KEY_ID=N2SC66KSLW, ASC_RELEASE_ISSUER_ID=8850ac41-1ee7-41bd-b588-250700218b39, ASC_RELEASE_PRIVATE_KEY_PATH=app/private/asc-release.p8 och ASC_RELEASE_CERTIFICATE_ID=9W6K83MH5B (testarnas användar-id står i config/releases.php). Sedan php artisan config:cache. Rollback: ta bort raderna och config:cache. OK?" Ändra bara med OK, via `ssh-claude`, och skriv aldrig ut filens övriga innehåll.
+
+- [ ] **Steg 3: Deploy, migrationer och kontroll (Eriks order och OK).** Deploy enligt Eriks push-order. Kör deployskriptet inte `migrate` (steg 1a): `php artisan migrate --pretend`, sedan `php artisan migrate` med OK. Kör det `migrate`: kontrollera i efterhand att `php artisan migrate:status` visar `2026_10_17_100001` och `2026_10_17_100002` som körda. Fråga sedan Erik (AskUserQuestion) om en kontroll i prod, bara läsning: `AppStoreConfig::missing()` ger en tom lista, `stat -c %a storage/app/private/asc-release.p8` ger `600`, `app(App\Releases\AppStore\AppStoreConnectApi::class)->findApp("se.computercat.test")["id"]` ger `6823067635`, kön kör (Forge-daemonen för workern) och `schedule:list` visar `computercat:advance-releases`. Invariant direkt efter migrationen: varje spel med `app_store` har `bundle_id` av formen `se.computercat.*` och fem `appstore_*`-steg, inga andra spel har fått `bundle_id`, och inget `appstore_*`-steg är `done` utan sitt id (R17). Läs resultatet, gissa inte.
 
 - [ ] **Steg 4: Byggguide v3 och släpprepot.** Vänta tills v3-planen (R1) är låst och deployad. Lägg sedan v3:s sha256 för `scripts/cc-gate.mjs` (`jq -r '.files[] | select(.path=="scripts/cc-gate.mjs") | .sha256' resources/byggguide/v3/manifest.json`) som en rad `v3)` i steget "Bygg och säkerhetskontroll" via en ny PR i släpprepot (samma OK-gång som Task 10 steg 6).
 
@@ -4714,7 +5283,7 @@ Detta är en "stor lansering" i CLAUDE.md:s mening (nytt subsystem live, första
   2. Erik skapar appen med exakt värdena i stegets instruktion. Inom en minut efter "Bocka av" (eller nästa körning) är steget klart, gruppen "ComputerCat intern" finns och testarna är med (kontrollera i App Store Connect, TestFlight, Interna testare).
   3. Spelets Claude följer `next` ordagrant: höjer version, `npm run check`, push, väntar på grönt Demo, `promote_release(target: app_store, stage: testflight)`.
   4. Följ `get_release_status`: `starting` → `building_testflight` (GitHub) → `building_testflight` (Apple) → `succeeded_testflight`. Verifiera efter första fasbytet, inte efter en timme: taggen `v<version>` finns på exakt commiten (`gh api repos/HumblebragAB/<spel>/git/ref/tags/v<version>`), körningens `run-name` innehåller släppets uuid, och `releases.build_number` = `games.ios_build_number`.
-  5. Slutinvariant: bygget i App Store Connect har version och byggnummer som släppet, `processingState` `VALID`, och finns i gruppen (R7: bekräftar att `hasAccessToAllBuilds: false` plus uttrycklig länk fungerar). Erik installerar det med TestFlight på sin telefon och bekräftar att spelet startar och når Computercat (topplistan laddar).
+  5. Slutinvariant: bygget i App Store Connect har version och byggnummer som släppet, `processingState` `VALID`, och finns i gruppen (R7: `GET /v1/builds?filter[betaGroups]` hittar bygget utan att Computercat behövde länka det). Erik installerar det med TestFlight på sin telefon och bekräftar att spelet startar och når Computercat (topplistan laddar).
   6. Ett nej-fall: be spelets Claude befordra samma version från en ny commit; svaret ska vara taggregeln med förslag på nästa version, och ingen ny rad, tagg eller körning skapas.
   Faller något: stanna, rör inget mer, rapportera till Erik.
 
@@ -4742,11 +5311,15 @@ Detta är en "stor lansering" i CLAUDE.md:s mening (nytt subsystem live, första
 | Fejkar byggda på spikresultaten, redigerade fel, request/response vid 4xx/5xx | 1, 2 |
 | Texten ordagrant i faktabanken, CLAUDE.md och `next`, med test | 8, 9 |
 | Revisionslogg: commit och version av släppflödet | 7 (`workflow_sha`), befintlig `mcp_audit_logs` |
-| Acceptans med ett riktigt v3-spel efter deploy | 12 |
+| Acceptans med ett riktigt v3-spel efter deploy (spelet väljs med AskUserQuestion) | 12 |
+| Testare som användar-id; e-post via `GET /v1/users/{id}`, aldrig i loggar | 1, 5 (R18) |
+| Granskning 2026-10-15: föräldralös dispatch (R15), start/avbryt-race (R16), 1a-steg utan id (R17) | 7, 5 |
+| Granskning: arkivet granskas och R12 bindande i sign-jobbet, p8 i två steg, ingen cache, skript fästa, exakt bundle-id i uppladdningen, `computercat*` reserverat | 10, 2 (R19) |
+| Granskning: tidsgränser avstämda (80/90/90/210, nattkontroll), jobbens anropsbudget | R11, 5, 7 |
 | Achievements i v3 | R1: egen plan; denna plan definierar iOS-kontraktet (4) och synktestet (9) |
 
 **Platshållare:** inga TBD/TODO i kod. Avsiktliga värden som fylls vid körning: profil-id och testarnas e-post (Erik anger, Task 10 och 12), v3:s sha256 (Task 12 steg 4, när v3 finns), flödestexten i artikeln (klistras in från konstanten; testet kräver exakt likhet).
 
 **Typkonsistens (kontrollerad):** `TestFlightPreflight::check(Game, string): PreflightResult` (6) används i `ReleaseService::promote` (6); `lastReleased(): ?MarketingVersion` i 6 och 8. `GitHubAppClient::dispatchWorkflow(): array{run_id, html_url}` (2) läses som `$run['run_id']`/`$run['html_url']` (7); `findWorkflowRun()`/`workflowRun()` ger `id`, `html_url`, `head_sha` (2, 7). `AppStoreConnectApi::profile(): ?array{state, expires_at}` (1) i 7; `findBuild(): ?array{id, state}` (1, 7); `findBetaTester(string, ?string)` (1, 5). `Game::appStoreId()`-nycklar `bundle_resource_id`, `profile_id`, `app_id`, `app_name`, `beta_group_id` är desamma i 3, 5, 6, 7 och `testFlightGame()`. `ReleaseCatalog::isBuiltByComputercat` (6) i 7 och 8. Jobb: `AdvanceRelease(int $releaseId)`, `RunAppStoreSetup(int $gameId)`; testerna läser `$job->releaseId`/`$job->gameId`.
 
-**Kända risker som planen inte kan ta bort:** (1) R7 (`hasAccessToAllBuilds: false` + uttrycklig länk) är oprövat mot Apple tills Task 12; (2) sökvägen `ios/App/App/capacitor.config.json` efter `cap sync` bekräftas först i Task 10 steg 7; (3) macOS-minuternas pris och kvot är inte verifierade (spike A G7); (4) Apples krav på att `CFBundleVersion` ska stiga inom en version: Computercat delar alltid ut ett högre nummer, så det kan bara slå fel om någon laddar upp utanför Computercat.
+**Kända risker som planen inte kan ta bort:** (1) att `filter[betaGroups]` på `/v1/builds` visar byggen som gruppen fått genom `hasAccessToAllBuilds` är inte prövat förrän Task 10 steg 7 (svarar det tomt länkar Computercat bygget, vilket är ofarligt men ska noteras i bilagan); (5) släpprepot saknar grenskydd, så den som har Workflows-rätt kan ändra flödet utan granskning (Eriks beslut). (2) sökvägen `ios/App/App/capacitor.config.json` efter `cap sync` bekräftas först i Task 10 steg 7; (3) macOS-minuternas pris och kvot är inte verifierade (spike A G7); (4) Apples krav på att `CFBundleVersion` ska stiga inom en version: Computercat delar alltid ut ett högre nummer, så det kan bara slå fel om någon laddar upp utanför Computercat.
