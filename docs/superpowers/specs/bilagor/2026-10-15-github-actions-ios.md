@@ -55,7 +55,7 @@ Läst 2026-10-15 på docs.github.com. Sidorna anger inga fine-grained-behörighe
 
 | Endpoint | Koden läser | Statuskoder enligt referensen |
 |---|---|---|
-| `GET /repos/{o}/{r}/contents/{path}?ref=` | `sha`, `encoding`, `content` (ref = commit/gren/tagg) | 200, 302, 304, 403, 404. Att `content` är base64 med `encoding: base64` anges inte i sektionen (`encoding` är `none` för filer 1 till 100 MB med object-mediatyp); koden kräver `base64` och failar högljutt annars. |
+| `GET /repos/{o}/{r}/contents/{path}?ref=` | `sha`, `encoding`, `content` (ref = commit/gren/tagg) | 200, 302, 304, 403, 404. `encoding` är `base64` (verifierat 2026-10-15); `none` gäller filer 1 till 100 MB med object-mediatyp, och koden failar högljutt på annat än `base64`. |
 | `GET /repos/{o}/{r}/git/ref/{ref}` (`tags/<tagg>`) | `object.sha`, `object.type` | 200, 404 (saknas), 409 |
 | `POST /repos/{o}/{r}/git/refs` (`ref`, `sha`) | inget i svaret | 201, 409, 422 |
 | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches` | `workflow_run_id`, `html_url` (även `run_url`) | 200 med körningens id (bekräftat i spike A G1b). `inputs` max 25 egenskaper. |
@@ -64,10 +64,15 @@ Läst 2026-10-15 på docs.github.com. Sidorna anger inga fine-grained-behörighe
 | `POST /repos/{o}/{r}/actions/runs/{id}/cancel` | inget | 202, 409 |
 | `GET /repos/{o}/{r}/actions/workflows/{id}/runs` (`event`, `created`, `per_page` max 100) | `workflow_runs[]` med samma fält som en körning | 200 |
 
-Avvikelser och obelagda punkter:
-- **422 vid befintlig tagg:** referensen säger bara "validation failed, or the endpoint has been spammed" för 422 och anger 409 utan förklaring. Att 422 betyder "finns redan" är inte belagt. `createTag` accepterar varken 409 eller 422; båda ger `ExternalApiException`, och anroparen (Task 6) ska läsa taggen med `getTag` för att avgöra.
-- **Avbryta en avslutad körning:** referensen listar 409 utan att säga när. Att 409 gäller en avslutad körning är inte belagt (testet bygger på det). `cancelWorkflowRun` accepterar 409 som "inget att avbryta"; verifieras mot en riktig avslutad körning i Task 12.
-- **Värden för `status` på en körning** räknas inte upp på körningssidan; filtervärdena är queued, in_progress, completed m.fl. (requested, waiting, pending). `conclusion` på körningen: success, failure, cancelled m.fl. (se filterlistan: action_required, neutral, skipped, stale, timed_out). Koden jämför bara mot `completed` och `success`/`failure`.
-- **`created`-filtrets sökform** (`>=ISO8601`) hänvisas till "search syntax" utan exempel; formen `>=2026-10-15T10:00:00Z` är ännu inte prövad mot GitHub.
-- **`steps[].conclusion`:** värdena är inte listade; koden behandlar failure, timed_out och cancelled som misslyckat steg.
-- **`return_run_details`** nämns inte i referensen men är bekräftat i spike A G1b (200 med `workflow_run_id`).
+Verifierat mot riktiga repon 2026-10-15 (gh, användartoken; inte GitHub App-token, så appens behörigheter återstår till Task 12):
+- `POST git/refs` för en tagg som redan finns: **422** `{"message":"Reference already exists"}`. Första anropet: 201. Referensens 422-text täcker alltså detta fall. `createTag` kastar fortfarande `ExternalApiException` på 422; Task 6 avgör med `getTag`.
+- `POST actions/runs/{id}/cancel` på en avslutad körning: **409** `{"message":"Cannot cancel a workflow run that is completed."}`. `cancelWorkflowRun` accepterar 409.
+- `GET actions/workflows/{id}/runs?event=workflow_dispatch&created=>=2026-10-15T08:00:00Z` fungerar (total_count 2). Formen `>=Y-m-dTH:i:sZ` är den koden skickar.
+- `GET contents/{path}?ref=<sha>` ger `encoding: "base64"`.
+- `steps[].conclusion` förekommer som success, failure och skipped.
+
+Fortfarande obelagt:
+- App-behörigheter för Actions och Contents (Task 12).
+- Värdena för körningens `status` utöver completed/queued/in_progress; koden jämför bara mot `completed`, `success` och `failure`.
+- `steps[].conclusion` timed_out och cancelled (koden behandlar dem som misslyckade steg, men de är inte observerade).
+- `return_run_details` finns inte i referensen men är belagt i spike A G1b.
