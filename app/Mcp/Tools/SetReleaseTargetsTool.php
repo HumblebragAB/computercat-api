@@ -5,7 +5,6 @@ namespace App\Mcp\Tools;
 use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\Release;
-use App\Models\ReleaseSetupStep;
 use App\Models\User;
 use App\Releases\AppStore\BundleId;
 use App\Releases\ReleaseCatalog;
@@ -13,6 +12,7 @@ use App\Releases\ReleaseStatus;
 use App\Releases\SetupSteps;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Laravel\Mcp\Response;
 
@@ -42,18 +42,53 @@ class SetReleaseTargetsTool extends GameTool
             return $this->validationFailed($validator->errors()->toArray());
         }
 
-        // Verktyget körs i en transaktion: spelets rad låses, samma lås som ReleaseService::promote tar,
-        // så att målen inte ändras mitt under en befordran.
-        $game = Game::query()->whereKey($game->getKey())->lockForUpdate()->firstOrFail();
-
         $targets = array_values(array_unique(array_filter(array_map('trim', explode(',', $validator->validated()['targets'])), fn (string $t) => $t !== '')));
         $unknown = array_values(array_diff($targets, ReleaseCatalog::TARGETS));
         if ($unknown !== []) {
             return $this->validationFailed(['targets' => 'Unknown target(s): '.implode(', ', array_map(fn ($t) => mb_substr($t, 0, 30), $unknown)).'. Allowed: '.implode(', ', ReleaseCatalog::TARGETS).'.']);
         }
 
-        $removed = array_diff($game->releaseTargets(), $targets);
-        foreach ($removed as $target) {
+        // Egen transaktion (transactional() är false): jobbet köas först efter commit, så att varken
+        // jobbet eller dess unikhetslås finns kvar för en ändring som rullades tillbaka.
+        try {
+            $refused = DB::transaction(fn () => $this->save($game, $targets));
+        } catch (UniqueConstraintViolationException) {
+            // Ett annat anrop hann ta samma bundle-id mellan kontrollen och sparandet (unikt index).
+            return self::bundleIdTaken(BundleId::forSlug($game->slug));
+        }
+        if ($refused !== null) {
+            return $refused;
+        }
+
+        if (in_array('app_store', $targets, true)) {
+            RunAppStoreSetup::dispatch($game->id);
+        }
+
+        $game = $game->fresh();
+        $status = ReleaseStatus::forGame($game);
+        $open = [];
+        foreach ($targets as $target) {
+            foreach (SetupSteps::open($game, $target) as $step) { // samma ordning som spärren och get_release_status
+                $open[] = ['target' => $step->target, 'key' => $step->key, 'instruction' => $step->instruction];
+            }
+        }
+
+        return $this->json([
+            'saved' => true,
+            'release_targets' => $game->releaseTargets(),
+            'open_setup_steps' => $open,
+            'next' => $status['next'],
+        ]);
+    }
+
+    // Körs i transaktionen. Ett nekande svar returneras innan något har skrivits.
+    private function save(Game $game, array $targets): ?Response
+    {
+        // Spelets rad låses, samma lås som ReleaseService::promote tar, så att målen inte ändras mitt
+        // under en befordran.
+        $game = Game::query()->whereKey($game->getKey())->lockForUpdate()->firstOrFail();
+
+        foreach (array_diff($game->releaseTargets(), $targets) as $target) {
             if (Release::active()->where('game_id', $game->id)->where('target', $target)->exists()) {
                 return Response::error("Cannot remove {$target}: the game has a pending release for it. Wait for it to finish or cancel it first.");
             }
@@ -69,29 +104,16 @@ class SetReleaseTargetsTool extends GameTool
             $game->forceFill(['bundle_id' => $bundle]);
         }
 
-        try {
-            $game->forceFill(['release_targets' => $targets])->save();
-        } catch (UniqueConstraintViolationException) {
-            // Ett annat anrop hann ta samma bundle-id mellan kontrollen och sparandet (unikt index).
-            return self::bundleIdTaken((string) $game->bundle_id);
-        }
+        $game->forceFill(['release_targets' => $targets])->save();
         SetupSteps::sync($game);
 
-        if (in_array('app_store', $targets, true)) {
-            // Verktyget körs i en transaktion; jobbet (HTTP mot Apple) startar först efter commit.
-            RunAppStoreSetup::dispatch($game->id)->afterCommit();
-        }
+        return null;
+    }
 
-        $game = $game->fresh();
-        $status = ReleaseStatus::forGame($game);
-
-        return $this->json([
-            'saved' => true,
-            'release_targets' => $game->releaseTargets(),
-            'open_setup_steps' => ReleaseSetupStep::where('game_id', $game->id)->whereIn('target', $targets)
-                ->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->get(['target', 'key', 'instruction'])->toArray(),
-            'next' => $status['next'],
-        ]);
+    // Verktyget köar ett jobb; GameTools allmänna transaktion används inte (se run()).
+    protected function transactional(): bool
+    {
+        return false;
     }
 
     private static function bundleIdTaken(string $bundle): Response

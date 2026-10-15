@@ -32,3 +32,6 @@ Schedule::command('computercat:check-provisioning')->dailyAt('06:15')->withoutOv
 
 // Släppflödet (spec 2026-10-14, spärr 1): kvitton på lyckade Demo-byggen, eftersom Coolifys lista bara visar de senaste.
 Schedule::command('computercat:poll-demo-builds')->everyFiveMinutes()->withoutOverlapping(10);
+
+// Släppflödet etapp 2: "Computercat ser själv när appen finns" och kör de automatiska App Store-stegen.
+Schedule::command('computercat:queue-app-store-setup')->everyTenMinutes()->withoutOverlapping(10);

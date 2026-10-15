@@ -3,11 +3,14 @@
 namespace Tests\Feature\Mcp;
 
 use App\Jobs\RunAppStoreSetup;
+use App\Mcp\Tools\SetReleaseTargetsTool;
 use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use App\Models\User;
+use Illuminate\Bus\UniqueLock;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Tests\Support\CreatesReleases;
 
@@ -147,5 +150,41 @@ class SetReleaseTargetsToolTest extends McpTestCase
 
         Queue::assertNothingPushed();
         $this->assertNull($this->game->fresh()->bundle_id);
+    }
+
+    public function test_open_steps_are_listed_in_definition_order(): void // som get_release_status och spärren (openFor)
+    {
+        // 1a-data: två app_store-steg finns redan; etapp 2:s steg får högre id.
+        $this->game->forceFill(['release_targets' => ['app_store']])->save();
+        foreach (['appstore_create_app', 'appstore_privacy_and_age'] as $key) {
+            ReleaseSetupStep::create(['game_id' => $this->game->id, 'target' => 'app_store', 'key' => $key, 'status' => ReleaseSetupStep::OPEN, 'instruction' => 'gammal']);
+        }
+
+        $result = $this->set('web,app_store');
+
+        $keys = array_column(json_decode($result['text'], true)['open_setup_steps'], 'key');
+        $this->assertSame(['web_public_address', 'appstore_bundle_id', 'appstore_profile', 'appstore_create_app', 'appstore_testflight_group', 'appstore_privacy_and_age'], $keys);
+    }
+
+    public function test_an_error_after_saving_rolls_back_and_queues_nothing(): void
+    {
+        ReleaseSetupStep::creating(fn () => throw new \RuntimeException('boom'));
+
+        $result = $this->set('app_store');
+
+        $this->assertFalse($result['ok']);
+        $game = $this->game->fresh();
+        $this->assertNull($game->bundle_id);
+        $this->assertSame([], $game->releaseTargets());
+        Queue::assertNothingPushed();
+        // Inget unikhetslås kvar som skulle stoppa nästa körning i en halvtimme.
+        $lock = Cache::lock(UniqueLock::getKey(new RunAppStoreSetup($this->game->id)), 10);
+        $this->assertTrue($lock->get());
+        $lock->release();
+    }
+
+    public function test_the_tool_is_not_wrapped_in_the_generic_transaction(): void // jobbet köas först efter commit
+    {
+        $this->assertFalse((fn () => $this->transactional())->call(app(SetReleaseTargetsTool::class)));
     }
 }

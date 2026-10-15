@@ -4,6 +4,7 @@ namespace App\Releases;
 
 use App\Models\Game;
 use App\Models\ReleaseSetupStep;
+use Illuminate\Support\Collection;
 
 // Engångssteg per spel och butik (spec Del 1). Skapas när ett mål läggs till.
 // play_first_aab saknas medvetet: det skapas först om etapp 3:s spike bekräftar kravet (R9).
@@ -55,12 +56,17 @@ final class SetupSteps
     // lagts till i etapp 2 har högre id än 1a:s).
     public static function openFor(Game $game, string $target, string $stage): ?ReleaseSetupStep
     {
+        return self::open($game, $target)->first(fn (ReleaseSetupStep $s) => self::blocks($s->key, $stage));
+    }
+
+    /** @return Collection<int, ReleaseSetupStep> målets öppna steg i definitionsordning */
+    public static function open(Game $game, string $target): Collection
+    {
         $order = array_flip(array_keys(self::DEFINITIONS[$target] ?? []));
 
-        return ReleaseSetupStep::where('game_id', $game->id)->where('target', $target)->where('status', ReleaseSetupStep::OPEN)->get()
-            ->filter(fn (ReleaseSetupStep $s) => self::blocks($s->key, $stage))
+        return ReleaseSetupStep::where('game_id', $game->id)->where('target', $target)->where('status', ReleaseSetupStep::OPEN)->orderBy('id')->get()
             ->sortBy(fn (ReleaseSetupStep $s) => $order[$s->key] ?? PHP_INT_MAX)
-            ->first();
+            ->values();
     }
 
     /** Skapar saknade steg och uppdaterar texten på öppna steg. Klara steg lämnas orörda; inget raderas. */
