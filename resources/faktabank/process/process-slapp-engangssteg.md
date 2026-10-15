@@ -17,7 +17,7 @@ updated: "2026-10-15"
 
 App Store Connect och Google Play låter inte ett API skapa själva appen, och den publika adressen är ett beslut. Sådant görs en gång för hand, och först därefter är det meningsfullt att bygga.
 
-Spelets bundle-id är `se.computercat.<slug utan bindestreck>`. Det är samma värde som `appId` i spelets `capacitor.config.ts`; `get_release_status` visar det.
+Spelets bundle-id är `se.computercat.<slug utan bindestreck>`; `get_release_status` visar det.
 
 ## Så gör du
 
@@ -36,5 +36,6 @@ Stegen per mål och deras text (ordagrant som i `get_release_status`):
 ## Källa
 
 - app/Releases/SetupSteps.php
+- app/Releases/AppStore/BundleId.php
 - app/Mcp/Tools/SetReleaseTargetsTool.php
 - app/Mcp/Tools/GetReleaseStatusTool.php

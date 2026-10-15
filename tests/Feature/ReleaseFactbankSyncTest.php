@@ -95,7 +95,10 @@ class ReleaseFactbankSyncTest extends TestCase
         $this->assertStringContainsString($flow, ReleaseNext::for('ready_for_testflight', ['commit' => 'x', 'last_version' => 'ingen']));
 
         // Låsta och olåsta versioner: v3-planen ska få fel innan låsningen, inte efter.
-        foreach (glob(resource_path('byggguide/v*/manifest.json')) ?: [] as $manifest) {
+        // Loopen nedan är avsiktligt tom tills v3 (första med ios-block) låses; manifestlistan får aldrig vara tom.
+        $manifests = glob(resource_path('byggguide/v*/manifest.json')) ?: [];
+        $this->assertNotEmpty($manifests, 'Inga byggguide-manifest hittades; globben är fel.');
+        foreach ($manifests as $manifest) {
             if (! isset(json_decode((string) file_get_contents($manifest), true)['ios'])) {
                 continue;
             }
@@ -120,7 +123,7 @@ class ReleaseFactbankSyncTest extends TestCase
         $text = (string) file_get_contents(resource_path('faktabank/process/process-slappflode.md'));
 
         $this->assertStringNotContainsString('som standard', $text);
-        $this->assertStringContainsString('commit_sha', ReleaseNext::TESTFLIGHT_FLOW);
+        $this->assertMatchesRegularExpression('/^3\. .*`commit_sha`/m', $text);
     }
 
     // Den gamla artikeln får inte peka på det ersatta verktyget som sättet att gå live.
