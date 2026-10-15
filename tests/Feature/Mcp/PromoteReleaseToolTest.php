@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mcp;
 
+use App\Mcp\Tools\PromoteReleaseTool;
 use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\Release;
@@ -55,6 +56,11 @@ class PromoteReleaseToolTest extends McpTestCase
             $base.'/contents/CLAUDE.md?ref=*' => Http::response(ProvisioningFakes::githubContent("Byggguide: **v3**.\n")),
             $base.'/git/ref/tags/*' => Http::response([], 404),
         ]);
+    }
+
+    public function test_description_states_that_a_push_alone_never_builds(): void
+    {
+        $this->assertStringContainsString('A push without a raised version never builds the app', (new PromoteReleaseTool)->description());
     }
 
     public function test_testflight_answer_has_version_build_number_and_the_starting_state(): void

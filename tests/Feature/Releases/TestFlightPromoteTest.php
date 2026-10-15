@@ -169,6 +169,7 @@ class TestFlightPromoteTest extends TestCase
         $this->repo('1.2.0', guide: 'v2');
 
         $this->refused('build guide v2', 'cannot be built for iOS');
+        $this->refused('build guide v2', 'build guide v3 or later (get_build_guide)');
     }
 
     public function test_missing_app_store_setup_is_refused_before_any_github_call(): void

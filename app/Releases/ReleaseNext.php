@@ -10,7 +10,7 @@ final class ReleaseNext
     // "Skicka till TestFlight" (Eriks beslut 2026-10-15). Ordagrant i process-slappflode och i CLAUDE.md
     // för varje byggguideversion som stöder iOS; ReleaseFactbankSyncTest jämför. Ändra här, där och i
     // byggguiden i samma commit (en låst version ändras aldrig: då krävs en ny version).
-    public const TESTFLIGHT_FLOW = 'Skicka till TestFlight: 1. Höj version i package.json (MAJOR.MINOR.PATCH): högre än den senast släppta till TestFlight och inte använd förut. 2. Kör npm run check, committa och pusha till main. 3. Vänta tills Demo-bygget för commiten är grönt (get_provisioning_status visar demo.state live). 4. Anropa promote_release(target: app_store, stage: testflight, commit_sha: <commiten>). 5. Följ get_release_status tills släppet är klart. Computercat sätter taggen v<version>, väljer byggnummer, bygger appen och lägger den i TestFlight-gruppen ComputerCat intern.';
+    public const TESTFLIGHT_FLOW = 'Skicka till TestFlight (kräver byggguide v3 eller senare i spelet, den med iOS-stöd). En push utan höjd version bygger aldrig appen; bara promote_release efter en versionshöjning gör det. 1. Höj version i package.json (MAJOR.MINOR.PATCH): högre än den senast släppta till TestFlight och inte använd förut. 2. Kör npm run check, committa och pusha till main. 3. Vänta tills Demo-bygget för commiten är grönt (get_provisioning_status visar demo.state live). 4. Anropa promote_release(target: app_store, stage: testflight, commit_sha: <commiten>). 5. Följ get_release_status tills släppet är klart. Computercat sätter taggen v<version>, väljer byggnummer, bygger appen och lägger den i TestFlight-gruppen ComputerCat intern.';
 
     public const TEMPLATES = [
         'releases_disabled' => 'Släpp är avstängda just nu. Vänta tills Erik har slagit på dem igen.',
@@ -29,7 +29,7 @@ final class ReleaseNext
         'ready_for_testflight' => 'Commit {commit} är testad i Demo. Senast släppta version till TestFlight: {last_version}. {flow}',
         'starting' => 'Släppet {release} (version {version}, bygge {build}) av commit {commit} startar. Fråga igen med get_release_status om en minut.',
         'building_testflight' => 'Släppet {release} (version {version}, bygge {build}) pågår: {phase}. Fråga igen med get_release_status om några minuter.',
-        'succeeded_testflight' => 'Släppet {release} (version {version}, bygge {build}) finns i TestFlight för gruppen ComputerCat intern. Installera det med TestFlight-appen. Nästa version: {flow}',
+        'succeeded_testflight' => 'Släppet {release} (version {version}, bygge {build}) finns i TestFlight för gruppen ComputerCat intern. Installera det med TestFlight-appen. För en ny version gäller flödet nedan. {flow}',
         'failed_testflight' => 'Släppet {release} (version {version}) av commit {commit} misslyckades: {error} Samma commit kan skickas igen med promote_release(target: app_store, stage: testflight, commit_sha: {commit}). Ändrar du koden: {flow}',
     ];
 

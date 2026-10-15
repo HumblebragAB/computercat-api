@@ -45,7 +45,7 @@ class TestFlightPreflight
 
         $guide = $claude === null ? null : BuildGuide::versionFromClaudeMd($claude['text']);
         if ($guide === null || ! $this->guides->supports($guide)) {
-            throw new ReleaseRefused("Commit {$short} is on build guide ".($guide ?? '(unknown)').', which cannot be built for iOS. Move the game to the latest build guide (get_build_guide) before sending it to TestFlight.');
+            throw new ReleaseRefused("Commit {$short} is on build guide ".($guide ?? '(unknown)').', which cannot be built for iOS. iOS needs build guide v3 or later (get_build_guide). Move the game to the latest build guide before sending it to TestFlight.');
         }
 
         $last = self::lastReleased($game);

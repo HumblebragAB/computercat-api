@@ -194,6 +194,8 @@ class ReleaseStatusTest extends TestCase
         $this->assertSame('ready_for_testflight', $target['state']);
         $this->assertStringContainsString('Senast släppta version till TestFlight: 1.1.0.', $target['next']);
         $this->assertStringContainsString(ReleaseNext::TESTFLIGHT_FLOW, $target['next']);
+        $this->assertStringContainsString('En push utan höjd version bygger aldrig appen', $target['next']);
+        $this->assertStringContainsString('byggguide v3 eller senare', $target['next']);
         $this->assertSame(['bundle_id' => 'se.computercat.kattsvep', 'last_released_version' => '1.1.0', 'last_build_number' => 0], $target['ios']);
     }
 
@@ -224,6 +226,7 @@ class ReleaseStatusTest extends TestCase
             $this->assertStringContainsString($needle, $target['next'], $status);
             $this->assertStringContainsString('version 1.2.0', $target['next'], $status);
         }
+        $this->assertStringNotContainsString('Nästa version: Skicka', $this->statusOf($game)['targets']['app_store']['next']);
 
         $release->update(['status' => Release::FAILED, 'last_error' => 'The GitHub run ended with failure in job build.']);
         $target = $this->statusOf($game)['targets']['app_store'];
