@@ -19,6 +19,13 @@
 - Engångsresurser sparas på id när de skapas och städas bara på de id:na (CLAUDE.md "Radering").
 - Allt som rör GitHub-appens behörigheter eller hemligheter i släpprepot frågas med AskUserQuestion innan det görs.
 
+## Beslut 2026-10-15 (Erik)
+
+- Jobb 0 använder en separat app "ComputerCat Release Reader" (bara Contents: read, installerad på alla repon i HumblebragAB). Erik skapar appen och nyckeln; nyckeln läggs som `CC_READER_PRIVATE_KEY` och app-id som `CC_READER_APP_ID` i släpprepot. ComputerCat Studio används bara av Computercat (dispatch, läsa körningar) och får Actions: read and write.
+- Spiken får skapa `ccspike-ios` och lägga spikflödet i `computercat-release` via PR. Engångsrepon raderas av Erik efteråt (Claude raderar aldrig permanent); inga fler engångsrepon än det som behövs.
+- Capacitor iOS går in i byggguide v3 tillsammans med achievements.
+- Lokalt bevis 2026-10-15: Capacitor 8.5.3 (SPM, `npx cap add ios --packagemanager SPM`), Xcode 27, osignerad `xcodebuild archive` på 36 s, 9,4 MB, `App.app/App` körbar.
+
 ## Spikfrågor
 
 | # | Fråga | Bevis |
@@ -130,8 +137,8 @@ jobs:
       - id: token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.CC_APP_ID }}
-          private-key: ${{ secrets.CC_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.CC_READER_APP_ID }}
+          private-key: ${{ secrets.CC_READER_PRIVATE_KEY }}
           owner: HumblebragAB
           repositories: ${{ inputs.game }}
           permission-contents: read
@@ -186,7 +193,7 @@ jobs:
       - name: G5 osignerad arkivering
         working-directory: src/ios/App
         run: |
-          xcodebuild __PROJEKT_ELLER_WORKSPACE_ENLIGT_TASK2__ -scheme App -configuration Release -destination 'generic/platform=iOS' \
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/App.xcarchive" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive | tail -5
           ditto -c -k --keepParent "$RUNNER_TEMP/App.xcarchive" "$RUNNER_TEMP/xcarchive.zip"
           du -sh "$RUNNER_TEMP/App.xcarchive" "$RUNNER_TEMP/xcarchive.zip"
@@ -207,7 +214,7 @@ jobs:
           ls -a | tr '\n' ' '
 ```
 
-- [ ] **Steg 2:** Ersätt `__SHA256_FRÅN_V2_MANIFESTET__` med v2-manifestets sha256 för `scripts/cc-gate.mjs` (hämtas med `jq -r '.files[] | select(.path=="scripts/cc-gate.mjs") | .sha256' resources/byggguide/v2/manifest.json`). Ersätt `__PROJEKT_ELLER_WORKSPACE_ENLIGT_TASK2__` med `-project App.xcodeproj` (SPM) eller `-workspace App.xcworkspace` (CocoaPods) enligt Task 2. Klona släpprepot till `$SCRATCH/ios-a/release`, skapa grenen `spike/ios-a`, committa flödet, pusha grenen och öppna en PR till `main` (`gh pr create`). Erik godkänner och mergar enligt beslutet i Task 1; först därefter går dispatch (prova först dispatch mot grenen och notera svaret: 404 bekräftar att filen måste finnas på `main`).
+- [ ] **Steg 2:** Ersätt `__SHA256_FRÅN_V2_MANIFESTET__` med v2-manifestets sha256 för `scripts/cc-gate.mjs` (hämtas med `jq -r '.files[] | select(.path=="scripts/cc-gate.mjs") | .sha256' resources/byggguide/v2/manifest.json`). Ersätt `-project App.xcodeproj` med `-project App.xcodeproj` (SPM) eller `-workspace App.xcworkspace` (CocoaPods) enligt Task 2. Klona släpprepot till `$SCRATCH/ios-a/release`, skapa grenen `spike/ios-a`, committa flödet, pusha grenen och öppna en PR till `main` (`gh pr create`). Erik godkänner och mergar enligt beslutet i Task 1; först därefter går dispatch (prova först dispatch mot grenen och notera svaret: 404 bekräftar att filen måste finnas på `main`).
 
 ## Task 4: Dispatch från Computercat och körningen (G1, G2, G7)
 
@@ -238,7 +245,7 @@ Skriv koden till `$SCRATCH/tinker/dispatch.php`, kör `sed "s/__SHA__/$SHA/" $SC
 
 ## Task 5: Städning och bilaga
 
-- [ ] **Steg 1:** Städa på sparade id: `[ "$(gh api repos/HumblebragAB/ccspike-ios --jq .id)" = "$REPO_ID" ] && gh api -X PATCH repos/HumblebragAB/ccspike-ios -F archived=true`; ta bort repot ur installationen (Chrome); öppna en PR som tar bort spikflödet från `main` i släpprepot (Erik mergar); radera grenen `spike/ios-a` bara om dess sha är den spiken pushade; `rm -rf "$KEEP" $SCRATCH/ios-a/local.xcarchive`. Hemligheterna `CC_APP_ID`/`CC_APP_PRIVATE_KEY` och Actions-behörigheten står kvar (det riktiga flödet behöver dem).
+- [ ] **Steg 1:** Städa på sparade id: `[ "$(gh api repos/HumblebragAB/ccspike-ios --jq .id)" = "$REPO_ID" ] && gh api -X PATCH repos/HumblebragAB/ccspike-ios -F archived=true`; ta bort repot ur installationen (Chrome); öppna en PR som tar bort spikflödet från `main` i släpprepot (Erik mergar); radera grenen `spike/ios-a` bara om dess sha är den spiken pushade; `rm -rf "$KEEP" $SCRATCH/ios-a/local.xcarchive`. Hemligheterna `CC_READER_APP_ID`/`CC_READER_PRIVATE_KEY` och Actions-behörigheten står kvar (det riktiga flödet behöver dem).
 - [ ] **Steg 2:** Ny bilaga `docs/superpowers/specs/bilagor/2026-10-15-github-actions-ios.md` med G1–G7: exakta statuskoder, fältnamn, tider, Xcode-version, Capacitor-version och pakethanterare, storlek, kostnad per körning, och vad som ändrar specen.
 - [ ] **Steg 3:** Commit i worktreen. Sedan: plan för spike B (Apple: nyckelns roll, profiler och certifikat via API, signering i jobb 2, TestFlight) när Erik lagt nycklarna i valvet, och därefter bygget av etapp 2.
 
