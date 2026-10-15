@@ -36,6 +36,10 @@
         <env name="GITHUB_APP_INSTALLATION_ID" value=""/>
         <env name="GITHUB_APP_PRIVATE_KEY_PATH" value=""/>
         <env name="GITHUB_OWNER" value=""/>
+        <env name="ASC_RELEASE_KEY_ID" value=""/>
+        <env name="ASC_RELEASE_ISSUER_ID" value=""/>
+        <env name="ASC_RELEASE_PRIVATE_KEY_PATH" value=""/>
+        <env name="ASC_RELEASE_CERTIFICATE_ID" value=""/>
         <env name="COOLIFY_URL" value=""/>
         <env name="COOLIFY_TOKEN" value=""/>
         <env name="COOLIFY_PROJECT_UUID" value=""/>
