@@ -2,6 +2,7 @@
 
 namespace App\Releases;
 
+use App\Jobs\AdvanceRelease;
 use App\Mcp\GameAccess;
 use App\Models\DemoBuild;
 use App\Models\Game;
@@ -41,7 +42,7 @@ final class ReleaseService
         }
 
         try {
-            return DB::transaction(function () use ($game, $user, $target, $stage, $commit, $preflight) {
+            $release = DB::transaction(function () use ($game, $user, $target, $stage, $commit, $preflight) {
                 // Spärr 4: spelets rad låses, så två samtidiga befordringar köas efter varandra.
                 // (SQLite i test ignorerar låset; det unika indexet är då det som håller.)
                 $locked = Game::query()->whereKey($game->getKey())->lockForUpdate()->firstOrFail();
@@ -95,6 +96,13 @@ final class ReleaseService
         } catch (UniqueConstraintViolationException) {
             throw new ReleaseRefused("A {$stage} release for {$target} is already pending; wait for it or ask Erik to cancel it.");
         }
+
+        // Efter commit: jobbet ska se raden, och inget HTTP sker i transaktionen.
+        if ($preflight !== null && $release->status === Release::REQUESTED) {
+            AdvanceRelease::dispatch($release->id);
+        }
+
+        return $release;
     }
 
     /** @throws ReleaseRefused */

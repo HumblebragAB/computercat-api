@@ -11,6 +11,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Tests\Support\AssertsNoHttpInTransaction;
 use Tests\Support\CreatesReleases;
 use Tests\Support\ProvisioningFakes as F;
@@ -27,6 +28,7 @@ class TestFlightPromoteTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Queue::fake();
         F::configure();
         $this->iosGuides('v3');
         $this->startHttpTransactionGuard();

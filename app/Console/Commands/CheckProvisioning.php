@@ -13,6 +13,7 @@ use App\Provisioning\DemoProbe;
 use App\Provisioning\ProvisioningConfig;
 use App\Provisioning\SafeMessage;
 use App\Releases\DemoBuildRecorder;
+use App\Releases\ReleaseCatalog;
 use App\Releases\SetupSteps;
 use App\Support\SlackAlert;
 use Illuminate\Console\Command;
@@ -124,6 +125,14 @@ class CheckProvisioning extends Command
             foreach ($stuck as $release) {
                 $this->deviations["release:{$release->uuid}:stuck"] = "Släppet {$release->uuid} ({$release->game->slug} {$release->target}/{$release->stage}) har stått i {$release->status} sedan {$release->updated_at}.";
             }
+
+            // Steg som Computercat bygger startas av AdvanceRelease; ett släpp kvar i requested betyder att jobbet tappats.
+            $startCutoff = now()->subMinutes((int) config('releases.start_stuck_minutes'));
+            $notStarted = Release::with('game')->where('status', Release::REQUESTED)
+                ->whereIn('stage', ReleaseCatalog::BUILT_BY_COMPUTERCAT)->where('updated_at', '<', $startCutoff)->orderBy('id')->get();
+            foreach ($notStarted as $release) {
+                $this->deviations["release:{$release->uuid}:not-started"] = "Släppet {$release->uuid} ({$release->game->slug} {$release->target}/{$release->stage}) har inte startat sedan {$release->updated_at}; kontrollera kön (AdvanceRelease).";
+            }
         });
 
         $this->guardReleases('engångssteg', function () {
@@ -144,6 +153,12 @@ class CheckProvisioning extends Command
                 $this->deviations["setup:{$game->slug}:{$target}"] = "Spelet {$game->slug} har haft öppna engångssteg för {$target} i över ".config('releases.setup_reminder_days').' dagar: '.$steps->pluck('key')->implode(', ').'.';
             }
         });
+
+        $this->guardReleases('fel i engångssteg', function () {
+            foreach (ReleaseSetupStep::with('game')->where('status', ReleaseSetupStep::OPEN)->whereNotNull('last_error')->orderBy('id')->get() as $step) {
+                $this->deviations["setup-error:{$step->game->slug}:{$step->key}"] = "Engångssteget {$step->key} för {$step->game->slug} föll senast: {$step->last_error}";
+            }
+        });
     }
 
     /** Ett fel i ett släppblock blir en avvikelse med bara exception-klassen, aldrig meddelandetexten. */
@@ -152,7 +167,7 @@ class CheckProvisioning extends Command
         try {
             $block();
         } catch (Throwable $e) {
-            $this->deviations['release:check'] = "Kunde inte kontrollera släpp ({$what}): ".get_class($e);
+            $this->deviations["release:check:{$what}"] = "Kunde inte kontrollera släpp ({$what}): ".get_class($e);
         }
     }
 

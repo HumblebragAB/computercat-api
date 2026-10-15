@@ -142,4 +142,41 @@ class CheckReleasesTest extends ProvisioningTestCase
             ->expectsOutputToContain($stuck->uuid)
             ->assertExitCode(1);
     }
+
+    public function test_testflight_release_stuck_in_requested_is_reported(): void
+    {
+        $game = $this->testFlightGame();
+        $release = $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::REQUESTED, 'build_number' => 1, 'marketing_version' => '1.0.0', 'build_guide' => 'v3']);
+        Release::whereKey($release->id)->update(['updated_at' => now()->subMinutes(31)]);
+
+        $this->artisan('computercat:check-provisioning', ['--dry-run' => true])
+            ->expectsOutputToContain("Släppet {$release->uuid} (kattsvep app_store/testflight) har inte startat")
+            ->assertExitCode(1);
+    }
+
+    public function test_testflight_release_just_requested_is_not_reported(): void
+    {
+        $game = $this->testFlightGame();
+        $release = $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::REQUESTED, 'build_number' => 1, 'marketing_version' => '1.0.0', 'build_guide' => 'v3']);
+        Release::whereKey($release->id)->update(['updated_at' => now()->subMinutes(29)]);
+
+        $this->artisan('computercat:check-provisioning', ['--dry-run' => true])->expectsOutput('0 avvikelse(r).')->assertExitCode(0);
+    }
+
+    public function test_setup_step_with_an_error_is_reported(): void
+    {
+        $game = $this->testFlightGame();
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')->update(['status' => 'open', 'last_error' => 'App Store Connect POST /v1/profiles returned 409']);
+
+        $this->artisan('computercat:check-provisioning', ['--dry-run' => true])->expectsOutputToContain('appstore_profile')->assertExitCode(1);
+    }
+
+    public function test_testflight_release_inside_its_phase_limit_is_not_reported(): void // R11
+    {
+        $game = $this->testFlightGame();
+        $release = $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::BUILDING, 'build_number' => 1, 'marketing_version' => '1.0.0', 'build_guide' => 'v3']);
+        Release::whereKey($release->id)->update(['updated_at' => now()->subMinutes(89)]);
+
+        $this->artisan('computercat:check-provisioning', ['--dry-run' => true])->expectsOutput('0 avvikelse(r).')->assertExitCode(0);
+    }
 }
