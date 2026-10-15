@@ -179,7 +179,7 @@ final class BuildGuide
     // Varje versions CLAUDE.md börjar med raden "Byggguide: **vN**." (v1, v2; kontraktet för v3).
     public static function versionFromClaudeMd(string $text): ?string
     {
-        return preg_match('/^Byggguide: \*\*(v[1-9][0-9]{0,2})\*\*/m', $text, $m) === 1 ? $m[1] : null;
+        return preg_match('/^Byggguide: \*\*(v[1-9][0-9]{0,2})\*\*\.(?:[ \t]|$)/m', $text, $m) === 1 ? $m[1] : null;
     }
 
     // Coolifys byggkommando för nya appar (spec delprojekt 3, "Coolify kör spärren", Eriks beslut

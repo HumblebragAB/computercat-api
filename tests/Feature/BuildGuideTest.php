@@ -443,4 +443,50 @@ class BuildGuideTest extends TestCase
         $this->assertNull(BuildGuide::versionFromClaudeMd("# CLAUDE.md\nByggguide: v3\n"));
         $this->assertNull(BuildGuide::versionFromClaudeMd("Text Byggguide: **v3**.\n"));
     }
+
+    private function withIosBlock(string $root, string $version, array $ios): void
+    {
+        $path = "{$root}/{$version}/manifest.json";
+        $manifest = json_decode(file_get_contents($path), true);
+        $manifest['ios'] = $ios;
+        file_put_contents($path, json_encode($manifest));
+    }
+
+    private const VALID_IOS = ['capacitor' => '8.5.3', 'package_manager' => 'spm', 'project' => 'ios/App/App.xcodeproj', 'scheme' => 'App'];
+
+    public function test_a_published_version_with_a_valid_ios_block_supports_ios(): void
+    {
+        $root = $this->tempGuide();
+        $this->assertFalse(BuildGuide::supportsIos('v2'));
+        $this->withIosBlock($root, 'v2', self::VALID_IOS);
+
+        $this->assertTrue(BuildGuide::isPublished('v2'));
+        $this->assertTrue(BuildGuide::supportsIos('v2'));
+    }
+
+    public function test_an_unpublished_version_with_a_valid_ios_block_does_not_support_ios(): void
+    {
+        $root = $this->unpublishedCopy('v99', 'v2');
+        $this->withIosBlock($root, 'v99', self::VALID_IOS);
+
+        $this->assertFalse(BuildGuide::isPublished('v99'));
+        $this->assertFalse(BuildGuide::supportsIos('v99'));
+    }
+
+    public function test_a_published_version_with_an_invalid_ios_block_does_not_support_ios(): void
+    {
+        $root = $this->tempGuide();
+        $this->withIosBlock($root, 'v2', array_replace(self::VALID_IOS, ['scheme' => 'Other']));
+
+        $this->assertFalse(BuildGuide::supportsIos('v2'));
+    }
+
+    public function test_the_claude_md_version_line_has_no_stray_tail(): void
+    {
+        $this->assertNull(BuildGuide::versionFromClaudeMd("Byggguide: **v3**x\n"));
+        $this->assertNull(BuildGuide::versionFromClaudeMd("Byggguide: **v3**.x\n"));
+        $this->assertNull(BuildGuide::versionFromClaudeMd("Byggguide: **v3**\n"));
+        $this->assertSame('v3', BuildGuide::versionFromClaudeMd("Byggguide: **v3**.\n"));
+        $this->assertSame('v3', BuildGuide::versionFromClaudeMd("# CLAUDE.md\nByggguide: **v3**. Resten av raden.\n"));
+    }
 }
