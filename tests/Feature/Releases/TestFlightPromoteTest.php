@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -208,6 +209,27 @@ class TestFlightPromoteTest extends TestCase
 
         $this->assertSame([8, 9], [$first->build_number, $second->build_number]);
         $this->assertSame(9, $this->game->fresh()->ios_build_number);
+    }
+
+    public function test_the_counter_never_falls_below_the_highest_build_number(): void // Invariant 2
+    {
+        $this->game->forceFill(['ios_build_number' => 3])->save();
+        $this->repo('1.2.0', tag: ['sha' => $this->sha('a')]);
+
+        $first = $this->promote();
+        $first->update(['status' => Release::SUCCEEDED]);
+        Http::swap(new HttpFactory); // nya fejkar går inte före de gamla
+        $this->repo('1.2.1', tag: ['sha' => $this->sha('a')]);
+        $second = $this->promote();
+        $second->update(['status' => Release::FAILED]);
+
+        Http::swap(new HttpFactory);
+        $this->repo('1.2.2', packageStatus: 502); // misslyckad befordran får inte flytta räknaren
+        $this->refused('Could not read the game repository');
+
+        $max = Release::where('game_id', $this->game->id)->max('build_number');
+        $this->assertSame([4, 5], [$first->build_number, $second->build_number]);
+        $this->assertSame($max, $this->game->fresh()->ios_build_number);
     }
 
     public function test_a_pending_testflight_release_is_refused_before_github(): void // spärr 4

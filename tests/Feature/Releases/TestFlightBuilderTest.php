@@ -362,8 +362,36 @@ class TestFlightBuilderTest extends TestCase
         $this->assertNull($this->advance());
 
         $this->assertSame(Release::SUCCEEDED, $this->fresh()->status);
+        $this->assertSame(['1.2.0', 5, 4711], [$this->fresh()->marketing_version, $this->fresh()->build_number, $this->fresh()->external['github_run_id']]);
         $this->assertSame('build-uuid-1', $this->fresh()->external['apple_build_id']);
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/relationships/builds') && $r->data() === ['data' => [['type' => 'builds', 'id' => 'build-uuid-1']]]);
+    }
+
+    public function test_full_path_from_requested_to_succeeded(): void // Invariant 3
+    {
+        $this->fake([
+            self::RELEASE_REPO.'/actions/runs/4711' => Http::response(F::githubRun(4711, 'completed', 'success', $this->release->uuid)),
+            A::API.'/v1/builds?*' => function (Request $r) {
+                return str_contains(urldecode($r->url()), 'filter[betaGroups]')
+                    ? Http::response(A::many())
+                    : Http::response(A::many(A::build('build-uuid-1', 5, 'VALID')));
+            },
+            A::API.'/v1/betaGroups/'.A::GROUP.'/relationships/builds' => Http::response('', 204),
+        ]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertSame(120, $this->advance());
+        $this->assertSame(Release::PROCESSING, $this->fresh()->status);
+        $this->assertNull($this->advance());
+
+        $release = $this->fresh();
+        $this->assertSame(Release::SUCCEEDED, $release->status);
+        $this->assertSame('1.2.0', $release->marketing_version);
+        $this->assertSame(5, $release->build_number);
+        $this->assertSame(4711, $release->external['github_run_id']);
+        $this->assertSame('build-uuid-1', $release->external['apple_build_id']);
+        $this->assertSame(str_repeat('9', 40), $release->external['workflow_sha']);
     }
 
     public function test_build_already_in_the_group_is_not_added_again(): void
