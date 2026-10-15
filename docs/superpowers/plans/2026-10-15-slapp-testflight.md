@@ -5068,6 +5068,9 @@ jobs:
         run: |
           ZIP="$RUNNER_TEMP/in/xcarchive.zip"
           if zipinfo -1 "$ZIP" | grep -qE '(^/|(^|/)\.\.(/|$))'; then echo "::error::arkivet har absoluta sökvägar eller .."; exit 1; fi
+          # Inga symlänkposter alls (en riktig Capacitor-arkivering har inga, verifierat lokalt 2026-10-15):
+          # en symlänk följd av en fil genom den kan annars skriva utanför katalogen under uppackningen.
+          if zipinfo "$ZIP" | grep -q '^l'; then echo "::error::arkivet innehåller symlänkar"; exit 1; fi
           ditto -x -k "$ZIP" "$RUNNER_TEMP/unpacked"
           [ "$(ls -A "$RUNNER_TEMP/unpacked")" = "App.xcarchive" ] || { echo "::error::arkivet ska bara innehålla App.xcarchive"; exit 1; }
           ARCH="$RUNNER_TEMP/unpacked/App.xcarchive"
@@ -5083,6 +5086,8 @@ jobs:
             GOT=$(/usr/libexec/PlistBuddy -c "Print :$KEY" "$APP/Info.plist" 2>/dev/null || echo saknas)
             [ "$GOT" = "$WANT" ] || { echo "::error::arkivets Info.plist: $KEY är $GOT, Computercat väntade $WANT"; exit 1; }
           done
+          # Skripten igen, efter uppackningen och före första hemligheten.
+          git diff --exit-code -- scripts || { echo "::error::scripts/ ändrades under uppackningen"; exit 1; }
           echo "ARCH=$ARCH" >> "$GITHUB_ENV"
       - name: Certifikat
         env:
