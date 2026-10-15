@@ -47,6 +47,7 @@ Nyckeln **ComputerCat Release** (team-nyckel, roll **App Manager**, Key ID `N2SC
 - `buildUploads` sker i sign-jobbet och Computercat läser bara `GET /v1/builds`.
 - Gruppen skapas med `hasAccessToAllBuilds: true` som i B9, men att Computercat ser bygget i gruppen via `filter[betaGroups]` kontrolleras i Task 10 och 12.
 - GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.
+- **cc-gate i byggjobbet är tidig återkoppling, inte en bindande kontroll.** Byggjobbet kör spelets kod med sudo, så den koden kan ändra `node`, `shasum` eller `cc-gate.mjs` innan steget körs, eller hoppa över kontrollen och ändå lämna ett lyckat steg. En grön `Bygg och säkerhetskontroll` visar att spelet klarar kontrollen när det inte motarbetar den, inte att bygget är granskat. Bindande är bara det som sker i sign-jobbet (egen VM, ingen spelkod): granskningen av arkivet och av `App.ipa` (bundle-id, version, byggnummer, exportdeklaration, bara `App.app`) innan nycklarna används. Samma sak gäller byggjobbets kontroller av version, bundle-id och exportdeklaration.
 
 
 ## GitHub REST som etapp 2 bygger på (docs.github.com, API 2022-11-28)
