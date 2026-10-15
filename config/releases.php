@@ -58,6 +58,10 @@ return [
         'dispatch_lookup_minutes' => 3,
     ],
 
+    // Svepet försöker avbryta körningen för ett fällt släpp så här många gånger (var femte minut,
+    // alltså ungefär en timme) när GitHub inte svarade när släppet fälldes; sedan larm.
+    'cancel_retries' => 12,
+
     'poll_seconds' => [
         'github' => 30,
         'apple' => 120,

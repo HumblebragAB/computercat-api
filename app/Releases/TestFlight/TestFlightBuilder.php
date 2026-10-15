@@ -75,15 +75,24 @@ final class TestFlightBuilder
         $message = $e instanceof SafeMessage || $e instanceof ReleaseRefused ? $e->getMessage() : "Internal error (ref {$ref}).";
         Log::error('TestFlight-släpp misslyckades', ['ref' => $ref, 'release' => $release->uuid, 'exception' => $e]);
 
-        $fresh = Release::with('game')->whereKey($release->getKey())->whereIn('status', [Release::REQUESTED, Release::BUILDING, Release::PROCESSING])->first();
+        // Under radlås och bara från en aktiv status: ett klart, fällt eller avbrutet släpp ändras aldrig.
+        $fresh = DB::transaction(function () use ($release, $message) {
+            $locked = Release::with('game')->whereKey($release->getKey())->lockForUpdate()->first();
+            if ($locked === null || ! in_array($locked->status, [Release::REQUESTED, Release::BUILDING, Release::PROCESSING], true)) {
+                return null;
+            }
+            $locked->update(['status' => Release::FAILED, 'last_error' => $message]);
+
+            return $locked;
+        });
         if ($fresh === null) {
             return;
         }
-        $fresh->update(['status' => Release::FAILED, 'last_error' => $message]);
 
         // R15: en körning som kan leva vidare avbryts, så att den inte laddar upp ett bygge för ett fällt släpp.
-        if (! ($e instanceof ReleaseFailed && $e->runFinished)) {
-            $this->cancelRunOf($fresh);
+        // Går det inte nu (GitHub svarar inte) försöker svepet igen (retryCancel).
+        if (! ($e instanceof ReleaseFailed && $e->runFinished) && ! $this->cancelRunOf($fresh)) {
+            $this->markCancelPending($fresh);
         }
 
         $this->slack->send(
@@ -91,6 +100,78 @@ final class TestFlightBuilder
             'TestFlight-släppet av `'.SlackAlert::escape($fresh->game->slug).'` version '.SlackAlert::escape((string) $fresh->marketing_version)
                 .' (bygge '.SlackAlert::escape((string) $fresh->build_number).') föll: '.SlackAlert::escape((string) $fresh->last_error)." (släpp {$fresh->uuid}, ref {$ref}).",
         );
+    }
+
+    /**
+     * Svepet (computercat:advance-releases) försöker avbryta körningen för ett fällt släpp där det inte
+     * gick när släppet fälldes. Högst releases.cancel_retries försök; sedan larm och inga fler försök.
+     */
+    public function retryCancel(Release $release): void
+    {
+        $external = $release->external ?? [];
+        if (! in_array($release->status, [Release::FAILED, Release::CANCELLED], true) || ($external['cancel_pending'] ?? false) !== true) {
+            return;
+        }
+
+        if ($this->cancelRunOf($release)) {
+            $this->updateExternal($release, fn (array $x) => array_merge(array_diff_key($x, ['cancel_pending' => 1]), ['cancel_confirmed_at' => now()->toIso8601String()]));
+
+            return;
+        }
+
+        $attempts = (int) ($external['cancel_attempts'] ?? 1) + 1;
+        if ($attempts < (int) config('releases.cancel_retries')) {
+            $this->updateExternal($release, fn (array $x) => array_merge($x, ['cancel_attempts' => $attempts]));
+
+            return;
+        }
+
+        $this->updateExternal($release, fn (array $x) => array_merge(array_diff_key($x, ['cancel_pending' => 1]), ['cancel_attempts' => $attempts, 'cancel_given_up_at' => now()->toIso8601String()]));
+        Log::error('GitHub-körningen för ett fällt släpp kunde inte avbrytas', ['release' => $release->uuid, 'attempts' => $attempts]);
+        $this->slack->send(
+            "release-cancel-given-up:{$release->uuid}",
+            'Körningen för det fällda TestFlight-släppet '.$release->uuid.' (`'.SlackAlert::escape((string) $release->game?->slug).'`) kunde inte avbrytas efter '.$attempts.' försök; avbryt den för hand i computercat-release under Actions.',
+        );
+    }
+
+    private function markCancelPending(Release $release): void
+    {
+        $this->updateExternal($release, fn (array $x) => array_merge($x, ['cancel_pending' => true, 'cancel_attempts' => 1]));
+        Log::warning('Körningen kunde inte avbrytas nu; svepet försöker igen', ['release' => $release->uuid]);
+    }
+
+    // Ändrar bara external, under radlås (status rörs inte).
+    private function updateExternal(Release $release, \Closure $change): void
+    {
+        DB::transaction(function () use ($release, $change) {
+            $locked = Release::whereKey($release->getKey())->lockForUpdate()->first();
+            $locked?->update(['external' => $change($locked->external ?? [])]);
+        });
+        $release->refresh();
+    }
+
+    // Tillfälliga fel: ingen anslutning, timeout, rate limit och 5xx. De fäller inte släppet i pollningen;
+    // fasgränsen gör det i stället (R11). Alla andra fel (4xx, oväntat svar) fäller direkt.
+    private static function isTransient(Throwable $e): bool
+    {
+        return $e instanceof ExternalApiException && ($e->status === 0 || $e->status >= 500 || in_array($e->status, [408, 429], true));
+    }
+
+    /**
+     * @param  bool  $overdue  fasgränsen är passerad
+     * @return int poll-intervallet om felet är tillfälligt och gränsen inte passerad
+     */
+    private function tolerate(Release $release, ExternalApiException $e, bool $overdue, string $reason, int $poll, bool $runFinished = false): int
+    {
+        if (! self::isTransient($e)) {
+            throw $e;
+        }
+        if ($overdue) {
+            throw new ReleaseFailed("{$reason}; the last error was: ".$e->getMessage(), runFinished: $runFinished);
+        }
+        Log::warning('Tillfälligt fel i släppets pollning; försöker igen', ['release' => $release->uuid, 'status' => $e->status, 'error' => $e->getMessage()]);
+
+        return $poll;
     }
 
     private function start(Release $release): ?int
@@ -218,7 +299,13 @@ final class TestFlightBuilder
     private function recoverDispatch(Release $release): int
     {
         $since = Carbon::parse($release->external['dispatch_requested_at']);
-        $run = $this->findRun($release);
+        try {
+            $run = $this->findRun($release);
+        } catch (ExternalApiException $e) {
+            $limit = (int) config('releases.timeouts.github_run_minutes');
+
+            return $this->tolerate($release, $e, $since->lt(now()->subMinutes($limit)), "The release run could not be looked up within {$limit} minutes", 15);
+        }
         if ($run !== null) {
             return $this->started($release, $run['id'], $run['html_url']) ? (int) config('releases.poll_seconds.github') : null;
         }
@@ -239,10 +326,9 @@ final class TestFlightBuilder
         ]);
         if (! $moved) {
             Log::warning('Körning startad för ett släpp som inte längre bygger; avbryts', ['release' => $release->uuid, 'run' => $runId]);
-            try {
-                $this->github->cancelWorkflowRun((string) config('releases.ios_workflow.repo'), $runId);
-            } catch (Throwable $e) {
-                Log::warning('Kunde inte avbryta GitHub-körningen', ['release' => $release->uuid, 'run' => $runId, 'error' => get_class($e)]);
+            $this->updateExternal($release, fn (array $x) => array_merge($x, ['github_run_id' => $runId]));
+            if (! $this->cancelRunOf($release)) {
+                $this->markCancelPending($release);
             }
 
             return false;
@@ -300,20 +386,32 @@ final class TestFlightBuilder
             throw new \LogicException('BUILDING-släpp med ogiltigt github_run_id.');
         }
         $repo = (string) config('releases.ios_workflow.repo');
-        $run = $this->github->workflowRun($repo, $runId);
+        $limit = (int) config('releases.timeouts.github_run_minutes');
+        $overdue = Carbon::parse($external['dispatched_at'])->lt(now()->subMinutes($limit));
+        $poll = (int) config('releases.poll_seconds.github');
+        $reason = "The GitHub run did not finish within {$limit} minutes as far as Computercat could read";
+        try {
+            $run = $this->github->workflowRun($repo, $runId);
+        } catch (ExternalApiException $e) {
+            return $this->tolerate($release, $e, $overdue, $reason, $poll);
+        }
 
         if ($run['status'] !== 'completed') {
-            $limit = (int) config('releases.timeouts.github_run_minutes');
-            if (Carbon::parse($external['dispatched_at'])->lt(now()->subMinutes($limit))) {
+            if ($overdue) {
                 $this->cancelRunOf($release);
                 throw new ReleaseFailed("The GitHub run did not finish within {$limit} minutes (status {$run['status']}) and was cancelled.", runFinished: true);
             }
 
-            return (int) config('releases.poll_seconds.github');
+            return $poll;
         }
 
         if ($run['conclusion'] !== 'success') {
-            $failed = collect($this->github->workflowRunJobs($repo, $runId))
+            try {
+                $jobs = $this->github->workflowRunJobs($repo, $runId);
+            } catch (ExternalApiException $e) {
+                return $this->tolerate($release, $e, $overdue, $reason, $poll, runFinished: true);
+            }
+            $failed = collect($jobs)
                 ->first(fn (array $job) => in_array($job['conclusion'], ['failure', 'timed_out', 'cancelled'], true));
             $where = $failed === null ? '' : " in job {$failed['name']}".($failed['failed_step'] === null ? '' : ", step \"{$failed['failed_step']}\"");
 
@@ -336,14 +434,21 @@ final class TestFlightBuilder
         $appId = $game->appStoreId('app_id') ?? throw new ReleaseFailed('The game has no App Store app id; ask Erik to check the setup steps.', runFinished: true);
         $groupId = $game->appStoreId('beta_group_id') ?? throw new ReleaseFailed('The game has no TestFlight group; ask Erik to run the setup steps in Filament.', runFinished: true);
 
-        $build = $this->asc->findBuild($appId, (string) $this->version($release), (int) $release->build_number);
+        $limit = (int) config('releases.timeouts.apple_processing_minutes');
+        $overdue = Carbon::parse($external['run_completed_at'])->lt(now()->subMinutes($limit));
+        $poll = (int) config('releases.poll_seconds.apple');
+        $version = (string) $this->version($release);
+        try {
+            $build = $this->asc->findBuild($appId, $version, (int) $release->build_number);
+        } catch (ExternalApiException $e) {
+            return $this->tolerate($release, $e, $overdue, "Apple did not finish processing build {$release->build_number} (version {$version}) within {$limit} minutes as far as Computercat could read", $poll, runFinished: true);
+        }
         if ($build === null || $build['state'] === 'PROCESSING') {
-            $limit = (int) config('releases.timeouts.apple_processing_minutes');
-            if (Carbon::parse($external['run_completed_at'])->lt(now()->subMinutes($limit))) {
-                throw new ReleaseFailed("Apple did not finish processing build {$release->build_number} (version {$release->marketing_version}) within {$limit} minutes.", runFinished: true);
+            if ($overdue) {
+                throw new ReleaseFailed("Apple did not finish processing build {$release->build_number} (version {$version}) within {$limit} minutes.", runFinished: true);
             }
 
-            return (int) config('releases.poll_seconds.apple');
+            return $poll;
         }
 
         if ($build['state'] !== 'VALID') {
@@ -351,8 +456,13 @@ final class TestFlightBuilder
         }
 
         // R7: gruppen har tillgång till alla byggen, men invarianten kontrolleras uttryckligen.
-        if (! $this->asc->buildIsInGroup($groupId, $build['id'])) {
-            $this->asc->addBuildToGroup($groupId, $build['id']);
+        // Ett tillfälligt fel här ger ett nytt försök: kontrollen före länkningen gör det upprepningsbart.
+        try {
+            if (! $this->asc->buildIsInGroup($groupId, $build['id'])) {
+                $this->asc->addBuildToGroup($groupId, $build['id']);
+            }
+        } catch (ExternalApiException $e) {
+            return $this->tolerate($release, $e, $overdue, "Build {$release->build_number} could not be added to the TestFlight group within {$limit} minutes", $poll, runFinished: true);
         }
 
         if (! $this->moveIf($release, Release::PROCESSING, Release::SUCCEEDED, fn () => [
@@ -381,8 +491,11 @@ final class TestFlightBuilder
         );
     }
 
-    // Avbryter släppets körning om den finns (känd eller hittad via run-name). Fel loggas; de får inte dölja orsaken.
-    private function cancelRunOf(Release $release): void
+    /**
+     * Avbryter släppets körning om den finns (känd eller hittad via run-name). Fel loggas; de får inte
+     * dölja orsaken. @return bool true = avbruten eller inget att avbryta; false = försök igen senare
+     */
+    private function cancelRunOf(Release $release): bool
     {
         $external = $release->external ?? [];
         try {
@@ -392,8 +505,12 @@ final class TestFlightBuilder
                 $this->github->cancelWorkflowRun((string) config('releases.ios_workflow.repo'), $runId);
                 Log::notice('GitHub-körning avbruten för fällt släpp', ['release' => $release->uuid, 'run' => $runId]);
             }
+
+            return true;
         } catch (Throwable $e) {
             Log::warning('Kunde inte avbryta GitHub-körningen', ['release' => $release->uuid, 'error' => get_class($e)]);
+
+            return false;
         }
     }
 }

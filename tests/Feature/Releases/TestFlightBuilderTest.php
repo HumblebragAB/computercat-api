@@ -6,12 +6,14 @@ use App\Models\Game;
 use App\Models\Release;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
+use App\Releases\TestFlight\ReleaseFailed;
 use App\Releases\TestFlight\TestFlightBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Tests\Support\AppStoreFakes as A;
 use Tests\Support\AssertsNoHttpInTransaction;
 use Tests\Support\CreatesReleases;
@@ -417,15 +419,16 @@ class TestFlightBuilderTest extends TestCase
         Http::assertSent(fn (Request $r) => $r->url() === F::SLACK);
     }
 
-    public function test_failure_text_is_redacted(): void // Review Focus 4
+    public function test_failure_text_is_redacted(): void // Review Focus 4; ett permanent fel (4xx) fäller direkt
     {
         $this->building();
-        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'bad token ghs_abcdefghijklmnopqrstuvwxyz0123456789'], 500)]);
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'bad token ghs_abcdefghijklmnopqrstuvwxyz0123456789'], 403)]);
 
         $this->advance();
 
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
         $this->assertStringNotContainsString('ghs_abcdefghijklmnopqrstuvwxyz0123456789', $this->fresh()->last_error);
-        $this->assertStringContainsString('returned 500', $this->fresh()->last_error);
+        $this->assertStringContainsString('returned 403', $this->fresh()->last_error);
         // R15: körningen kan leva vidare och avbryts.
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4711/cancel'));
     }
@@ -570,5 +573,154 @@ class TestFlightBuilderTest extends TestCase
         $this->assertNull($this->advance());
 
         $this->assertSame(Release::FAILED, $this->fresh()->status);
+    }
+
+    // Fix round 1: tillfälliga fel (0, 408, 429, 5xx) i pollningen fäller inte; fasgränsen ger felet.
+
+    public function test_github_5xx_blip_then_success_moves_on(): void
+    {
+        $this->building();
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::sequence()
+            ->push(['message' => 'Server Error'], 502)
+            ->push(F::githubRun(4711, 'completed', 'success', $this->release->uuid))]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertNull($this->fresh()->last_error);
+
+        $this->assertSame(120, $this->advance());
+        $this->assertSame(Release::PROCESSING, $this->fresh()->status);
+    }
+
+    public function test_github_429_is_tolerated(): void
+    {
+        $this->building();
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'rate limited'], 429)]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+    }
+
+    public function test_github_connection_failure_is_tolerated(): void
+    {
+        $this->building();
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => fn () => throw new ConnectionException('reset')]);
+
+        $this->assertSame(30, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+    }
+
+    public function test_persistent_github_5xx_until_the_limit_fails_with_the_reason(): void
+    {
+        $this->building(['dispatched_at' => now()->subMinutes(91)->toIso8601String()]);
+        $this->fake([self::RELEASE_REPO.'/actions/runs/4711' => Http::response(['message' => 'Server Error'], 502)]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+        $this->assertStringContainsString('within 90 minutes', $this->fresh()->last_error);
+        $this->assertStringContainsString('returned 502', $this->fresh()->last_error);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4711/cancel'));
+        Http::assertSent(fn (Request $r) => $r->url() === F::SLACK);
+    }
+
+    public function test_run_lookup_5xx_during_recovery_is_tolerated(): void
+    {
+        $this->dispatchPending(5);
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['message' => 'Server Error'], 503)]);
+
+        $this->assertSame(15, $this->advance());
+        $this->assertSame(Release::BUILDING, $this->fresh()->status);
+        $this->assertNull($this->fresh()->last_error);
+    }
+
+    public function test_apple_5xx_blip_then_valid_build_succeeds(): void
+    {
+        $this->processing();
+        $this->fake([A::API.'/v1/builds?*' => Http::sequence()
+            ->push(A::error(503, 'SERVICE_UNAVAILABLE', 'try later'), 503)
+            ->push(A::many(A::build('build-uuid-1', 5, 'VALID')))
+            ->push(A::many(A::build('build-uuid-1', 5, 'VALID')))]);
+
+        $this->assertSame(120, $this->advance());
+        $this->assertSame(Release::PROCESSING, $this->fresh()->status);
+
+        $this->assertNull($this->advance());
+        $this->assertSame(Release::SUCCEEDED, $this->fresh()->status);
+    }
+
+    public function test_persistent_apple_5xx_until_the_limit_fails_with_the_reason(): void
+    {
+        $this->processing(['run_completed_at' => now()->subMinutes(91)->toIso8601String()]);
+        $this->fake([A::API.'/v1/builds?*' => Http::response(A::error(500, 'UNEXPECTED_ERROR', 'boom'), 500)]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertStringContainsString('within 90 minutes', $this->fresh()->last_error);
+        $this->assertStringContainsString('returned 500', $this->fresh()->last_error);
+    }
+
+    public function test_apple_4xx_fails_at_once(): void
+    {
+        $this->processing();
+        $this->fake([A::API.'/v1/builds?*' => Http::response(A::error(403, 'FORBIDDEN_ERROR', 'no access'), 403)]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertStringContainsString('returned 403', $this->fresh()->last_error);
+    }
+
+    public function test_cancel_that_fails_when_the_release_fails_is_retried_by_the_sweep(): void
+    {
+        Queue::fake();
+        $this->dispatchPending(1);
+        // Första uppslaget (när släppet fälls) svarar 502; nästa (svepet) hittar körningen.
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::sequence()
+            ->push(['message' => 'Server Error'], 502)
+            ->push(['total_count' => 1, 'workflow_runs' => [F::githubRun(4712, 'in_progress', null, $this->release->uuid)]])]);
+
+        app(TestFlightBuilder::class)->fail(Release::with('game')->find($this->release->id), new ReleaseFailed('Stopped.'));
+
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+        $this->assertTrue($this->fresh()->external['cancel_pending']);
+        Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/cancel'));
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/runs/4712/cancel'));
+        $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
+        $this->assertArrayHasKey('cancel_confirmed_at', $this->fresh()->external);
+        $this->assertSame(Release::FAILED, $this->fresh()->status);
+    }
+
+    public function test_cancel_retries_stop_and_alert_after_the_limit(): void
+    {
+        Queue::fake();
+        $this->release->update(['status' => Release::FAILED, 'last_error' => 'Stopped.', 'external' => [
+            'dispatch_requested_at' => now()->subMinutes(70)->toIso8601String(), 'cancel_pending' => true, 'cancel_attempts' => (int) config('releases.cancel_retries') - 1,
+        ]]);
+        $this->fake([self::RELEASE_REPO.'/actions/workflows/release-ios.yml/runs?*' => Http::response(['message' => 'Server Error'], 502)]);
+
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+
+        $this->assertArrayNotHasKey('cancel_pending', $this->fresh()->external);
+        $this->assertArrayHasKey('cancel_given_up_at', $this->fresh()->external);
+        Http::assertSent(fn (Request $r) => $r->url() === F::SLACK && str_contains($r['text'], 'kunde inte avbrytas'));
+
+        // Inga fler försök efter det.
+        $this->artisan('computercat:advance-releases')->assertSuccessful();
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_contains($pair[0]->url(), '/runs?')));
+    }
+
+    public function test_fail_on_a_finished_release_changes_nothing(): void
+    {
+        $this->release->update(['status' => Release::SUCCEEDED]);
+        $this->fake();
+
+        app(TestFlightBuilder::class)->fail(Release::with('game')->find($this->release->id), new ReleaseFailed('late'));
+
+        $this->assertSame(Release::SUCCEEDED, $this->fresh()->status);
+        $this->assertNull($this->fresh()->last_error);
+        Http::assertNothingSent();
     }
 }
