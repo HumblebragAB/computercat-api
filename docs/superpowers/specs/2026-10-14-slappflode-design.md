@@ -103,6 +103,23 @@ Erik valde 1, kombinerat med 3 för Android. Resten av Del 2 beskriver det. Om s
 - **Jobb 2 (med hemligheter):** checkar inte ut spelrepot. Hämtar artefakten, signerar och laddar upp med verktyg som ligger i släpprepot (fastlane/Gradle-konfiguration där), och skriver resultatet (byggnummer, versionskod) i jobbets utdata.
 - **Spelrepot** behöver bara Capacitor-projekten (`ios/`, `android/`) från byggguiden. Inga flödesfiler för släpp och inga hemligheter.
 
+### Versionsflöde: "Skicka till TestFlight" (Eriks beslut 2026-10-15)
+
+Ingen app byggs vid en vanlig push. En push till `main` bygger bara webb-Demo i Coolify, där spelet testas i webbläsaren. En app byggs bara när en ny version släpps:
+
+1. Spelets Claude höjer `version` i `package.json` (enda stället versionen sätts; följer `MAJOR.MINOR.PATCH`), kör `npm run check`, committar och pushar till `main`.
+2. När Demo-bygget för commiten är grönt anropar spelets Claude `promote_release` med målet TestFlight och commiten.
+3. Computercat nekar om versionen inte är högre än den senast släppta till målet (svaret säger exakt vad som ska höjas), sätter taggen `v<version>` på commiten i spelrepot, väljer nästa byggnummer för appen (stigande, sparas i Computercat) och startar flödet i släpprepot med version och byggnummer.
+4. Status och nästa steg läses med `get_release_status`.
+
+Flödet står ordagrant i faktabanken (`process-slappflode`), i spelens `CLAUDE.md` (byggguide v3) och i `next`-texten från `get_release_status`, så att "Skicka till TestFlight" alltid betyder samma sak.
+
+### Spikresultat som ändrar Del 2 (2026-10-15)
+
+- Tre jobb i släpprepot: `fetch` (ubuntu, läsappen ComputerCat Release Reader, token bara för spelrepot), `build` (macOS 26 / Xcode 26, inga hemligheter, steg har sudo), `sign` (nycklarna, signering och uppladdning).
+- Uppladdning via App Store Connects `buildUploads`, inte altool. Dispatch med `return_run_details` ger körningens id direkt.
+- Appposten skapas manuellt per spel (API:t tillåter inte `POST /v1/apps`); bundle-id, profil, TestFlight-grupp och testare sköts via API. Detaljer: `bilagor/2026-10-15-github-actions-ios.md`.
+
 ### Hemligheter (alternativ 1)
 
 | Hemlighet (i släpprepot) | Innehåll |
