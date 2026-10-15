@@ -134,7 +134,7 @@ Originalen ligger i 1Password-valvet (Erik lägger in dem; Claude läser aldrig 
 
 ### Statusläsning
 
-Ett köat jobb (`AdvanceRelease`, samma mönster som `AdvanceProvisioningRun`) pollar: GitHub-körningen var 30:e sekund tills den är klar, sedan Apples bearbetning eller Plays spår var 2:a minut. Tidsgränser: GitHub-körning 60 min, Apples bearbetning 90 min, Coolify-bygge 30 min; därefter `failed` med orsak och Slack-larm. En körning som avbryts utanför Computercat (manuellt, slut på Actions-minuter) blir `failed` med körningens slutstatus som orsak.
+Ett köat jobb (`AdvanceRelease`, samma mönster som `AdvanceProvisioningRun`) pollar: GitHub-körningen var 30:e sekund tills den är klar, sedan Apples bearbetning eller Plays spår var 2:a minut. Tidsgränser: GitHub-körning 90 min, Apples bearbetning 90 min, Coolify-bygge 30 min; därefter `failed` med orsak och Slack-larm. En körning som avbryts utanför Computercat (manuellt, slut på Actions-minuter) blir `failed` med körningens slutstatus som orsak.
 
 TestFlight-gruppen skapas per app med `hasAccessToAllBuilds: true` (som i spike B9); när Apple satt `processingState` till `VALID` kontrollerar Computercat att bygget finns i gruppen och länkar det annars. GitHub-körningens gräns är 90 min (flödets jobb har sammanlagt 80 min). Testarna är användar-id i config; e-post hämtas från App Store Connect och loggas aldrig.
 
