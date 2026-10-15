@@ -32,11 +32,12 @@ class Release extends Model
     protected $fillable = [
         'uuid', 'game_id', 'target', 'stage', 'commit_sha', 'status', 'requested_by', 'approved_by',
         'approved_at', 'self_approved', 'external', 'last_error',
+        'marketing_version', 'build_number', 'build_guide',
     ];
 
     protected function casts(): array
     {
-        return ['approved_at' => 'datetime', 'self_approved' => 'boolean', 'external' => 'array'];
+        return ['approved_at' => 'datetime', 'self_approved' => 'boolean', 'external' => 'array', 'build_number' => 'integer'];
     }
 
     protected static function booted(): void

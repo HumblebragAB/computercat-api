@@ -34,7 +34,17 @@ class Game extends Model
             'is_listed' => 'boolean',
             'release_targets' => 'array',
             'releases_enabled' => 'boolean',
+            'ios_build_number' => 'integer',
+            'app_store_ids' => 'array',
         ];
+    }
+
+    /** Ett App Store Connect-id som Computercat sparat (bundle_resource_id, profile_id, app_id, app_name, beta_group_id). */
+    public function appStoreId(string $key): ?string
+    {
+        $value = ($this->app_store_ids ?? [])[$key] ?? null;
+
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     protected static function booted(): void

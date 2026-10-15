@@ -133,4 +133,23 @@ class ReleaseModelTest extends TestCase
             $this->assertFalse(ReleaseCatalog::isCommit($bad), var_export($bad, true));
         }
     }
+
+    public function test_build_number_is_unique_per_game(): void
+    {
+        $game = $this->releasableGame('kattsvep', ['app_store']);
+        $other = $this->releasableGame('tinker-isle', ['app_store']);
+        $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::FAILED, 'build_number' => 3]);
+        $this->release($other, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::FAILED, 'build_number' => 3]);
+
+        $this->expectException(UniqueConstraintViolationException::class);
+        $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::FAILED, 'build_number' => 3]);
+    }
+
+    public function test_two_games_cannot_share_a_bundle_id(): void
+    {
+        $this->releasableGame('ab-c')->forceFill(['bundle_id' => 'se.computercat.abc'])->save();
+
+        $this->expectException(UniqueConstraintViolationException::class);
+        $this->releasableGame('abc')->forceFill(['bundle_id' => 'se.computercat.abc'])->save();
+    }
 }
