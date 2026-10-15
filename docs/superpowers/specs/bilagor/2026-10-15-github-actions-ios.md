@@ -40,3 +40,10 @@ Nyckeln **ComputerCat Release** (team-nyckel, roll **App Manager**, Key ID `N2SC
 - **B8 export:** `ITSAppUsesNonExemptEncryption = false` i Info.plist ger `usesNonExemptEncryption: false` på bygget; ingen manuell exportfråga.
 - **B9 TestFlight:** bygget blir `processingState: VALID`. `POST /v1/betaGroups` (`isInternalGroup: true`, `hasAccessToAllBuilds: true`, relation `app`) och `POST /v1/betaTesters` (e-post för en användare i teamet, relation `betaGroups`) lägger bygget och testaren i gruppen "ComputerCat intern" utan manuellt steg. Interna testare måste vara användare i App Store Connect.
 - **Avtal:** App Store Connect visar att kontoinnehavaren måste godkänna det uppdaterade "Paid Applications Schedule" innan nya appar kan skickas in för granskning. TestFlight internt påverkades inte.
+
+## Etapp 2 del 1: vad koden bygger på
+
+- Dispatch med `return_run_details` (G1b) är huvudvägen; `run-name` är reserven (G2).
+- `buildUploads` sker i sign-jobbet och Computercat läser bara `GET /v1/builds`.
+- Gruppen skapas med `hasAccessToAllBuilds: true` som i B9, men att Computercat ser bygget i gruppen via `filter[betaGroups]` kontrolleras i Task 10 och 12.
+- GitHub-endpoints som inte prövats i spiken (git refs, contents med `ref`, runs/{id}, runs/{id}/jobs, runs/{id}/cancel, workflow runs-listan) dokumenteras i Task 2.

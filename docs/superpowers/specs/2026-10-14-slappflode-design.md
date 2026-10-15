@@ -64,19 +64,19 @@ Ny tabell `releases`:
 8. Produktionssteg kräver uttrycklig `commit_sha`; standardvalet (senaste commit med lyckat Demo-bygge) gäller bara teststeg.
 9. Brytare: `releases_enabled` per spel och globalt (konfig), som Erik kan slå av utan deploy. Avslagen brytare stoppar nya befordringar och nya byggstarter.
 5. Mål som inte finns i `release_targets` kan inte befordras.
-6. Ett spel med öppna engångssteg för målet kan inte befordras dit (se nedan).
+6. Ett spel med öppna engångssteg för målet kan inte befordras dit (se nedan). Ett engångssteg stoppar de steg det gäller (`SetupSteps::BLOCKS`); integritetsuppgifter och åldersgräns stoppar inte TestFlight.
 
 ### Engångssteg per spel och butik
 
 Tabell `release_setup_steps` (spel, mål, nyckel, status `open`/`done`, `done_by`, `done_at`, instruktion). Skapas när ett mål läggs till:
 
-- `app_store`: registrera bundle-id (automatiskt via API), skapa appen i App Store Connect med det bundle-id:t (Erik, manuellt), fyll i appens integritetsuppgifter och åldersgräns (Erik, manuellt; vilka som krävs före första inskick bekräftas i etapp 2).
+- `app_store`: registrera bundle-id och skapa App Store-profilen (automatiskt via API), skapa appen i App Store Connect med namn, bundle-id, SKU = slug och svenska (Erik, manuellt; Computercat ser själv när appen finns), skapa TestFlight-gruppen "ComputerCat intern" och lägg till de interna testarna (automatiskt), och integritetsuppgifter och åldersgräns (Erik; stoppar bara produktionssteget `app_store`).
 - `play_store`: skapa appen i Play Console med paketnamnet, fyll i innehållsklassning, dataskydd, målgrupp och butikstext, aktivera Play App Signing, och (om spiken bekräftar kravet) ladda upp första AAB manuellt.
 - `web`: Erik sätter den publika adressen.
 
 `request_live` (delprojekt 2) ersätts av `promote_release(target: web, stage: web_production)`: verktyget finns kvar som tunn väg in som svarar med hänvisning till `promote_release`, och migrationen sätter `release_targets = ["web"]` för spel som redan bett om Live, så att inget befintligt flöde slutar fungera.
 
-Bundle-id och paketnamn: `co.humblebrag.<slug-utan-bindestreck>` (formatet bekräftas i etapp 2; Apple tillåter bindestreck, Android inte, därför samma form för båda). Värdet sparas på spelet med unikt index; krockar två slugs (`ab-c` och `abc`) vägrar `set_release_targets` och Erik väljer ett annat id.
+Bundle-id: `se.computercat.<slug utan bindestreck>` (Eriks beslut 2026-10-15). Paketnamnet för Android beslutas i etapp 3. Värdet sparas på spelet (`games.bundle_id`) med unikt index; krockar två slugs (`ab-c` och `abc`) vägrar `set_release_targets`.
 
 ### `next` i varje svar
 
@@ -109,8 +109,10 @@ Ingen app byggs vid en vanlig push. En push till `main` bygger bara webb-Demo i 
 
 1. Spelets Claude höjer `version` i `package.json` (enda stället versionen sätts; följer `MAJOR.MINOR.PATCH`), kör `npm run check`, committar och pushar till `main`.
 2. När Demo-bygget för commiten är grönt anropar spelets Claude `promote_release` med målet TestFlight och commiten.
-3. Computercat nekar om versionen inte är högre än den senast släppta till målet (svaret säger exakt vad som ska höjas), sätter taggen `v<version>` på commiten i spelrepot, väljer nästa byggnummer för appen (stigande, sparas i Computercat) och startar flödet i släpprepot med version och byggnummer.
+3. Computercat nekar om versionen inte är högre än den senast släppta till målet (svaret säger exakt vad som ska höjas), sätter taggen `v<version>` på commiten i spelrepot, väljer nästa byggnummer för appen (stigande, sparas i Computercat) och startar flödet i släpprepot med version och byggnummer. Finns taggen `v<version>` redan på en annan commit nekas släppet också: samma commit kan försökas igen med samma version, en ny commit kräver en ny version. Taggen flyttas aldrig.
 4. Status och nästa steg läses med `get_release_status`.
+
+Indata till `release-ios.yml`: `game`, `commit_sha`, `release_uuid`, `build_number`, `marketing_version`, `bundle_id`, `profile_id` och `build_guide` (byggguideversionen ur spelets `CLAUDE.md` vid commiten, som väljer sha256 för `cc-gate.mjs`).
 
 Flödet står ordagrant i faktabanken (`process-slappflode`), i spelens `CLAUDE.md` (byggguide v3) och i `next`-texten från `get_release_status`, så att "Skicka till TestFlight" alltid betyder samma sak.
 
@@ -133,6 +135,8 @@ Originalen ligger i 1Password-valvet (Erik lägger in dem; Claude läser aldrig 
 ### Statusläsning
 
 Ett köat jobb (`AdvanceRelease`, samma mönster som `AdvanceProvisioningRun`) pollar: GitHub-körningen var 30:e sekund tills den är klar, sedan Apples bearbetning eller Plays spår var 2:a minut. Tidsgränser: GitHub-körning 60 min, Apples bearbetning 90 min, Coolify-bygge 30 min; därefter `failed` med orsak och Slack-larm. En körning som avbryts utanför Computercat (manuellt, slut på Actions-minuter) blir `failed` med körningens slutstatus som orsak.
+
+TestFlight-gruppen skapas per app med `hasAccessToAllBuilds: true` (som i spike B9); när Apple satt `processingState` till `VALID` kontrollerar Computercat att bygget finns i gruppen och länkar det annars. GitHub-körningens gräns är 90 min (flödets jobb har sammanlagt 80 min). Testarna är användar-id i config; e-post hämtas från App Store Connect och loggas aldrig.
 
 ### Publik webb
 
