@@ -225,6 +225,20 @@ describe('createAchievements: report', () => {
     expect(rb.sent).toBe(1);
   });
 
+  it('två report i samma tick: varje flushed får sin egen slug', async () => {
+    const { f, ach } = setup({
+      [`POST ${PATH}`]: [(req) => answer({ unlocked: (req.body as { slugs: string[] }).slugs.map(unlocked) })],
+    });
+    const fa = ach.report(['a']).flushed;
+    const fb = ach.report(['b']).flushed;
+    const [ra, rb] = await Promise.all([fa, fb]);
+    expect(bodies(f)).toEqual([['a'], ['b']]);
+    expect(ra.sent).toBe(1);
+    expect(ra.unlocked.map((u) => u.slug)).toEqual(['a']);
+    expect(rb.sent).toBe(1);
+    expect(rb.unlocked.map((u) => u.slug)).toEqual(['b']);
+  });
+
   it('ett fel element i unlocked tar bort omgången med skäl', async () => {
     const { ach } = setup({ [`POST ${PATH}`]: [answer({ unlocked: [unlocked('a'), { slug: 'b' }] })] });
     const r = await ach.report(['a', 'b']).flushed;

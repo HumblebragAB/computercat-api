@@ -109,11 +109,11 @@ export function createAchievements(deps: AchievementDeps) {
     return { unlocked: res.unlocked, unknown: list(res.unknown), rejected: list(res.rejected) };
   }
 
-  async function run(): Promise<AchievementFlushResult> {
+  async function run(own?: ReadonlySet<string>): Promise<AchievementFlushResult> {
     const result: AchievementFlushResult = { sent: 0, unlocked: [], unknown: [], rejected: [], dropped: [], remaining: 0 };
-    // Ögonblicksbild: bara det som låg i kön nu är den här körningens. Det som köas under körningen
-    // tar nästa kedjade körning (report kedjar alltid en egen), så resultatet når rätt anropare.
-    const mine = new Set(load());
+    // Bara det som är den här körningens skickas: report ger sina egna slugs, flush() en ögonblicksbild
+    // av kön vid start. Det som köas under körningen tar nästa kedjade körning, så resultatet når rätt anropare.
+    const mine = own ?? new Set(load());
     for (;;) {
       const batch = load()
         .filter((s) => mine.has(s))
@@ -151,8 +151,8 @@ export function createAchievements(deps: AchievementDeps) {
    * Körningar läggs efter varandra, så samma omgång skickas aldrig två gånger parallellt i en flik.
    * En körning skickar bara det som låg i kön när den startade; senare köade slugs tillhör nästa körning.
    */
-  function flush(): Promise<AchievementFlushResult> {
-    const p = chain.then(run);
+  function flush(own?: ReadonlySet<string>): Promise<AchievementFlushResult> {
+    const p = chain.then(() => run(own));
     chain = p.catch(() => undefined);
     return p;
   }
@@ -160,8 +160,8 @@ export function createAchievements(deps: AchievementDeps) {
   /**
    * Köa upplåsningar lokalt (utan dubbletter) och försök skicka direkt. Spara upplåsningen i spelets
    * egen sparning först, och rapportera hela listan vid varje start (servern låser upp en gång).
-   * `flushed` gäller körningen som hör till det här anropet; slugs köade av andra anrop under en
-   * pågående körning ingår inte i dess resultat.
+   * `flushed` gäller bara det här anropets egna slugs (tas synkront, så två report i samma tick får
+   * var sitt resultat); slugs köade av andra anrop ingår inte i dess resultat.
    */
   function report(slugs: readonly string[]): { queued: string[]; flushed: Promise<AchievementFlushResult> } {
     if (!Array.isArray(slugs)) throw new RangeError('report tar en lista med slugs');
@@ -170,14 +170,14 @@ export function createAchievements(deps: AchievementDeps) {
     if (!change((current) => [...current, ...queued.filter((s) => !current.includes(s))])) {
       throw new Error('Kunde inte spara upplåsningen lokalt (lagringen är full eller blockerad); den skickades inte.');
     }
-    return { queued, flushed: flush() };
+    return { queued, flushed: flush(new Set(queued)) };
   }
 
   return {
     list: () => read<AchievementDefinition>(base, isDefinition),
     mine: () => read<UnlockedAchievement>(`${base}/me`, isUnlocked),
     report,
-    flush,
+    flush: () => flush(),
     pending: () => load(),
   };
 }
