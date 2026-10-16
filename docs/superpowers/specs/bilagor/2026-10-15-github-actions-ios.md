@@ -106,3 +106,13 @@ Fortfarande obelagt:
 - Värdena för körningens `status` utöver completed/queued/in_progress; koden jämför bara mot `completed`, `success` och `failure`.
 - `steps[].conclusion` timed_out och cancelled (koden behandlar dem som misslyckade steg, men de är inte observerade).
 - `return_run_details` finns inte i referensen men är belagt i spike A G1b.
+
+## Byggguide v3: Capacitor och jsdom lokalt (2026-10-16)
+
+Spelens Claude kör i Linux-molnsessioner utan Xcode (Erik 2026-10-16). v2-grundkoden plus `@capacitor/core`/`@capacitor/ios` 8.5.3 (dependencies), `@capacitor/cli` 8.5.3 och jsdom 29.1.1 (devDependencies).
+
+- `npm run check` grön (20 testfiler, 171 tester med jsdom 29.1.1; `check-security: OK`, `cc-audit: OK`); `npm audit --omit=dev --audit-level=high` ren (0). Hela `npm audit` (med dev) visar 8 (5 high, 3 moderate), alla i devDependencies: braces via `eslint-config-next`, och uuid via `xcode` via `@capacitor/cli`. R4:s uppdelning håller alltså, men `@capacitor/cli` drar in en ny dev-sårbarhet.
+- `cap add ios --packagemanager SPM` på macOS: 0; utan `out/`: också 0, med `[warn] sync could not run--missing out directory.` (Capacitor stoppar inte, så kontrollen i `ios-setup` behövs). `PRODUCT_BUNDLE_IDENTIFIER` = appId på 2 rader; `Info.plist` med `$(MARKETING_VERSION)`/`$(CURRENT_PROJECT_VERSION)`, `CFBundleDisplayName` = appName, slutar med dict- och plist-sluttaggarna, utan exportdeklaration (läggs in av skriptet); `Package.swift` med `exact: "8.5.3"`; `ios/.gitignore` ignorerar `App/App/public` och `App/App/capacitor.config.json`. Ingen `Package.resolved` skapas av `cap add`.
+- Osignerad arkivering med Xcode 27.0: `** ARCHIVE SUCCEEDED **`; arkivets Info.plist: `se.computercat.test`, `0.1.0`, `3`, `false`.
+- Node 22.14.0 i Docker med `NODE_ENV=production` och `NPM_CONFIG_PRODUCTION=false`: `npm ci --ignore-scripts` 0, `EBADENGINE` 0, bygge 0 och `cc-gate.mjs` 0 (`check-security: OK`, `cc-audit: OK`). Samma på aarch64 och linux/amd64 (emulerad).
+- Linux-grinden: väg A (R15). `cap add ios` på Linux 0 (`[info] Writing Package.swift`, `[success] ios platform added!`), id på 2 rader och `exact: "8.5.3"`; amd64- och aarch64-utfallen är filidentiska, och mot Mac-skapat `ios/` skiljer bara exportdeklarationen och Xcodes SwiftPM-tillstånd. Det Linux-skapade `ios/` arkiverades oförändrat på macOS (bara exportdeklarationen och `cap sync`) med Xcode 27.0: `** ARCHIVE SUCCEEDED **`, `se.computercat.test`, `0.1.0`, `5`, `false`.
