@@ -44,8 +44,9 @@ const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
  * och försök senare, i samma ordning. Annars (4xx som gäller resultatet, eller ett oväntat fel som
  * inte är ApiError/NetworkError, t.ex. fel svarsform): posten kastas synligt. Den flyttas inte åt sidan,
  * eftersom ett fel som aldrig går över annars skulle blockera hela kön tills posten blir 24 h gammal.
+ * Delas med achievementkön (achievements.ts).
  */
-function dropReason(e: unknown): string | null {
+export function dropReason(e: unknown): string | null {
   if (e instanceof NetworkError) return null;
   if (e instanceof ApiError) {
     return e.status >= 400 && e.status < 500 && ![401, 408, 429].includes(e.status) ? `${e.status} ${e.message}` : null;

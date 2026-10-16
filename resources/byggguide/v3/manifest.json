@@ -199,6 +199,18 @@
             "bytes": 485
         },
         {
+            "path": "src/lib/computercat/achievements.test.ts",
+            "source": "files/src/lib/computercat/achievements.test.ts",
+            "sha256": "d1eb3b402ffaa0d631d757d6953a0e12ddf3570d1792f1a1ae9b5b445459059c",
+            "bytes": 9791
+        },
+        {
+            "path": "src/lib/computercat/achievements.ts",
+            "source": "files/src/lib/computercat/achievements.ts",
+            "sha256": "a88c1ef2b5095dc2cd41defb3607b703a8fae74ba105ad80cd94e97455f556f5",
+            "bytes": 7001
+        },
+        {
             "path": "src/lib/computercat/auth.test.ts",
             "source": "files/src/lib/computercat/auth.test.ts",
             "sha256": "39285c516c338a83ee72ba34dd0c8846d63e3c523e662c8c70e260b6b81a8374",
@@ -315,8 +327,8 @@
         {
             "path": "src/lib/computercat/queue.ts",
             "source": "files/src/lib/computercat/queue.ts",
-            "sha256": "915e81d35ebd8859de55b9e45dcef372ae3c7b2ff2e84889309116d892c18669",
-            "bytes": 5434
+            "sha256": "bb7c694e39811414b198683f71b2df23c492bafb7db0f63fe78894a3fbf720c4",
+            "bytes": 5489
         },
         {
             "path": "src/lib/computercat/refresh.test.ts",
