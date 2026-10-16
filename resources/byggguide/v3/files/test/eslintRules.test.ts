@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { ESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
 
-// Byggguide v2: säkerhetsreglerna i eslint.config.mjs (spec delprojekt 3, del 3, punkt 3).
+// Byggguide v3: säkerhetsreglerna i eslint.config.mjs (spec delprojekt 3, del 3, punkt 3).
 // Koden lintas som om den låg i en befintlig komponent, med projektets riktiga konfiguration.
 const FILE = resolve(process.cwd(), 'src/components/ConfigBanner.tsx');
 const eslint = new ESLint({ cwd: process.cwd() });
@@ -32,6 +32,22 @@ describe('säkerhetsreglerna i eslint', () => {
     ['process[env] med hakparentes', "export const k = process['env'].NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
     ['tilldelning av dangerouslySetInnerHTML', 'export function f(el: HTMLElement, h: string) {\n  (el as unknown as { dangerouslySetInnerHTML: unknown }).dangerouslySetInnerHTML = { __html: h };\n}\n', 'no-restricted-syntax'],
     ['dangerouslySetInnerHTML med hakparentes', "export const x = (o: Record<string, unknown>) => o['dangerouslySetInnerHTML'];\n", 'no-restricted-syntax'],
+    // v3 (faktabanksspecen, "Underlag till byggguide v3"): omvägar som v2 släppte igenom.
+    ['destrukturering av env ur process', 'const { env } = process;\nexport const k = env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ["self['process'].env", "export const k = self['process'].env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
+    ["globalThis['process'].env", "export const k = globalThis['process'].env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
+    ['alias av process', 'const p = process;\nexport const k = p.env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['process ur globalThis med destrukturering', 'const { process: p } = globalThis;\nexport const k = p.env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ['process som argument', 'const read = (o: { env: Record<string, string | undefined> }) => o.env.NEXT_PUBLIC_STRIPE_KEY;\nexport const k = read(process);\n', 'no-restricted-syntax'],
+    ['globalThis.process.env.NODE_ENV', 'export const n = globalThis.process.env.NODE_ENV;\n', 'no-restricted-syntax'],
+    ['self[`process`] med mall-literal', 'export const k = self[`process`].env.NEXT_PUBLIC_STRIPE_KEY;\n', 'no-restricted-syntax'],
+    ["import { env } from 'process'", "import { env } from 'process';\nexport const k = env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-imports'],
+    ["import { env } from 'node:process'", "import { env } from 'node:process';\nexport const k = env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-imports'],
+    ["import * as p from 'process'", "import * as p from 'process';\nexport const k = p.env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-imports'],
+    ["import p from 'node:process'", "import p from 'node:process';\nexport const k = p.env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-imports'],
+    ["require('process')", "export const k = require('process').env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
+    ["require('node:process')", "export const k = require('node:process').env.NEXT_PUBLIC_STRIPE_KEY;\n", 'no-restricted-syntax'],
+    ["import('node:process')", "export const k = import('node:process').then((m) => m.env.NEXT_PUBLIC_STRIPE_KEY);\n", 'no-restricted-syntax'],
   ])('fäller %s', async (_name, code, rule) => {
     const rules = await rulesFor(code);
     expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
@@ -54,5 +70,14 @@ describe('säkerhetsreglerna i eslint', () => {
     for (const rule of ['no-restricted-syntax', 'no-eval', 'no-new-func', 'no-implied-eval']) {
       expect(rules).not.toContain(rule);
     }
+  }, 30_000);
+
+  it('testfiler får läsa process.cwd() (de bakas aldrig in i out/)', async () => {
+    const [result] = await eslint.lintText("import { resolve } from 'node:path';\nexport const root = resolve(process.cwd(), 'src');\n", {
+      filePath: resolve(process.cwd(), 'src/lib/computercat/config.test.ts'),
+    });
+    const rules = result.messages.map((m) => m.ruleId ?? `parse: ${m.message}`);
+    expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
+    expect(rules).not.toContain('no-restricted-syntax');
   }, 30_000);
 });
