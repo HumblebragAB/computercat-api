@@ -34,7 +34,7 @@ const DANGEROUS_HTML_MEMBER = {
 // ingen egenskap eller destrukturering får heta process. Stänger const { env } = process,
 // const p = process, self['process'], globalThis.process och { process: p } = globalThis.
 const PROCESS_MESSAGE =
-  'process får bara användas som process.env.NODE_ENV, process.env.NEXT_PUBLIC_COMPUTERCAT_GAME eller process.env.NEXT_PUBLIC_COMPUTERCAT_URL i spelets kod (byggguide v3). Inga alias, ingen destrukturering och inga omvägar via globalThis, self eller window.';
+  'process får bara användas som process.env.NODE_ENV, process.env.NEXT_PUBLIC_COMPUTERCAT_GAME eller process.env.NEXT_PUBLIC_COMPUTERCAT_URL i spelets kod (byggguide v3). Inga alias, ingen destrukturering och inga omvägar via globalThis, self eller window. Inga egenskaper, metoder eller fält får heller heta process: döp om dem (till exempel run eller step).';
 const PROCESS_REFERENCE = {
   selector:
     "Identifier[name='process']:not(MemberExpression[computed=false][property.name='env'] > .object):not(MemberExpression[computed=false] > .property):not(Property[shorthand=false] > .key)",
@@ -68,18 +68,21 @@ export default defineConfig([
       'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV],
     },
   },
-  // Spelets källkod (det som bakas in i out/). Ett senare block ersätter regelns hela
+  // Spelets kod, var den än ligger i repot (src/, men också lib/, app/ och annat i roten): allt
+  // som importeras av sidorna bakas in i out/. Undantag är guidens skript, tester och konfigfiler,
+  // som körs i Node vid bygget och aldrig bakas in. Ett senare block ersätter regelns hela
   // värde för sina filer, därför upprepas de tre första väljarna här.
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+    ignores: ['scripts/**', 'test/**', '**/*.config.{ts,mjs,js,cjs}'],
     rules: {
       'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV, ENV_OBJECT],
     },
   },
   // Utom testfiler (de läser process.cwd() och bakas aldrig in): process bara som process.env.
   {
-    files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/**/*.test.{ts,tsx}'],
+    files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+    ignores: ['scripts/**', 'test/**', '**/*.config.{ts,mjs,js,cjs}', '**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV, ENV_OBJECT, PROCESS_REFERENCE, PROCESS_PROPERTY, PROCESS_MODULE_CALL],
       'no-restricted-imports': PROCESS_IMPORTS,

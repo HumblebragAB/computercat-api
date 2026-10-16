@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
 const FILE = resolve(process.cwd(), 'src/components/ConfigBanner.tsx');
 const eslint = new ESLint({ cwd: process.cwd() });
 
-async function rulesFor(code: string): Promise<string[]> {
-  const [result] = await eslint.lintText(code, { filePath: FILE });
+async function rulesFor(code: string, file: string = FILE): Promise<string[]> {
+  const [result] = await eslint.lintText(code, { filePath: file });
   return result.messages.map((m) => m.ruleId ?? `parse: ${m.message}`);
 }
 
@@ -77,6 +77,36 @@ describe('säkerhetsreglerna i eslint', () => {
       filePath: resolve(process.cwd(), 'src/lib/computercat/config.test.ts'),
     });
     const rules = result.messages.map((m) => m.ruleId ?? `parse: ${m.message}`);
+    expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
+    expect(rules).not.toContain('no-restricted-syntax');
+  }, 30_000);
+
+  // Spelets kod gäller var den än ligger i repot, inte bara under src/.
+  it.each([
+    ['process.env.SECRET_KEY i lib/x.ts i roten', 'lib/x.ts', 'export const k = process.env.SECRET_KEY;\n'],
+    ['process.env.SECRET_KEY i app/page.tsx i roten', 'app/page.tsx', 'export const k = process.env.SECRET_KEY;\n'],
+    ['const p = process i lib/x.ts i roten', 'lib/x.ts', 'const p = process;\nexport const k = p.env.SECRET_KEY;\n'],
+  ])('fäller %s', async (_name, file, code) => {
+    const rules = await rulesFor(code, resolve(process.cwd(), file));
+    expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
+    expect(rules).toContain('no-restricted-syntax');
+  }, 30_000);
+
+  it('guidens skript körs i Node vid bygget och får läsa process.env (och parsas)', async () => {
+    const rules = await rulesFor('export const h = process.env.HOME;\n', resolve(process.cwd(), 'scripts/foo.mjs'));
+    expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
+    expect(rules).not.toContain('no-restricted-syntax');
+  }, 30_000);
+
+  it('ett objektfält som heter process (shorthand=false-nyckel) fälls inte', async () => {
+    const rules = await rulesFor('export const handlers = { process: () => 1 };\n', resolve(process.cwd(), 'src/lib/x.ts'));
+    expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
+    expect(rules).not.toContain('no-restricted-syntax');
+  }, 30_000);
+
+  it('src/app/page.tsx får läsa de två tillåtna variablerna', async () => {
+    const code = 'export const g = process.env.NEXT_PUBLIC_COMPUTERCAT_GAME;\nexport const n = process.env.NODE_ENV;\n';
+    const rules = await rulesFor(code, resolve(process.cwd(), 'src/app/page.tsx'));
     expect(rules.filter((r) => r.startsWith('parse:'))).toEqual([]);
     expect(rules).not.toContain('no-restricted-syntax');
   }, 30_000);
