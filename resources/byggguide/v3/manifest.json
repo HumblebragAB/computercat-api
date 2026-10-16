@@ -153,8 +153,8 @@
         {
             "path": "src/components/BackgroundSync.tsx",
             "source": "files/src/components/BackgroundSync.tsx",
-            "sha256": "5d26fff2311ba204f37304b3484c604bb535a672b9366686ed222d1090c68c72",
-            "bytes": 546
+            "sha256": "005641c53f7ff7a76eb99726b2aa22132d8a05f2f9af68a988b824db8e21c0c7",
+            "bytes": 560
         },
         {
             "path": "src/components/ClickGame.tsx",
@@ -285,14 +285,14 @@
         {
             "path": "src/lib/computercat/index.test.ts",
             "source": "files/src/lib/computercat/index.test.ts",
-            "sha256": "d15b334097f464b869e7c37cc8d1414cdbc07a86ba24c147b241fca83b53a9e8",
-            "bytes": 2058
+            "sha256": "159f9a9c70798f3390ab58205293830b1a5acea01d9b65de94bec0d4cb059896",
+            "bytes": 5437
         },
         {
             "path": "src/lib/computercat/index.ts",
             "source": "files/src/lib/computercat/index.ts",
-            "sha256": "ab937307a00f38b54c69bb9ec520c0fb215ae89712331add6f0e5e4803662aab",
-            "bytes": 2834
+            "sha256": "7b0ed7991f2f6290b26d9589a58076c79ad42f745fea2126378784a73d2867c7",
+            "bytes": 4911
         },
         {
             "path": "src/lib/computercat/leaderboards.test.ts",

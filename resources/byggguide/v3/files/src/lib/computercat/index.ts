@@ -2,7 +2,8 @@ import { createAuth } from './auth';
 import { readConfig, type ComputercatConfig } from './config';
 import type { FetchLike } from './http';
 import { createLeaderboards } from './leaderboards';
-import { createScoreQueue } from './queue';
+import { createAchievements, type AchievementFlushResult } from './achievements';
+import { createScoreQueue, type FlushResult } from './queue';
 import { createSaves } from './saves';
 import { browserStorage, type KeyValueStore } from './storage';
 
@@ -15,6 +16,12 @@ export type { Session } from './auth';
 export type { LeaderboardEntry, LeaderboardPage, MyRank } from './leaderboards';
 export type { QueuedScore, FlushResult } from './queue';
 export type { CloudSave, PutResult } from './saves';
+
+export { assertAchievementSlug, MAX_ACHIEVEMENT_SLUG, ACHIEVEMENT_BATCH, ACHIEVEMENT_SLUG } from './achievements';
+export type { AchievementDefinition, UnlockedAchievement, DroppedAchievement, AchievementFlushResult } from './achievements';
+
+/** Vad en tömning av båda köerna gav (BackgroundSync, onFlushed). */
+export type FlushAllResult = { scores: FlushResult; achievements: AchievementFlushResult };
 
 export type ComputercatOptions = {
   config: ComputercatConfig;
@@ -33,6 +40,40 @@ export function createComputercat(opts: ComputercatOptions) {
   const leaderboards = createLeaderboards(game, auth.authed);
   const saves = createSaves(game, auth.authed);
   const queue = createScoreQueue({ storage, game, submit: leaderboards.submit, now: opts.now });
+  const achievements = createAchievements({ storage, game, authed: auth.authed });
+  const listeners = new Set<(r: FlushAllResult) => void>();
+
+  /**
+   * Resultatkön först, sedan achievementkön, var och en i eget try: kastar den ena töms den andra ändå.
+   * Kastade någon avvisas flushAll efteråt med det första felet; lyssnarna får bara hela resultat.
+   */
+  async function flushAll(): Promise<FlushAllResult> {
+    const failures: unknown[] = [];
+    let scores: FlushResult | null = null;
+    let achieved: AchievementFlushResult | null = null;
+    try {
+      scores = await queue.flush();
+    } catch (e) {
+      console.error('[computercat] resultatkön kunde inte tömmas', e);
+      failures.push(e);
+    }
+    try {
+      achieved = await achievements.flush();
+    } catch (e) {
+      console.error('[computercat] achievementkön kunde inte tömmas', e);
+      failures.push(e);
+    }
+    if (failures.length > 0 || scores === null || achieved === null) throw failures[0];
+    const result: FlushAllResult = { scores, achievements: achieved };
+    for (const cb of [...listeners]) {
+      try {
+        cb(result);
+      } catch (e) {
+        console.error('[computercat] en onFlushed-lyssnare kastade', e);
+      }
+    }
+    return result;
+  }
 
   return {
     config: opts.config,
@@ -40,10 +81,19 @@ export function createComputercat(opts: ComputercatOptions) {
     leaderboards,
     saves,
     queue,
+    achievements,
     /** Lokalt först: köa resultatet och försök skicka direkt. `flushed` säger vad som hände. */
     recordScore(type: string, score: number, metadata?: Record<string, unknown>) {
       const item = queue.enqueue(type, score, metadata ?? null);
       return { item, flushed: queue.flush() };
+    },
+    flushAll,
+    /** Prenumerera på varje flushAll (också bakgrundens). Returnerar en funktion som avslutar prenumerationen. */
+    onFlushed(cb: (r: FlushAllResult) => void): () => void {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
     },
   };
 }

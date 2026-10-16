@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BASE, fakeFetch, json } from '../../../test/fakeFetch';
+import { BASE, fakeFetch, json, storedSession } from '../../../test/fakeFetch';
 import { memoryStorage } from './storage';
 
 afterEach(() => {
@@ -43,5 +43,71 @@ describe('computercat', () => {
     vi.stubGlobal('fetch', later);
     await cc.auth.getSession();
     expect(later).toHaveBeenCalledTimes(1);
+  });
+
+  it('flushAll tömmer resultatkön och achievementkön och meddelar onFlushed', async () => {
+    const { createComputercat } = await import('./index');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = fakeFetch({
+      'POST /games/kattsvep/leaderboards/daily-clicks': [
+        'network-error',
+        json(201, { data: { rank: 1, score: 5, metadata: null, submitted_at: 'x', user: { id: 7, display_name: 'Player-7' } } }),
+      ],
+      'POST /games/kattsvep/achievements': ['network-error', json(201, { unlocked: [], already_unlocked: 1, unknown: [], rejected: [] })],
+    });
+    const cc = createComputercat({ config: { game: 'kattsvep', baseUrl: BASE }, fetch: f.fetch, storage: storedSession('kattsvep') });
+    expect((await cc.recordScore('daily-clicks', 5).flushed).remaining).toBe(1);
+    expect((await cc.achievements.report(['first-log']).flushed).remaining).toBe(1);
+
+    const seen: unknown[] = [];
+    const stop = cc.onFlushed((r) => seen.push(r));
+    const result = await cc.flushAll();
+    expect(result.scores).toEqual({ sent: 1, dropped: [], remaining: 0 });
+    expect(result.achievements).toMatchObject({ sent: 1, dropped: [], remaining: 0 });
+    expect(seen).toEqual([result]);
+
+    stop();
+    await cc.flushAll();
+    expect(seen).toHaveLength(1);
+    expect(f.unmatched).toEqual([]);
+  });
+
+  it('flushAll med tomma köer gör inga anrop', async () => {
+    const { createComputercat } = await import('./index');
+    const f = fakeFetch({});
+    const cc = createComputercat({ config: { game: 'kattsvep', baseUrl: BASE }, fetch: f.fetch, storage: storedSession('kattsvep') });
+    const r = await cc.flushAll();
+    expect(r.scores).toEqual({ sent: 0, dropped: [], remaining: 0 });
+    expect(r.achievements.remaining).toBe(0);
+    expect(f.calls).toEqual([]);
+  });
+
+  it('kastar resultatkön töms achievementkön ändå, och flushAll avvisas med felet', async () => {
+    const { createComputercat } = await import('./index');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = fakeFetch({ 'POST /games/kattsvep/achievements': ['network-error', json(201, { unlocked: [], already_unlocked: 1, unknown: [], rejected: [] })] });
+    const cc = createComputercat({ config: { game: 'kattsvep', baseUrl: BASE }, fetch: f.fetch, storage: storedSession('kattsvep') });
+    expect((await cc.achievements.report(['first-log']).flushed).remaining).toBe(1);
+    vi.spyOn(cc.queue, 'flush').mockRejectedValue(new Error('trasig kö'));
+    const seen = vi.fn();
+    cc.onFlushed(seen);
+    await expect(cc.flushAll()).rejects.toThrow('trasig kö');
+    expect(cc.achievements.pending()).toEqual([]);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it('en lyssnare som kastar stoppar inte de andra', async () => {
+    const { createComputercat } = await import('./index');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cc = createComputercat({ config: { game: 'kattsvep', baseUrl: BASE }, fetch: fakeFetch({}).fetch, storage: memoryStorage() });
+    const second = vi.fn();
+    cc.onFlushed(() => {
+      throw new Error('trasig lyssnare');
+    });
+    cc.onFlushed(second);
+    await cc.flushAll();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalled();
   });
 });
