@@ -85,6 +85,7 @@ describe('säkerhetsreglerna i eslint', () => {
   it.each([
     ['process.env.SECRET_KEY i lib/x.ts i roten', 'lib/x.ts', 'export const k = process.env.SECRET_KEY;\n'],
     ['process.env.SECRET_KEY i app/page.tsx i roten', 'app/page.tsx', 'export const k = process.env.SECRET_KEY;\n'],
+    ['process.env.SECRET_KEY i src/game.config.ts (bara konfigfiler i roten undantas)', 'src/game.config.ts', 'export const k = process.env.SECRET_KEY;\n'],
     ['const p = process i lib/x.ts i roten', 'lib/x.ts', 'const p = process;\nexport const k = p.env.SECRET_KEY;\n'],
   ])('fäller %s', async (_name, file, code) => {
     const rules = await rulesFor(code, resolve(process.cwd(), file));

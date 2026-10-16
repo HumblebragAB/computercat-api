@@ -93,8 +93,8 @@
         {
             "path": "eslint.config.mjs",
             "source": "files/eslint.config.mjs",
-            "sha256": "cfff8ed463f8b9ac533a14f4a41710505a761de085ff77fc116bf3371a3a31b4",
-            "bytes": 5931
+            "sha256": "d32ef2606f185279fb04dd8522a56ac6246fe8af7218b98d9d8a07f8125133f1",
+            "bytes": 5925
         },
         {
             "path": "next.config.ts",
@@ -363,8 +363,8 @@
         {
             "path": "test/eslintRules.test.ts",
             "source": "files/test/eslintRules.test.ts",
-            "sha256": "d0a94ce14898a7b515749551b5927dcfefdcb4f200612b10eaffb2cb7d4898ce",
-            "bytes": 8718
+            "sha256": "d2f16970ca128cf67e0f3ac7c18efccf5811d87ba00a12a88d4dc152b30fed40",
+            "bytes": 8875
         },
         {
             "path": "test/fakeFetch.ts",

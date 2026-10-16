@@ -74,7 +74,7 @@ export default defineConfig([
   // värde för sina filer, därför upprepas de tre första väljarna här.
   {
     files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
-    ignores: ['scripts/**', 'test/**', '**/*.config.{ts,mjs,js,cjs}'],
+    ignores: ['scripts/**', 'test/**', '*.config.{ts,mjs,js,cjs}'],
     rules: {
       'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV, ENV_OBJECT],
     },
@@ -82,7 +82,7 @@ export default defineConfig([
   // Utom testfiler (de läser process.cwd() och bakas aldrig in): process bara som process.env.
   {
     files: ['**/*.{ts,tsx,js,jsx,mjs,cjs}'],
-    ignores: ['scripts/**', 'test/**', '**/*.config.{ts,mjs,js,cjs}', '**/*.test.{ts,tsx}'],
+    ignores: ['scripts/**', 'test/**', '*.config.{ts,mjs,js,cjs}', '**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': ['error', DANGEROUS_HTML, DANGEROUS_HTML_MEMBER, OTHER_PUBLIC_ENV, ENV_OBJECT, PROCESS_REFERENCE, PROCESS_PROPERTY, PROCESS_MODULE_CALL],
       'no-restricted-imports': PROCESS_IMPORTS,
