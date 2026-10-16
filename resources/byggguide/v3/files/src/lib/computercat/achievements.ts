@@ -50,7 +50,23 @@ export function assertAchievementSlug(slug: unknown): asserts slug is string {
 }
 
 const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []);
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isUnlocked = (d: unknown): d is UnlockedAchievement =>
+  isRecord(d) &&
+  isString(d.slug) &&
+  isString(d.name) &&
+  isString(d.description) &&
+  isString(d.icon) &&
+  (d.unlocked_at === null || isString(d.unlocked_at));
+const isDefinition = (d: unknown): d is AchievementDefinition =>
+  isRecord(d) &&
+  typeof d.id === 'number' &&
+  isString(d.slug) &&
+  isString(d.name) &&
+  isString(d.description) &&
+  isString(d.icon) &&
+  typeof d.is_secret === 'boolean' &&
+  typeof d.sort_order === 'number';
 
 export type AchievementDeps = { storage: KeyValueStore; game: string; authed: Authed };
 
@@ -72,29 +88,36 @@ export function createAchievements(deps: AchievementDeps) {
   };
   const change = (fn: (current: string[]) => string[]): boolean => writeJson(deps.storage, key, fn(load()));
 
-  async function read<T>(path: string, valid: (item: Record<string, unknown>) => boolean): Promise<T[]> {
+  async function read<T>(path: string, valid: (item: unknown) => item is T): Promise<T[]> {
     const res = await deps.authed<unknown>('GET', path);
-    if (!isRecord(res) || !Array.isArray(res.data) || !res.data.every((d) => isRecord(d) && valid(d))) {
+    if (!isRecord(res) || !Array.isArray(res.data) || !res.data.every(valid)) {
       throw new Error(`Oväntat svar från GET ${path}`);
     }
-    return res.data as T[];
+    return res.data;
   }
 
   async function submit(slugs: string[]) {
     const res = await deps.authed<unknown>('POST', base, { slugs });
-    if (!isRecord(res) || !Array.isArray(res.unlocked)) throw new Error(`Oväntat svar från POST ${base}`);
+    const bad = () => new Error(`Oväntat svar från POST ${base}`);
     // unknown och rejected saknas hos en server före ändringen: då räknas allt som skickat.
-    return {
-      unlocked: res.unlocked.filter(isRecord) as UnlockedAchievement[],
-      unknown: strings(res.unknown),
-      rejected: strings(res.rejected),
+    const list = (v: unknown): string[] => {
+      if (v === undefined) return [];
+      if (!Array.isArray(v) || !v.every(isString)) throw bad();
+      return v;
     };
+    if (!isRecord(res) || !Array.isArray(res.unlocked) || !res.unlocked.every(isUnlocked)) throw bad();
+    return { unlocked: res.unlocked, unknown: list(res.unknown), rejected: list(res.rejected) };
   }
 
   async function run(): Promise<AchievementFlushResult> {
     const result: AchievementFlushResult = { sent: 0, unlocked: [], unknown: [], rejected: [], dropped: [], remaining: 0 };
+    // Ögonblicksbild: bara det som låg i kön nu är den här körningens. Det som köas under körningen
+    // tar nästa kedjade körning (report kedjar alltid en egen), så resultatet når rätt anropare.
+    const mine = new Set(load());
     for (;;) {
-      const batch = load().slice(0, ACHIEVEMENT_BATCH);
+      const batch = load()
+        .filter((s) => mine.has(s))
+        .slice(0, ACHIEVEMENT_BATCH);
       if (batch.length === 0) break;
       const done = new Set(batch);
       const removeBatch = () => change((current) => current.filter((s) => !done.has(s)));
@@ -124,7 +147,10 @@ export function createAchievements(deps: AchievementDeps) {
     return result;
   }
 
-  /** Körningar läggs efter varandra, så samma omgång skickas aldrig två gånger parallellt i en flik. */
+  /**
+   * Körningar läggs efter varandra, så samma omgång skickas aldrig två gånger parallellt i en flik.
+   * En körning skickar bara det som låg i kön när den startade; senare köade slugs tillhör nästa körning.
+   */
   function flush(): Promise<AchievementFlushResult> {
     const p = chain.then(run);
     chain = p.catch(() => undefined);
@@ -134,6 +160,8 @@ export function createAchievements(deps: AchievementDeps) {
   /**
    * Köa upplåsningar lokalt (utan dubbletter) och försök skicka direkt. Spara upplåsningen i spelets
    * egen sparning först, och rapportera hela listan vid varje start (servern låser upp en gång).
+   * `flushed` gäller körningen som hör till det här anropet; slugs köade av andra anrop under en
+   * pågående körning ingår inte i dess resultat.
    */
   function report(slugs: readonly string[]): { queued: string[]; flushed: Promise<AchievementFlushResult> } {
     if (!Array.isArray(slugs)) throw new RangeError('report tar en lista med slugs');
@@ -146,8 +174,8 @@ export function createAchievements(deps: AchievementDeps) {
   }
 
   return {
-    list: () => read<AchievementDefinition>(base, (d) => typeof d.slug === 'string' && typeof d.name === 'string'),
-    mine: () => read<UnlockedAchievement>(`${base}/me`, (d) => typeof d.slug === 'string'),
+    list: () => read<AchievementDefinition>(base, isDefinition),
+    mine: () => read<UnlockedAchievement>(`${base}/me`, isUnlocked),
     report,
     flush,
     pending: () => load(),

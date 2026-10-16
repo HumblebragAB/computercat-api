@@ -50,6 +50,16 @@ describe('createAchievements: läsning', () => {
     await expect(ach.list()).rejects.toThrow(`Oväntat svar från GET ${PATH}`);
     await expect(ach.mine()).rejects.toThrow(`Oväntat svar från GET ${PATH}/me`);
   });
+  it('ett list-element där is_secret saknas ger fel', async () => {
+    const def = { id: 1, slug: 'a', name: 'A', description: 'd', icon: 'i', sort_order: 1 };
+    const { ach } = setup({ [`GET ${PATH}`]: [json(200, { data: [def] })] });
+    await expect(ach.list()).rejects.toThrow(`Oväntat svar från GET ${PATH}`);
+  });
+
+  it('ett mine-element med fel typ på unlocked_at ger fel', async () => {
+    const { ach } = setup({ [`GET ${PATH}/me`]: [json(200, { data: [{ ...unlocked('a'), unlocked_at: 5 }] })] });
+    await expect(ach.mine()).rejects.toThrow(`Oväntat svar från GET ${PATH}/me`);
+  });
 });
 
 describe('createAchievements: report', () => {
@@ -191,6 +201,42 @@ describe('createAchievements: report', () => {
     expect(authed).toHaveBeenCalledTimes(1);
     expect(ra.sent + rb.sent).toBe(1);
     expect(ach.pending()).toEqual([]);
+  });
+
+  it('en körning skickar bara det som låg i kön när den startade, så resultatet når rätt anropare', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const sent: string[][] = [];
+    const authed = vi.fn(async (_m: string, _p: string, body: { slugs: string[] }) => {
+      sent.push(body.slugs);
+      if (sent.length === 1) await gate;
+      return { unlocked: body.slugs.map(unlocked), already_unlocked: 0, unknown: [], rejected: [] };
+    }) as unknown as Authed;
+    const ach = createAchievements({ storage: memoryStorage(), game: GAME, authed });
+    const first = ach.report(['a']).flushed;
+    await vi.waitFor(() => expect(authed).toHaveBeenCalledTimes(1));
+    const second = ach.report(['b']).flushed;
+    release();
+    const [ra, rb] = await Promise.all([first, second]);
+    expect(sent).toEqual([['a'], ['b']]);
+    expect(ra.unlocked.map((u) => u.slug)).toEqual(['a']);
+    expect(ra.sent).toBe(1);
+    expect(rb.unlocked.map((u) => u.slug)).toEqual(['b']);
+    expect(rb.sent).toBe(1);
+  });
+
+  it('ett fel element i unlocked tar bort omgången med skäl', async () => {
+    const { ach } = setup({ [`POST ${PATH}`]: [answer({ unlocked: [unlocked('a'), { slug: 'b' }] })] });
+    const r = await ach.report(['a', 'b']).flushed;
+    expect(r.unlocked).toEqual([]);
+    expect(r.dropped.map((d) => d.slug)).toEqual(['a', 'b']);
+    expect(r.dropped[0].reason).toMatch(/^oväntat fel: Oväntat svar från POST /);
+  });
+
+  it('en icke-sträng i unknown eller rejected tar bort omgången med skäl', async () => {
+    const { ach } = setup({ [`POST ${PATH}`]: [answer({ unknown: ['x', 7] }), answer({ rejected: 'a' })] });
+    expect((await ach.report(['a']).flushed).dropped).toHaveLength(1);
+    expect((await ach.report(['b']).flushed).dropped).toHaveLength(1);
   });
 
   it('en tom kö gör inga anrop', async () => {
