@@ -2,6 +2,7 @@ import { createAuth } from './auth';
 import { readConfig, type ComputercatConfig } from './config';
 import type { FetchLike } from './http';
 import { createLeaderboards } from './leaderboards';
+import { createMatches } from './matches';
 import { createAchievements, type AchievementFlushResult } from './achievements';
 import { createScoreQueue, type FlushResult } from './queue';
 import { createSaves } from './saves';
@@ -19,6 +20,9 @@ export type { CloudSave, PutResult } from './saves';
 
 export { assertAchievementSlug, MAX_ACHIEVEMENT_SLUG, ACHIEVEMENT_BATCH, ACHIEVEMENT_SLUG } from './achievements';
 export type { AchievementDefinition, UnlockedAchievement, DroppedAchievement, AchievementFlushResult } from './achievements';
+
+export { MatchError, inviteUrl, readJoinToken } from './matches';
+export type { Matches, MatchSnapshot, MatchStatus, MatchPlayer, MatchEvent, ActiveMatch, Seat, WatchError, WatchHandlers, WatchOptions } from './matches';
 
 /** Vad en tömning av båda köerna gav (BackgroundSync, onFlushed). */
 export type FlushAllResult = { scores: FlushResult; achievements: AchievementFlushResult };
@@ -41,6 +45,7 @@ export function createComputercat(opts: ComputercatOptions) {
   const saves = createSaves(game, auth.authed);
   const queue = createScoreQueue({ storage, game, submit: leaderboards.submit, now: opts.now });
   const achievements = createAchievements({ storage, game, authed: auth.authed });
+  const matches = createMatches(game, { authed: auth.authed, authedMeta: auth.authedMeta });
   const listeners = new Set<(r: FlushAllResult) => void>();
 
   /**
@@ -82,6 +87,7 @@ export function createComputercat(opts: ComputercatOptions) {
     saves,
     queue,
     achievements,
+    matches,
     /** Lokalt först: köa resultatet och försök skicka direkt. `flushed` säger vad som hände. */
     recordScore(type: string, score: number, metadata?: Record<string, unknown>) {
       const item = queue.enqueue(type, score, metadata ?? null);

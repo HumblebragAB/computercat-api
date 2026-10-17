@@ -87,8 +87,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "f36b34f90e721f8972b009d9e58777372f0ce8904e83e1ce6a99c431622dd766",
-            "bytes": 19498
+            "sha256": "5af0e86fbeac84851c41c802a0c1a746fa406a0e8670dc31fa2afefa68edaedd",
+            "bytes": 23198
         },
         {
             "path": "eslint.config.mjs",
@@ -297,14 +297,14 @@
         {
             "path": "src/lib/computercat/index.test.ts",
             "source": "files/src/lib/computercat/index.test.ts",
-            "sha256": "159f9a9c70798f3390ab58205293830b1a5acea01d9b65de94bec0d4cb059896",
-            "bytes": 5437
+            "sha256": "fd9cf78a96d57983532db308a35cd388f54d408163ec658bb406a4e016ed04a6",
+            "bytes": 6815
         },
         {
             "path": "src/lib/computercat/index.ts",
             "source": "files/src/lib/computercat/index.ts",
-            "sha256": "7b0ed7991f2f6290b26d9589a58076c79ad42f745fea2126378784a73d2867c7",
-            "bytes": 4911
+            "sha256": "79983bcdbb14e974ea384f8288c39d274a73aa48d38f4edc1dae743b07b29e6e",
+            "bytes": 5282
         },
         {
             "path": "src/lib/computercat/leaderboards.test.ts",
@@ -321,14 +321,14 @@
         {
             "path": "src/lib/computercat/matches.test.ts",
             "source": "files/src/lib/computercat/matches.test.ts",
-            "sha256": "1ebfc5166e3dbac1568964c670f713c72554fb5d1391cbff9744485c1f22e9fb",
-            "bytes": 37464
+            "sha256": "78247b76740114cdfc6d97dd7983d314141cf102a326a365b454a4054d249b69",
+            "bytes": 40481
         },
         {
             "path": "src/lib/computercat/matches.ts",
             "source": "files/src/lib/computercat/matches.ts",
-            "sha256": "5d84a243b61c405e79f9c13cc1c782211268b214e15e6931a5df80ae75384485",
-            "bytes": 23765
+            "sha256": "d56c4496cde4b26965d140c1a71a22989176eb265f62e9314b3fce661e4e90a2",
+            "bytes": 24673
         },
         {
             "path": "src/lib/computercat/proof.test.ts",

@@ -97,6 +97,30 @@ describe('computercat', () => {
     expect(seen).not.toHaveBeenCalled();
   });
 
+  it('klienten har matches som går via spelarens session, och matchhjälparna exporteras', async () => {
+    const mod = await import('./index');
+    expect(typeof mod.inviteUrl).toBe('function');
+    expect(typeof mod.readJoinToken).toBe('function');
+    const view = {
+      id: 'm1', ruleset: 'reveal', status: 'waiting', version: 0, your_seat: 0,
+      players: [{ seat: 0, name: 'Anna', connected: true }], state: [], you: [], events: [],
+    };
+    const f = fakeFetch({
+      'POST /games/kattsvep/matches': [json(201, { match: view, join_token: 'tok' })],
+      'POST /games/kattsvep/matches/m1/actions': [json(409, { message: 'Matchen har ändrats.', code: 'stale', version: 1 })],
+      'GET /games/kattsvep/matches/m1': [json(200, { ...view, version: 1 })],
+    });
+    const cc = mod.createComputercat({ config: { game: 'kattsvep', baseUrl: BASE }, fetch: f.fetch, storage: storedSession('kattsvep') });
+    const { match, joinToken } = await cc.matches.create('reveal');
+    expect(joinToken).toBe('tok');
+    expect(match.state).toEqual({});
+    expect(f.calls[0].headers.Authorization).toMatch(/^Bearer /);
+    const err = await cc.matches.act(match, 'guess').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(mod.MatchError);
+    expect((err as InstanceType<typeof mod.MatchError>).snapshot?.version).toBe(1);
+    expect(f.unmatched).toEqual([]);
+  });
+
   it('en lyssnare som kastar stoppar inte de andra', async () => {
     const { createComputercat } = await import('./index');
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});

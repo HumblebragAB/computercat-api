@@ -67,6 +67,7 @@ Lint förbjuder `dangerouslySetInnerHTML`, `eval`, `new Function`, `setTimeout`/
 - Resultat: `recordScore(typ, score, metadata?)` köar lokalt och skickar i bakgrunden. Visa `flushed`-resultatet för spelaren; dölj aldrig fel och visa aldrig påhittad topplistedata.
 - Topplistor: `leaderboards.get(typ)` (aktuell period enligt servern, UTC), `leaderboards.me(typ)`.
 - Achievements: `achievements.report(slugs)`, `achievements.list()`, `achievements.mine()` (se "Achievements").
+- Matcher: `matches.create/join/act/watch/active/invite` för turbaserade tvåspelarmatcher (se "Matcher").
 - Sparningar: `saves.sync(nyckel, lokalt, merge)` hämtar, slår ihop och skickar med version.
 - Anti-cheat: `createProof(...)` i `metadata.proof` om spelet kräver bevis.
 - Bakgrunden: `BackgroundSync` (monterad i `src/app/layout.tsx`) anropar `flushAll()` vid start, vid "online" och varje minut; den tömmer resultatkön och achievementkön. Vill spelet visa vad bakgrunden skickade: `onFlushed(cb)` ger `{ scores, achievements }` efter varje `flushAll()` (inte efter `report()`s egen tömning) och returnerar en funktion som avslutar prenumerationen.
@@ -104,6 +105,66 @@ if (cc.ok) {
     );
   } catch (e) {
     show(describeError(e));
+  }
+}
+```
+
+## Matcher
+
+För spel där två spelare möts i en turbaserad match över nätet (servern äger reglerna och det dolda läget). `get_integration_guide` visar vilka regelverk (`ruleset`) spelet har; ett annat ger `ruleset_not_allowed`. Anropa aldrig matchvägarna direkt med `fetch`: gå alltid via `client.matches`, som sköter ETag, `version`, paus, backoff och fel.
+
+1. Skapa: `matches.create(ruleset, options?, namn?)` ger `{ match, joinToken }`. Visa `inviteUrl(joinToken, origin?)` som QR-kod och länk. I iOS-appen måste `origin` vara spelets publika webbadress (`https://…`); `capacitor://localhost` kastar.
+2. Gå med: läs `readJoinToken()` vid start (bara på webben; den tar bort token ur adressen) och anropa `matches.join(token, namn?)` om den gav en token.
+3. Rita alltid från `watch(id, { onChange, onError })`. `onChange` får varje ny version, oavsett vilket anrop som hämtade den; den kan upprepa en version som spelet redan fick från `act`, vilket är ofarligt. Spara `stop` och anropa den när spelaren lämnar matchen.
+4. Drag: `matches.act(snapshot, typ, payload?)` på den snapshot spelaren såg. `MatchError` med `code` `stale` betyder att matchen hann ändras: visa det nya läget (`e.snapshot`, eller nästa `onChange`) och låt spelaren göra om draget. Andra koder (`not_your_turn`, `out_of_range` …) visas för spelaren.
+5. `onError` ger `{ kind, error, terminal }`. Visa ett synligt läge vid varje `onError` (en banner om `terminal` är falskt, tillbaka till menyn om det är sant). Styr på `terminal`, inte på `kind`. `gone` (matchen finns inte, eller `abandoned`) är alltid terminal och ska ge ett meddelande. Det finns ingen `auth`: en utgången spelartoken ger en ny anonym spelare, och den gamla matchen svarar då `gone`.
+6. Efter omladdning: `matches.active()` ger spelarens öppna matcher. Väntar en match du skapade (`status` `waiting`, `yourSeat` 0): `matches.invite(id)` ger en ny `joinToken` för en ny QR-kod (den gamla länken slutar gälla). Bevaka sedan matchen med `watch`.
+7. Revansch: `matches.rematch(id)` när matchen är `finished`. Händelsen `rematch` ger ett sista `onChange` och stoppar bevakningen; byt till `watch(payload.match_id)`. `matches.leave(id)` lämnar matchen.
+
+```ts
+import { MatchError, describeError, getComputercat, inviteUrl, readJoinToken, type MatchSnapshot } from '@/lib/computercat';
+
+const cc = getComputercat();
+if (cc.ok) {
+  const matches = cc.client.matches;
+  let current: MatchSnapshot | null = null;
+  const follow = (id: string) =>
+    matches.watch(id, {
+      onChange: (s) => {
+        current = s;
+        hideBanner();
+        render(s);
+      },
+      onError: (e) => (e.terminal ? backToMenu(e.kind === 'gone' ? 'Matchen finns inte längre.' : describeError(e.error)) : showBanner(describeError(e.error))),
+    });
+
+  const token = readJoinToken();
+  if (token) {
+    matches.join(token).then((s) => follow(s.id), (e: unknown) => show(describeError(e)));
+  }
+
+  async function invite() {
+    try {
+      const { match, joinToken } = await matches.create('reveal');
+      showQr(inviteUrl(joinToken));
+      follow(match.id);
+    } catch (e) {
+      show(describeError(e));
+    }
+  }
+
+  async function move(payload: Record<string, unknown>) {
+    if (!current) return;
+    try {
+      render(await matches.act(current, 'guess', payload));
+    } catch (e) {
+      if (e instanceof MatchError && e.code === 'stale') {
+        if (e.snapshot) render(e.snapshot);
+        show('Matchen hann ändras. Gör om draget.');
+      } else {
+        show(describeError(e));
+      }
+    }
   }
 }
 ```
