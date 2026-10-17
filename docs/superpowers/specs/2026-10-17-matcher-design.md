@@ -89,7 +89,7 @@ Alla under `/games/{game}/matches`, med `auth:sanctum`, `TrackLastSeen`, `Resolv
 - `waiting` utan motspelare i 15 minuter → `abandoned`.
 - `active` utan drag i 30 minuter → `abandoned`. Varje `act` flyttar `expires_at`.
 - `connected` i svaret = motspelaren pollat de senaste 10 sekunderna. Klienten visar "Väntar på Anna… (tappat kontakten)" när den är falsk. Ingen automatisk förlust vid frånkoppling i v1.
-- Kommandot `matches:expire` (var femte minut) sätter `abandoned`. `matches:prune --days=7` (dagligen) raderar avslutade och övergivna matcher med spelare och händelser. Dolda värden finns alltså högst sju dagar.
+- Kommandot `matches:expire` (var femte minut) sätter `abandoned`. `matches:prune --days=7` (dagligen) raderar avslutade och övergivna matcher med spelare och händelser. Dolda värden nollställs redan när matchen avslutas eller överges.
 - En användare har högst 5 matcher i `waiting`/`active` per spel; den sjätte ger 429 med `code: "too_many_active"`.
 
 ## Invarianter (testas, inte bara tänks)
