@@ -183,4 +183,38 @@ class IntegrationGuideTest extends McpTestCase
 
         $this->assertStringNotContainsString('## Achievements', $manual);
     }
+
+    public function test_matches_is_a_default_feature_only_for_games_with_a_ruleset(): void
+    {
+        $reveal = $this->game('reveal');
+        $tocco = $this->game('tocco');
+
+        $this->assertContains('matches', IntegrationGuide::defaultFeatures($reveal));
+        $this->assertNotContains('matches', IntegrationGuide::defaultFeatures($tocco));
+    }
+
+    public function test_manual_describes_the_matches_api(): void
+    {
+        $game = $this->game('reveal');
+
+        $manual = IntegrationGuide::manual($game, IntegrationGuide::defaultFeatures($game));
+
+        foreach ([
+            '## Turn-based Matches', 'POST', '/games/reveal/matches`', '/games/reveal/matches/join', '/games/reveal/matches/active',
+            '/actions', '/leave', '/rematch', 'If-None-Match', '304', '1.5 s', 'hidden', 'stale', 'version',
+            'rate_limited', 'too_many_active', 'invite_expired', 'own_match', 'ruleset_not_allowed', '?join=<token>',
+            'rematch_requested', 'abandoned', '7 days', '`matches`',
+        ] as $needle) {
+            $this->assertStringContainsString($needle, $manual, $needle);
+        }
+    }
+
+    public function test_manual_leaves_matches_out_for_games_without_a_ruleset(): void
+    {
+        $game = $this->game('tocco');
+
+        $manual = IntegrationGuide::manual($game, IntegrationGuide::defaultFeatures($game));
+
+        $this->assertStringNotContainsString('Turn-based Matches', $manual);
+    }
 }

@@ -64,4 +64,16 @@ class GetGameToolTest extends McpTestCase
 
         $this->assertStringNotContainsString('annan-nyckel', $result['text']);
     }
+
+    public function test_shows_match_rulesets_for_the_game(): void
+    {
+        $reveal = $this->game('reveal');
+        $tocco = $this->game('tocco');
+
+        $a = json_decode($this->callTool($this->staffMember($reveal), 'get_game', ['game' => 'reveal'])['text'], true);
+        $b = json_decode($this->callTool($this->staffMember($tocco), 'get_game', ['game' => 'tocco'])['text'], true);
+
+        $this->assertSame(['reveal'], $a['match_rulesets']);
+        $this->assertSame([], $b['match_rulesets']);
+    }
 }

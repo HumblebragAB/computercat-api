@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Tools;
 
+use App\Matches\RulesetRegistry;
 use App\Models\Game;
 use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -28,6 +29,7 @@ class GetGameTool extends GameTool
             'description' => $game->description,
             'is_active' => (bool) $game->is_active,
             'allowed_origins' => $game->allowed_origins ?? [],
+            'match_rulesets' => RulesetRegistry::forGame($game),
             'base_url' => rtrim((string) config('app.url'), '/').'/api/v1',
             'leaderboard_types' => $game->leaderboardTypes()->orderBy('slug')->get()->map(fn ($r) => [
                 'slug' => $r->slug,

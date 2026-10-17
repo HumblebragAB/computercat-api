@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Filament\Resources\GameResource;
+use App\Matches\RulesetRegistry;
 use App\Models\Game;
 
 // Dev Kit-manualen och uppsättningsöversikten. Används av Dev Kit-sidan i
@@ -26,6 +27,7 @@ class IntegrationGuide
         'player_stats' => 'Player Stats',
         'events' => 'Scheduled Events',
         'purchases' => 'Purchases & Ownership',
+        'matches' => 'Turn-based Matches',
     ];
 
     private const RELATIONS = ['leaderboardTypes', 'achievementDefinitions', 'dailyContentPools', 'remoteConfigs', 'gameEvents'];
@@ -57,6 +59,9 @@ class IntegrationGuide
         $features[] = 'player_stats';
         if ($game->gameEvents->count()) {
             $features[] = 'events';
+        }
+        if (RulesetRegistry::forGame($game) !== []) {
+            $features[] = 'matches';
         }
 
         return $features;
@@ -647,6 +652,88 @@ class IntegrationGuide
             $lines[] = '2. Show event banners/badges in the UI';
             $lines[] = '3. For leaderboard events, use the referenced leaderboard type for score submission';
             $lines[] = '4. Events are managed in the admin panel (Edit Game → Events tab)';
+            $lines[] = '';
+        }
+
+        // ── Turn-based Matches ───────────────────────────────────────────────
+        if (in_array('matches', $features)) {
+            $slug = self::code($game->slug);
+            $rulesets = RulesetRegistry::forGame($game);
+            $lines[] = '## Turn-based Matches';
+            $lines[] = '';
+            $lines[] = 'Two-player, turn-based matches played over the API. The server owns the rules and any hidden state (for example a secret number), so the opponent never receives it.';
+            $lines[] = '';
+            $lines[] = 'Rulesets available to this game: '.($rulesets === [] ? 'none' : implode(', ', array_map(fn ($r) => '`'.self::code($r).'`', $rulesets))).'. Any other ruleset gets 403 `ruleset_not_allowed`.';
+            $lines[] = '';
+            $lines[] = '**Games built from the build guide use the client module `matches` (build guide v3) and never call these routes directly.** The module polls, handles ETag, `version`, backoff and errors. The routes below are for reference.';
+            $lines[] = '';
+            $lines[] = 'All routes need `Authorization: Bearer <token>`.';
+            $lines[] = '';
+            $lines[] = '| Route | Body | Does |';
+            $lines[] = '|-------|------|------|';
+            $lines[] = "| `POST {$baseUrl}/games/{$slug}/matches` | `{ruleset, options?, name?}` | Creates a match, you take seat 0. Returns 201 `{match, join_token}` |";
+            $lines[] = "| `POST {$baseUrl}/games/{$slug}/matches/join` | `{token, name?}` | Joins as seat 1 and starts the match |";
+            $lines[] = "| `GET {$baseUrl}/games/{$slug}/matches/active` | none | Your open matches in this game: `{data: [{id, ruleset, status, your_seat}]}`. Use it to reconnect after a reload |";
+            $lines[] = "| `GET {$baseUrl}/games/{$slug}/matches/{id}?since={seq}` | none | Snapshot plus events after `seq` |";
+            $lines[] = "| `POST {$baseUrl}/games/{$slug}/matches/{id}/actions` | `{type, payload, version}` | One move |";
+            $lines[] = "| `POST {$baseUrl}/games/{$slug}/matches/{id}/leave` | none | Leave. The match becomes `abandoned` |";
+            $lines[] = "| `POST {$baseUrl}/games/{$slug}/matches/{id}/rematch` | none | Request a rematch (only when `finished`) |";
+            $lines[] = '';
+            $lines[] = '`name` is 1-20 characters without control characters (default `Spelare 1` / `Spelare 2` by seat); an invalid name gives 422.';
+            $lines[] = '';
+            $lines[] = '### Response shape (GET and after every POST except create and active)';
+            $lines[] = '```json';
+            $lines[] = '{"id": "01J...", "ruleset": "reveal", "status": "active", "version": 7, "your_seat": 0, "players": [{"seat": 0, "name": "Anna", "connected": true}, {"seat": 1, "name": "Bo", "connected": false}], "state": {}, "you": {}, "events": [{"seq": 12, "type": "left", "seat": 1, "payload": {}, "at": "2026-10-17T10:00:00+00:00"}]}';
+            $lines[] = '```';
+            $lines[] = '- `status`: `waiting`, `active`, `finished` or `abandoned`';
+            $lines[] = '- `state` is the public state. `you` is your own view of your hidden state. The opponent\'s hidden state is never sent.';
+            $lines[] = '- `events` are ordered by `seq`. With `since` you get the events after it (at most 200); without it you get the 200 latest. Remember the highest `seq` you have seen.';
+            $lines[] = '- Base events: `left` (a player left), `expired` (the match timed out), `rematch_requested` and `rematch` with `{match_id}` in the payload. The seat the event concerns is in the event\'s `seat` field. Rulesets add their own events.';
+            $lines[] = '';
+            $lines[] = '### Polling';
+            $lines[] = '- Poll `GET /matches/{id}` every 1.5 s and pause while the tab is hidden (`visibilitychange`). Back off to 5 s on network errors.';
+            $lines[] = '- The response has an `ETag` (`{version}-{c0}{c1}`: the version plus whether seat 0 and 1 are connected). Send it back as `If-None-Match`; unchanged gives `304` with no body.';
+            $lines[] = '- Connection status is part of the ETag, so you also learn when the opponent drops without any move being made.';
+            $lines[] = '- Polling is what marks you as connected.';
+            $lines[] = '';
+            $lines[] = '### Moves and `version`';
+            $lines[] = '- Send the `version` of the snapshot you are acting on. If it is not the current one the server answers `409 {"code": "stale", "version": N}` with no side effect. Poll again and retry if the move is still valid. This makes double taps and resent requests harmless.';
+            $lines[] = '- A rejected move changes nothing (not `version`, `state` or the event log).';
+            $lines[] = '- Numbers in a payload must be JSON integers. `"37"`, `37.0` and `37.5` give 422 `invalid_payload`.';
+            $lines[] = '';
+            $lines[] = '### Inviting a friend';
+            $lines[] = '`POST /matches` returns `join_token`. Build the link yourself as `https://<game origin>/?join=<token>` and show it as a QR code. The friend\'s client reads `join` from the URL and calls `POST /matches/join`. The server does not know your origin. The token is single use.';
+            $lines[] = '';
+            $lines[] = '### Rematch';
+            $lines[] = 'Only allowed when `status` is `finished`. The first call adds `rematch_requested` (with `seat`). When both seats have asked, a new match is created with the same players, seats, names and options, and the old match gets a `rematch` event with `{match_id}`. Switch to that match when you see the event. A rematch needs no `join_token`.';
+            $lines[] = '';
+            $lines[] = '### Errors';
+            $lines[] = 'Errors are `{"message": "...", "code": "..."}`.';
+            $lines[] = '';
+            $lines[] = '| Status | `code` | Meaning |';
+            $lines[] = '|--------|--------|---------|';
+            $lines[] = '| 403 | `ruleset_not_allowed` | The game has no such ruleset |';
+            $lines[] = '| 404 | none | No such match, or you are not in it. The two cases look the same |';
+            $lines[] = '| 409 | `stale` | Old `version`; the body has the current `version`. Poll and retry |';
+            $lines[] = '| 409 | `own_match` | You tried to join your own match. The token is not used up |';
+            $lines[] = '| 410 | `invite_expired` | Unknown, used or expired token (all look the same) |';
+            $lines[] = '| 422 | `not_your_turn`, `wrong_phase`, `already_locked`, `already_ready`, `out_of_range`, `invalid_payload`, `unknown_action` | The move is illegal. Ruleset-specific |';
+            $lines[] = '| 422 | validation | Bad request fields; see `errors` |';
+            $lines[] = '| 429 | `too_many_active` | You already have 5 matches in `waiting`/`active` in this game. Leave one first. Do not retry on a timer |';
+            $lines[] = '| 429 | `rate_limited` | Too many requests. Back off and retry after `Retry-After` |';
+            $lines[] = '';
+            $lines[] = 'Limits per user: create 10/min, join 10/min (30/min per IP), poll 120/min, actions/leave/rematch 60/min.';
+            $lines[] = '';
+            $lines[] = '### Lifecycle';
+            $lines[] = '- `waiting` with no opponent for 15 min becomes `abandoned`.';
+            $lines[] = '- `active` with no move for 30 min becomes `abandoned`. Every move resets the timer.';
+            $lines[] = '- A player counts as `connected` when they polled within the last 10 s. There is no automatic loss on disconnect in v1.';
+            $lines[] = '- Hidden state is cleared when the match finishes or is abandoned, so nothing is revealed that the rules do not reveal. Finished and abandoned matches are deleted after 7 days; a poll then gives 404.';
+            $lines[] = '- A rematch frees the old match from the cap of 5.';
+            $lines[] = '';
+            $lines[] = '### Required in the game';
+            $lines[] = '- Show a visible state when the connection is lost: the opponent\'s `connected` is false ("waiting for Anna, connection lost"), and when polling fails or `onError` fires. Never stand silently still.';
+            $lines[] = '- Handle `abandoned` and 404 on poll by returning the player to the menu with a message.';
             $lines[] = '';
         }
 
