@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\GlosisScanController;
 use App\Http\Controllers\Api\V1\GlosisTtsController;
 use App\Http\Controllers\Api\V1\InterestSignupController;
 use App\Http\Controllers\Api\V1\LeaderboardController;
+use App\Http\Controllers\Api\V1\MatchController;
 use App\Http\Controllers\Api\V1\OwnershipController;
 use App\Http\Controllers\Api\V1\PlayerStatsController;
 use App\Http\Controllers\Api\V1\PurchaseController;
@@ -161,6 +162,21 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
             // Events
             Route::get('/events', [GameEventController::class, 'index']);
             Route::get('/events/{slug}', [GameEventController::class, 'show']);
+        });
+
+    // Matcher (turbaserade tvåspelarmatcher). Egna gränser per användare i stället för den
+    // globala (60/min), eftersom klienten pollar ungefär en gång i sekunden.
+    Route::middleware(['auth:sanctum', TrackLastSeen::class, ResolveGame::class])
+        ->prefix('/games/{game}/matches')
+        ->withoutMiddleware([\Illuminate\Routing\Middleware\SubstituteBindings::class, 'throttle:60,1'])
+        ->group(function () {
+            Route::post('/', [MatchController::class, 'store'])->middleware('throttle:match-create');
+            Route::post('/join', [MatchController::class, 'join'])->middleware('throttle:match-join');
+            Route::get('/active', [MatchController::class, 'active'])->middleware('throttle:match-poll');
+            Route::get('/{id}', [MatchController::class, 'show'])->whereUlid('id')->middleware('throttle:match-poll');
+            Route::post('/{id}/actions', [MatchController::class, 'act'])->whereUlid('id')->middleware('throttle:match-action');
+            Route::post('/{id}/leave', [MatchController::class, 'leave'])->whereUlid('id')->middleware('throttle:match-action');
+            Route::post('/{id}/rematch', [MatchController::class, 'rematch'])->whereUlid('id')->middleware('throttle:match-action');
         });
 
     // Purchases (authenticated)

@@ -71,6 +71,17 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
+        // Matchernas gränser: code rate_limited, så att klienten kan skilja dem från
+        // too_many_active (också 429, från matchgrunden).
+        $exceptions->render(function (ThrottleRequestsException $e, Request $request) {
+            if ($request->is('api/v1/games/*/matches', 'api/v1/games/*/matches/*')) {
+                return response()->json([
+                    'message' => 'För många anrop just nu. Vänta en stund och försök igen.',
+                    'code' => 'rate_limited',
+                ], 429, $e->getHeaders());
+            }
+        });
+
         $exceptions->render(function (ValidationException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([

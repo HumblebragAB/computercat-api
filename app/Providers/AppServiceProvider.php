@@ -144,5 +144,17 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('score-submit', function (Request $request) {
             return Limit::perMinute(30)->by($request->user()?->id ?: $request->ip());
         });
+
+        // Matcher: per användar-id (vägarna ligger efter auth:sanctum). Ersätter den globala
+        // API-gränsen, eftersom pollen går ungefär en gång i sekunden. Egna prefix, så att
+        // räknarna inte delas med andra gränser.
+        $matchKey = fn (string $name, Request $request) => $name.':'.($request->user()?->getAuthIdentifier() ?? 'ip:'.$request->ip());
+        RateLimiter::for('match-create', fn (Request $request) => Limit::perMinute(10)->by($matchKey('match-create', $request)));
+        RateLimiter::for('match-join', fn (Request $request) => [
+            Limit::perMinute(10)->by($matchKey('match-join', $request)),
+            Limit::perMinute(30)->by('match-join-ip:'.$request->ip()),
+        ]);
+        RateLimiter::for('match-poll', fn (Request $request) => Limit::perMinute(120)->by($matchKey('match-poll', $request)));
+        RateLimiter::for('match-action', fn (Request $request) => Limit::perMinute(60)->by($matchKey('match-action', $request)));
     }
 }
