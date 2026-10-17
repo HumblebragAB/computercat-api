@@ -13,7 +13,7 @@ use RuntimeException;
  *   länk/QR. Lagras som sha256; rymden är för stor för att hashen ska gå att vända.
  * - `code`: 4 tecken ur ALPHABET (utan 0/O/1/I/L) som motspelaren skriver in för hand.
  *   31^4 ≈ 923 000 koder går att räkna igenom offline på ett ögonblick, så koden lagras
- *   som HMAC-SHA256 med app.key, aldrig som ren sha256 eller klartext. Den som läser
+ *   som HMAC-SHA256 med en nyckel härledd ur app.key, aldrig som ren sha256 eller klartext. Den som läser
  *   databasen men inte har nyckeln kan inte vända hashen.
  *
  * Båda lagras i join_token_hash. Inmatning skiljs åt på formen: efter normalisering
@@ -31,6 +31,9 @@ class InviteTokens
     public const CODE_LENGTH = 4;
 
     private const CODE_SHAPE = '/\A[A-Z2-9]{4}\z/';
+
+    /** Kontextsträng för nyckeln som härleds ur app.key (nyckelseparation). */
+    public const HMAC_CONTEXT = 'match-invite-code';
 
     /** Inbjudningstypen för en regeluppsättning. Okänt värde är ett konfigurationsfel. */
     public static function typeFor(string $ruleset): string
@@ -64,7 +67,9 @@ class InviteTokens
                 throw new RuntimeException('app.key saknas; inbjudningskoder kan inte hashas.');
             }
 
-            return hash_hmac('sha256', $code, $key);
+            // Egen nyckel härledd ur app.key, så att HMAC:en inte delar nyckel med kryptering
+            // eller andra signaturer i appen.
+            return hash_hmac('sha256', $code, hash_hmac('sha256', self::HMAC_CONTEXT, $key, true));
         }
 
         return hash('sha256', $input);

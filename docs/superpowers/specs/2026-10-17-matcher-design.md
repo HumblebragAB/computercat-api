@@ -30,7 +30,7 @@ Två spelare på var sin mobil ska kunna spela en match mot varandra genom Compu
 - `game_id`, `ruleset` (sträng, t.ex. `reveal`), `options` JSON (validerad av regelklassen).
 - `status`: `waiting` → `active` → `finished` | `abandoned`.
 - `join_token`: 32 slumpade byte, base64url. Lagras som sha256-hash; klartexten finns bara i svaret till den som skapar matchen. Ogiltig efter att andra spelaren gått med eller efter 15 minuter.
-  - Tillägg 2026-10-17: inbjudningstyp per regeluppsättning (`invite` i `config/matches.php`). `token` (standard) är ovanstående. `code` (Reveal) är 4 tecken ur `ABCDEFGHJKMNPQRSTUVWXYZ23456789` som motspelaren skriver in; lagras som HMAC-SHA256 med `app.key` (ren sha256 av en så liten rymd går att vända offline), matchas utan hänsyn till skiftläge och blanksteg. Misslyckade join begränsas med `match-join-fail` (20/h per användare, 60/h per IP). Se `App\Matches\InviteTokens`.
+  - Tillägg 2026-10-17: inbjudningstyp per regeluppsättning (`invite` i `config/matches.php`). `token` (standard) är ovanstående. `code` (Reveal) är 4 tecken ur `ABCDEFGHJKMNPQRSTUVWXYZ23456789` som motspelaren skriver in; lagras som HMAC-SHA256 med en nyckel härledd ur `app.key` (ren sha256 av en så liten rymd går att vända offline), matchas utan hänsyn till skiftläge och blanksteg. Misslyckade join begränsas med `match-join-fail` (20/h per användare, 15 per 10 min per IP, första spärren per fönster loggas). Se `App\Matches\InviteTokens`.
 - `state` JSON: publik state som båda spelarna får se.
 - `version` (int, ökar vid varje ändring), `last_action_at`, `expires_at`, tidsstämplar.
 

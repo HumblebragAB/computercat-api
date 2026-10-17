@@ -306,11 +306,19 @@ class MatchService
             try {
                 return $fn();
             } catch (UniqueConstraintViolationException $e) {
-                if ($attempt >= self::INVITE_RACE_RETRIES || ! str_contains($e->getMessage(), 'join_token_hash')) {
+                if ($attempt >= self::INVITE_RACE_RETRIES || ! self::isInviteHashViolation($e)) {
                     throw $e;
                 }
             }
         }
+    }
+
+    private static function isInviteHashViolation(UniqueConstraintViolationException $e): bool
+    {
+        $message = $e->getMessage();
+
+        // MySQL nämner indexet (matches_join_token_hash_unique), SQLite (testerna) kolumnen.
+        return str_contains($message, '_join_token_hash_unique') || str_contains($message, 'matches.join_token_hash');
     }
 
     private function startRematch(GameMatch $old, Collection $oldPlayers): GameMatch

@@ -9,13 +9,14 @@ use App\Models\Game;
 use App\Models\GameMatch;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 use Tests\Unit\Matches\FakeRules;
 
 /**
  * Kort kod som inbjudan (invite => code i config/matches.php, Reveal): fyra tecken som
- * motspelaren skriver in för hand. Lagras som HMAC med app.key, aldrig som klartext eller
+ * motspelaren skriver in för hand. Lagras som HMAC med en nyckel härledd ur app.key, aldrig som klartext eller
  * ren sha256. Regeluppsättningar utan invite får fortfarande 43 teckens token.
  */
 class MatchInviteCodeTest extends TestCase
@@ -77,11 +78,11 @@ class MatchInviteCodeTest extends TestCase
         });
     }
 
-    private function joinOverHttp(User $user, string $token)
+    private function joinOverHttp(User $user, string $token, string $ip = '127.0.0.1')
     {
         Sanctum::actingAs($user);
 
-        return $this->postJson(self::BASE.'/join', ['token' => $token]);
+        return $this->withServerVariables(['REMOTE_ADDR' => $ip])->postJson(self::BASE.'/join', ['token' => $token]);
     }
 
     public function test_reveal_create_returns_a_four_character_code_stored_as_hmac(): void
@@ -90,7 +91,7 @@ class MatchInviteCodeTest extends TestCase
 
         $this->assertMatchesRegularExpression(self::CODE, $code);
         $stored = $match->fresh()->join_token_hash;
-        $this->assertSame(hash_hmac('sha256', $code, config('app.key')), $stored);
+        $this->assertSame(hash_hmac('sha256', $code, hash_hmac('sha256', 'match-invite-code', config('app.key'), true)), $stored);
         $this->assertNotSame(hash('sha256', $code), $stored);
         $this->assertNotSame($code, $stored);
         $this->assertSame(64, strlen($stored));
@@ -184,7 +185,7 @@ class MatchInviteCodeTest extends TestCase
         $new = $this->service()->invite($match, $this->anna);
 
         $this->assertSame('BBBB', $new);
-        $this->assertSame(hash_hmac('sha256', 'BBBB', config('app.key')), $match->fresh()->join_token_hash);
+        $this->assertSame(hash_hmac('sha256', 'BBBB', hash_hmac('sha256', 'match-invite-code', config('app.key'), true)), $match->fresh()->join_token_hash);
         $this->matchError(fn () => $this->service()->join($this->game, $this->bo, $old, null), 'invite_expired');
         $this->assertSame(GameMatch::STATUS_ACTIVE, $this->service()->join($this->game, $this->bo, 'bbbb', null)->status);
     }
@@ -235,12 +236,13 @@ class MatchInviteCodeTest extends TestCase
     {
         $carl = User::factory()->create();
 
-        // Utspritt över timmen så att match-join (10/min) inte slår till först.
+        // Utspritt över minuter och IP-adresser så att match-join (10/min) och IP-gränsen
+        // (15 per 10 min) inte slår till först.
         for ($i = 1; $i <= 20; $i++) {
             if ($i % 10 === 0) {
                 $this->travel(61)->seconds();
             }
-            $this->joinOverHttp($carl, 'ZZZZ')->assertStatus(410);
+            $this->joinOverHttp($carl, 'ZZZZ', '10.0.0.'.$i)->assertStatus(410);
         }
 
         // Spärren gäller före uppslaget: även en giltig kod ger 429.
@@ -274,19 +276,53 @@ class MatchInviteCodeTest extends TestCase
         $this->joinOverHttp($joiner, 'ZZZZ')->assertStatus(410)->assertJsonPath('code', 'invite_expired');
     }
 
-    public function test_failed_joins_are_limited_per_ip(): void
+    public function test_failed_joins_are_limited_per_ip_in_a_ten_minute_window(): void
     {
-        $users = User::factory()->count(4)->create();
+        $users = User::factory()->count(2)->create();
 
-        for ($i = 0; $i < 60; $i++) {
-            if ($i > 0 && $i % 10 === 0) {
-                $this->travel(61)->seconds();
-            }
-            $this->joinOverHttp($users[intdiv($i, 15)], 'ZZZZ')->assertStatus(410);
+        // 15 missar per 10 min och IP, fördelat på två användare (under 20 var).
+        for ($i = 0; $i < 15; $i++) {
+            $this->joinOverHttp($users[$i % 2], 'ZZZZ')->assertStatus(410);
         }
 
         $fresh = User::factory()->create();
-        $this->joinOverHttp($fresh, 'ZZZZ')->assertStatus(429)->assertJsonPath('code', 'rate_limited');
+        $code = $this->create()['token'];
+        $this->joinOverHttp($fresh, $code)
+            ->assertStatus(429)->assertJsonPath('code', 'rate_limited')->assertHeader('Retry-After');
+
+        // Fönstret är 10 minuter, inte en timme.
+        $this->travel(9)->minutes();
+        $this->joinOverHttp($fresh, $code)->assertStatus(429);
+        $this->travel(61)->seconds();
+        $this->joinOverHttp($fresh, $code)->assertOk()->assertJsonPath('status', 'active');
+    }
+
+    public function test_tripped_fail_limit_is_logged_once_without_the_code(): void
+    {
+        Log::spy();
+        $carl = User::factory()->create();
+
+        for ($i = 1; $i <= 20; $i++) {
+            if ($i % 10 === 0) {
+                $this->travel(61)->seconds();
+            }
+            $this->joinOverHttp($carl, 'ZZZZ', '10.0.0.'.$i)->assertStatus(410);
+        }
+        Log::shouldNotHaveReceived('warning');
+
+        $code = $this->create()['token'];
+        $this->joinOverHttp($carl, $code)->assertStatus(429);
+        $this->joinOverHttp($carl, $code)->assertStatus(429);
+        $this->joinOverHttp($carl, 'ZZZZ')->assertStatus(429);
+
+        Log::shouldHaveReceived('warning')->once()->withArgs(function (string $message, array $context) use ($carl, $code) {
+            $this->assertSame('match join fail limit', $message);
+            $this->assertSame(['user_id' => $carl->id, 'ip' => '127.0.0.1', 'game' => 'reveal'], $context);
+            $this->assertStringNotContainsString($code, json_encode($context));
+            $this->assertStringNotContainsString('ZZZZ', json_encode($context));
+
+            return true;
+        });
     }
 
     public function test_own_match_is_not_a_failed_join(): void

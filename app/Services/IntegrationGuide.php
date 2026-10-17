@@ -717,7 +717,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = '**Invite type `token`**: `join_token` is 43 characters. Build the link yourself as `https://<game origin>/#join=<token>` (a fragment, so the token never reaches server logs or the Referer header; do not use `?join=`) and show it as a QR code. The friend\'s client reads `join` from `location.hash` and calls `POST /matches/join`. The server does not know your origin. The token is case-sensitive; send it unchanged.';
             $lines[] = '';
-            $lines[] = '**Invite type `code`**: `join_token` is a 4-character code (A–Z without I, L, O; digits 2–9). Show it large on the creator\'s screen and let the opponent type it; send what they typed as `token`. Matching is case-insensitive and spaces are ignored. No link or QR code is needed.';
+            $lines[] = '**Invite type `code`**: `join_token` is a 4-character code (A–Z without I, L, O; digits 2–9). Show it large on the creator\'s screen and let the opponent type it; send what they typed as `token`. Matching is case-insensitive and spaces are ignored. No link or QR code is needed. Do not pass a code to `inviteUrl()`; `readJoinToken()` only accepts 43-character tokens and returns null for a code. Use a text input and `matches.join(typed)`.';
             $lines[] = '';
             $lines[] = 'Either kind is single use, is only returned once, and the server keeps only a hash of it. If the creator reloads while waiting (find the match with `GET /matches/active`), call `POST /matches/{id}/invite` to get a new `join_token` and show it again (a fresh QR code or the new code). The old link stops working, and so does the old code.';
             $lines[] = '';
@@ -743,7 +743,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = 'Limits per user: create 10/min, join 10/min (30/min per IP), poll 120/min, actions/leave/rematch/invite 60/min.';
             $lines[] = '';
-            $lines[] = 'Failed joins (`invite_expired`) are also counted: after 20 in an hour per user, or 60 per IP, every join gets 429 `rate_limited` until `Retry-After`, even with a valid invite. Successful joins and `own_match` do not count. Show the error and let the player try again later; do not retry on a timer.';
+            $lines[] = 'Failed joins (`invite_expired`) are also counted: after 20 in an hour per user, or 15 in 10 minutes per IP, every join gets 429 `rate_limited` until `Retry-After`, even with a valid invite. Successful joins and `own_match` do not count. Show the error and let the player try again later; do not retry on a timer.';
             $lines[] = '';
             $lines[] = '### Lifecycle';
             $lines[] = '- `waiting` with no opponent for 15 min becomes `abandoned`.';

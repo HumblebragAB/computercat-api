@@ -157,13 +157,15 @@ class AppServiceProvider extends ServiceProvider
         // Misslyckade join (invite_expired), räknade av MatchController och inte av throttle-
         // middleware: lyckade join ska inte förbruka något. En inbjudningskod (invite => code)
         // har 31^4 ≈ 923 000 värden och lever 15 min, så den går i princip att gissa. Anonyma
-        // konton är gratis, därför gränsen per IP: 60 missar i timmen ger i snitt ~7 700 timmar
-        // för att träffa en viss kod. Med många öppna matcher samtidigt träffar en gissare någon
-        // match fortare, men kan inte välja vilken. Värsta fallet är litet: en främling går med
-        // i en vänskapsmatch och ser bara spelarnamnen; ingen annan data nås via en match.
+        // konton är gratis, därför också en gräns per IP: 15 missar per 10 min (≈ 90 i timmen)
+        // ger i snitt ~5 000 timmar för att träffa en viss kod. Det korta fönstret gör att en
+        // person som skriver fel inte stänger ute en hel NAT (en skolklass) i en timme. Med
+        // många öppna matcher samtidigt träffar en gissare någon match fortare, men kan inte
+        // välja vilken. Värsta fallet är litet: en främling går med i en vänskapsmatch och ser
+        // bara spelarnamnen; ingen annan data nås via en match.
         RateLimiter::for('match-join-fail', fn (Request $request) => [
             Limit::perHour(20)->by('match-join-fail:'.($request->user()?->getAuthIdentifier() ?? 'ip:'.$request->ip())),
-            Limit::perHour(60)->by('match-join-fail-ip:'.$request->ip()),
+            Limit::perMinutes(10, 15)->by('match-join-fail-ip:'.$request->ip()),
         ]);
         RateLimiter::for('match-poll', fn (Request $request) => Limit::perMinute(120)->by($matchKey('match-poll', $request)));
         RateLimiter::for('match-action', fn (Request $request) => Limit::perMinute(60)->by($matchKey('match-action', $request)));

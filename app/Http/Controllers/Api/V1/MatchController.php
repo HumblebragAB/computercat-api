@@ -15,6 +15,8 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Validator;
 
@@ -54,9 +56,14 @@ class MatchController extends Controller
             'name' => ['sometimes', 'nullable', 'string', 'max:100'],
         ]);
 
+        // Kontrollen och räkningen nedan är inte atomära: samtidiga anrop kan passera spärren
+        // innan någon av dem hunnit räknas, så gränsen kan överskridas något. Överskottet
+        // begränsas av match-join (10/min per användare, 30/min per IP) på samma väg.
         $failLimits = $this->joinFailLimits($request);
         foreach ($failLimits as $limit) {
             if (RateLimiter::tooManyAttempts($limit->key, $limit->maxAttempts)) {
+                $this->logFailLimitOnce($request, $game, $limit->key);
+
                 return response()->json([
                     'message' => 'För många anrop just nu. Vänta en stund och försök igen.',
                     'code' => 'rate_limited',
@@ -80,6 +87,21 @@ class MatchController extends Controller
 
             return $this->respond($match, MatchView::for($match, $seat, null));
         });
+    }
+
+    /**
+     * En varning per spärrfönster och nyckel, inte per avvisat anrop. Koden loggas aldrig.
+     */
+    private function logFailLimitOnce(Request $request, Game $game, string $key): void
+    {
+        $window = max(1, RateLimiter::availableIn($key));
+        if (Cache::add('match-join-fail-logged:'.$key, true, $window)) {
+            Log::warning('match join fail limit', [
+                'user_id' => $request->user()?->getAuthIdentifier(),
+                'ip' => $request->ip(),
+                'game' => $game->slug,
+            ]);
+        }
     }
 
     /**

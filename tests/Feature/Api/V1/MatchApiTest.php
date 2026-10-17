@@ -361,7 +361,7 @@ class MatchApiTest extends TestCase
         $response->assertJsonPath('match.id', $id)->assertJsonPath('match.status', 'waiting')->assertJsonPath('match.your_seat', 0);
 
         $after = GameMatch::findOrFail($id);
-        $this->assertSame(hash_hmac('sha256', $new, config('app.key')), $after->join_token_hash);
+        $this->assertSame(hash_hmac('sha256', $new, hash_hmac('sha256', 'match-invite-code', config('app.key'), true)), $after->join_token_hash);
         $this->assertSame($before->version + 1, $after->version);
         $this->assertTrue($after->expires_at->equalTo(now()->addMinutes(15)->startOfSecond()));
         $this->assertSame(0, $after->events()->count());

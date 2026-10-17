@@ -208,7 +208,8 @@ class IntegrationGuideTest extends McpTestCase
             '/games/reveal/matches/{id}/invite', 'fresh QR', 'old link stops working', "cache: 'no-store'",
             'exposed via CORS', 'not checked against the cap of 5', 'idempotent no-op', '{message}` only',
             '- `reveal`: `code`', '4-character code (A–Z without I, L, O; digits 2–9)', 'let the opponent type it',
-            'case-insensitive', 'Invite type `token`', 'Failed joins (`invite_expired`)', '20 in an hour per user', '60 per IP',
+            'case-insensitive', 'Invite type `token`', 'Failed joins (`invite_expired`)', '20 in an hour per user', '15 in 10 minutes per IP',
+            'Do not pass a code to `inviteUrl()`; `readJoinToken()` only accepts 43-character tokens and returns null for a code. Use a text input and `matches.join(typed)`.',
             'so does the old code',
         ] as $needle) {
             $this->assertStringContainsString($needle, $manual, $needle);
