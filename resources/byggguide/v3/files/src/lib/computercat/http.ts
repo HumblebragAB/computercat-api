@@ -97,3 +97,74 @@ export async function requestJson<T>(
   log(`[computercat] ${method} ${path} → ${res.status}`, { request: preview(opts.body), response: preview(body) });
   throw new ApiError(res.status, message, body, method, path);
 }
+
+export type MetaResult<T> = { status: number; body: T | null; etag: string | null };
+
+/** Timeouten plus anroparens egen signal: den som avbryter först vinner. */
+function withTimeout(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  if (!signal) return timeout;
+  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeout]);
+  const ctrl = new AbortController();
+  for (const s of [signal, timeout]) {
+    if (s.aborted) {
+      ctrl.abort(s.reason);
+      break;
+    }
+    s.addEventListener('abort', () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
+}
+
+/**
+ * Som requestJson men svarar med status och ETag. 304 (oförändrat) är inget fel och loggas inte:
+ * body är då null. Övriga statusar utanför 2xx kastar ApiError och loggas precis som i requestJson.
+ */
+export async function requestJsonMeta<T>(
+  fetchImpl: FetchLike,
+  baseUrl: string,
+  method: HttpMethod,
+  path: string,
+  opts: { token?: string | null; body?: unknown; headers?: Record<string, string>; noStore?: boolean; signal?: AbortSignal } = {},
+): Promise<MetaResult<T>> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+  // Token sätts sist så att en egen header aldrig kan ersätta den.
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+
+  let res: Response;
+  let text: string;
+  try {
+    const init: RequestInit = {
+      method,
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      signal: withTimeout(opts.signal),
+    };
+    if (opts.noStore) init.cache = 'no-store';
+    res = await fetchImpl(`${baseUrl}${path}`, init);
+    text = await res.text();
+  } catch (e) {
+    throw new NetworkError(method, path, e);
+  }
+
+  const etag = res.headers.get('ETag');
+  if (res.status === 304) return { status: 304, body: null, etag };
+
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  }
+
+  if (res.ok) return { status: res.status, body: body as T | null, etag };
+
+  const message = isRecord(body) && typeof body.message === 'string' ? body.message : `HTTP ${res.status}`;
+  // 401 och 409 är väntade vägar (ny spelare, versionskonflikt); övriga fel är fel.
+  const log = res.status === 401 || res.status === 409 ? console.warn : console.error;
+  log(`[computercat] ${method} ${path} → ${res.status}`, { request: preview(opts.body), response: preview(body) });
+  throw new ApiError(res.status, message, body, method, path);
+}

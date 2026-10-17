@@ -87,8 +87,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "4c59a046a6c6d2d13e9a1600bbd9a6a5d6094b8c5fa97a7c8abb6728e51fa516",
-            "bytes": 19285
+            "sha256": "35d85c5320e181210c4057110d23b0e345ce4ac21fc213c5dd30e4028ef724af",
+            "bytes": 19423
         },
         {
             "path": "eslint.config.mjs",
@@ -225,14 +225,14 @@
         {
             "path": "src/lib/computercat/auth.test.ts",
             "source": "files/src/lib/computercat/auth.test.ts",
-            "sha256": "39285c516c338a83ee72ba34dd0c8846d63e3c523e662c8c70e260b6b81a8374",
-            "bytes": 6725
+            "sha256": "de73d7d80f6df957e55c839726208a97e04b946fd822440d2af02e01197d171b",
+            "bytes": 9193
         },
         {
             "path": "src/lib/computercat/auth.ts",
             "source": "files/src/lib/computercat/auth.ts",
-            "sha256": "eaf506c260ef0dbca175510e295fd66ca7dae8bd3566f4b196937998b05cce0a",
-            "bytes": 6303
+            "sha256": "fcac152cda2306e3f0fe24c942a40f95cb3f360c6a0117addbd205ca36e985cb",
+            "bytes": 7244
         },
         {
             "path": "src/lib/computercat/background.test.ts",
@@ -285,14 +285,14 @@
         {
             "path": "src/lib/computercat/http.test.ts",
             "source": "files/src/lib/computercat/http.test.ts",
-            "sha256": "6db7a41f49a63a1eddb6b98382febdb9cd6e01db764360c05a6cfc57eb077c0b",
-            "bytes": 3463
+            "sha256": "746a5ba425e61902a3cafe96da7591148718cb2744ae5f0a89feb1b5497ee167",
+            "bytes": 9487
         },
         {
             "path": "src/lib/computercat/http.ts",
             "source": "files/src/lib/computercat/http.ts",
-            "sha256": "8269f1e7e16734b1c307c4275b4988f6ab9db2643a4f36a039b10b2ce56d4479",
-            "bytes": 3252
+            "sha256": "07a90dca1e0189a4bb95153a973089e8e9d065b2cc3f592ee8b97a5703f051f7",
+            "bytes": 5919
         },
         {
             "path": "src/lib/computercat/index.test.ts",

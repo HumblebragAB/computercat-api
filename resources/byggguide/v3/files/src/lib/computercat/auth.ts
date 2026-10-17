@@ -1,4 +1,4 @@
-import { ApiError, NetworkError, isRecord, requestJson, type FetchLike, type HttpMethod } from './http';
+import { ApiError, NetworkError, isRecord, requestJson, requestJsonMeta, type FetchLike, type HttpMethod, type MetaResult } from './http';
 import { readJson, writeJson, type KeyValueStore } from './storage';
 
 export type Session = { token: string; userId: number; displayName: string; issuedAt?: number };
@@ -6,6 +6,8 @@ export type Session = { token: string; userId: number; displayName: string; issu
 /** Token som är äldre än så här förnyas vid start (POST /auth/refresh). */
 export const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
 export type Authed = <T>(method: HttpMethod, path: string, body?: unknown) => Promise<T>;
+export type MetaOptions = { body?: unknown; headers?: Record<string, string>; noStore?: boolean; signal?: AbortSignal };
+export type AuthedMeta = <T>(method: HttpMethod, path: string, opts?: MetaOptions) => Promise<MetaResult<T>>;
 
 type ApiUser = { id: number; display_name: string; is_anonymous: boolean };
 
@@ -122,6 +124,19 @@ export function createAuth(deps: AuthDeps) {
     }
   };
 
+  /** Som authed men med status och ETag (requestJsonMeta). Samma 401-logik: ny spelare, ett nytt försök. */
+  const authedMeta: AuthedMeta = async <T>(method: HttpMethod, path: string, opts: MetaOptions = {}): Promise<MetaResult<T>> => {
+    const first = await getSession();
+    try {
+      return await requestJsonMeta<T>(deps.fetch, deps.baseUrl, method, path, { ...opts, token: first.token });
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401) throw e;
+      discard(first);
+      const fresh = await getSession();
+      return requestJsonMeta<T>(deps.fetch, deps.baseUrl, method, path, { ...opts, token: fresh.token });
+    }
+  };
+
   /** Kontrollera token vid start. AuthController::me svarar {user}, inte {data} (AuthController.php:106-111). */
   async function verify(): Promise<Session> {
     const res = await authed<unknown>('GET', '/auth/me');
@@ -131,5 +146,5 @@ export function createAuth(deps: AuthDeps) {
     return remember({ ...current, userId: user.id, displayName: user.display_name });
   }
 
-  return { getSession, current: () => session, authed, verify };
+  return { getSession, current: () => session, authed, authedMeta, verify };
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BASE, fakeFetch, json } from '../../../test/fakeFetch';
-import { ApiError, NetworkError, preview, requestJson } from './http';
+import { ApiError, NetworkError, preview, requestJson, requestJsonMeta, type FetchLike } from './http';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -64,5 +64,127 @@ describe('requestJson', () => {
     const out = preview('a'.repeat(10_000));
     expect(out.startsWith('a'.repeat(4096))).toBe(true);
     expect(out).toContain('(+5904 tecken)');
+  });
+});
+
+describe('requestJsonMeta', () => {
+  /** fakeFetch registrerar inte `cache` eller `signal`; lindningen fångar init och respekterar en avbruten signal. */
+  function capturing(inner: FetchLike) {
+    const inits: RequestInit[] = [];
+    const fetch: FetchLike = async (input, init) => {
+      inits.push(init);
+      if (init.signal?.aborted) throw init.signal.reason;
+      return inner(input, init);
+    };
+    return { fetch, inits };
+  }
+
+  it('200 ger status, body och etag', async () => {
+    const f = fakeFetch({
+      'GET /m/1': [new Response(JSON.stringify({ data: { version: 3 } }), { status: 200, headers: { 'Content-Type': 'application/json', ETag: '"3-11"' } })],
+    });
+    const res = await requestJsonMeta<{ data: { version: number } }>(f.fetch, BASE, 'GET', '/m/1', { token: 't1' });
+    expect(res).toEqual({ status: 200, body: { data: { version: 3 } }, etag: '"3-11"' });
+    expect(f.calls[0].headers.Authorization).toBe('Bearer t1');
+    expect(f.unmatched).toEqual([]);
+  });
+
+  it('200 utan ETag ger etag null', async () => {
+    const f = fakeFetch({ 'GET /m/1': [json(200, { ok: true })] });
+    const res = await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', {});
+    expect(res.etag).toBeNull();
+  });
+
+  it('304 ger status 304 och body null utan fel och utan loggning', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = fakeFetch({ 'GET /m/1': [new Response(null, { status: 304, headers: { ETag: '"3-11"' } })] });
+    const res = await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { headers: { 'If-None-Match': '"3-11"' } });
+    expect(res).toEqual({ status: 304, body: null, etag: '"3-11"' });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('skickar If-None-Match och cache: no-store', async () => {
+    const f = fakeFetch({ 'GET /m/1': [new Response(null, { status: 304, headers: { ETag: '"3-11"' } })] });
+    const c = capturing(f.fetch);
+    await requestJsonMeta(c.fetch, BASE, 'GET', '/m/1', { token: 't1', headers: { 'If-None-Match': '"3-11"' }, noStore: true });
+    expect(f.calls[0].headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"3-11"', Authorization: 'Bearer t1' });
+    expect(c.inits[0].cache).toBe('no-store');
+  });
+
+  it('utan noStore sätts ingen cache-inställning', async () => {
+    const f = fakeFetch({ 'GET /m/1': [json(200, {})] });
+    const c = capturing(f.fetch);
+    await requestJsonMeta(c.fetch, BASE, 'GET', '/m/1', {});
+    expect(c.inits[0].cache).toBeUndefined();
+  });
+
+  it('egen header kan inte ersätta Authorization', async () => {
+    const f = fakeFetch({ 'GET /m/1': [json(200, {})] });
+    await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { token: 't1', headers: { Authorization: 'Bearer annan' } });
+    expect(f.calls[0].headers.Authorization).toBe('Bearer t1');
+  });
+
+  it('avbruten signal ger NetworkError', async () => {
+    const f = fakeFetch({ 'GET /m/1': [json(200, {})] });
+    const c = capturing(f.fetch);
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(requestJsonMeta(c.fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal })).rejects.toBeInstanceOf(NetworkError);
+    expect(c.inits[0].signal?.aborted).toBe(true);
+  });
+
+  it('signal som avbryts under anropet når fetch', async () => {
+    const ctrl = new AbortController();
+    const fetch: FetchLike = (_input, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const p = requestJsonMeta(fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal });
+    ctrl.abort();
+    await expect(p).rejects.toBeInstanceOf(NetworkError);
+  });
+
+  it('utan AbortSignal.any kombineras signalen med en egen AbortController', async () => {
+    const original = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true, writable: true });
+    try {
+      const ctrl = new AbortController();
+      let seen: AbortSignal | undefined;
+      const fetch: FetchLike = (_input, init) =>
+        new Promise((_resolve, reject) => {
+          seen = init.signal ?? undefined;
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        });
+      const p = requestJsonMeta(fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal });
+      expect(seen).not.toBe(ctrl.signal);
+      ctrl.abort();
+      await expect(p).rejects.toBeInstanceOf(NetworkError);
+    } finally {
+      if (original) Object.defineProperty(AbortSignal, 'any', original);
+    }
+  });
+
+  it('409 kastar ApiError med body', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = fakeFetch({ 'POST /m/1/actions': [json(409, { message: 'Stale.', error: 'stale' })] });
+    const err = await requestJsonMeta(f.fetch, BASE, 'POST', '/m/1/actions', { body: { type: 'x' } }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    expect((err as ApiError).body).toEqual({ message: 'Stale.', error: 'stale' });
+    expect(f.calls[0].body).toEqual({ type: 'x' });
+  });
+
+  it('5xx loggas med console.error som requestJson', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = fakeFetch({ 'GET /m/1': [json(500, { message: 'Server Error' })] });
+    await expect(requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', {})).rejects.toMatchObject({ name: 'ApiError', status: 500 });
+    expect(error).toHaveBeenCalledWith('[computercat] GET /m/1 → 500', { request: '', response: '{"message":"Server Error"}' });
+  });
+
+  it('nätverksfel ger NetworkError', async () => {
+    const f = fakeFetch({ 'GET /m/1': ['network-error'] });
+    await expect(requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', {})).rejects.toBeInstanceOf(NetworkError);
   });
 });

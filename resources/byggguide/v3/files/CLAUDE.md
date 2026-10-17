@@ -157,6 +157,10 @@ Filer som är nya eller ändrade i v3 jämfört med v2:
 - `src/components/BackgroundSync.tsx`
 - `src/lib/computercat/achievements.test.ts`
 - `src/lib/computercat/achievements.ts`
+- `src/lib/computercat/auth.test.ts`
+- `src/lib/computercat/auth.ts`
+- `src/lib/computercat/http.test.ts`
+- `src/lib/computercat/http.ts`
 - `src/lib/computercat/index.test.ts`
 - `src/lib/computercat/index.ts`
 - `src/lib/computercat/queue.ts`

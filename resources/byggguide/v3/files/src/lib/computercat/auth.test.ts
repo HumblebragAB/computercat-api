@@ -130,4 +130,49 @@ describe('createAuth', () => {
     expect(fb.calls.some((c) => c.path === '/auth/anonymous')).toBe(false);
     expect(JSON.parse(storage.getItem(KEY)!).token).toBe('6|a-ny');
   });
+
+  it('authedMeta: 401 ger en ny anonym spelare och anropet görs om en gång med samma headers', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = fakeFetch({
+      'GET /matches/9': [
+        json(401, { message: 'Unauthenticated.' }),
+        new Response(JSON.stringify({ data: { version: 4 } }), { status: 200, headers: { 'Content-Type': 'application/json', ETag: '"4-12"' } }),
+      ],
+      'POST /auth/anonymous': [anonymous(43, '6|ny')],
+    });
+    const storage = storedSession(GAME, '1|gammal');
+    const auth = createAuth({ fetch: f.fetch, baseUrl: BASE, game: GAME, storage });
+    const res = await auth.authedMeta<{ data: { version: number } }>('GET', '/matches/9', { headers: { 'If-None-Match': '"3-11"' } });
+    expect(res).toEqual({ status: 200, body: { data: { version: 4 } }, etag: '"4-12"' });
+    expect(f.calls.map((c) => `${c.method} ${c.path} ${c.headers.Authorization ?? '-'} ${c.headers['If-None-Match'] ?? '-'}`)).toEqual([
+      'GET /matches/9 Bearer 1|gammal "3-11"',
+      'POST /auth/anonymous - -',
+      'GET /matches/9 Bearer 6|ny "3-11"',
+    ]);
+    expect(JSON.parse(storage.getItem(KEY)!).token).toBe('6|ny');
+    expect(f.unmatched).toEqual([]);
+  });
+
+  it('authedMeta: två 401 i rad ger fel, ingen loop', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const f = fakeFetch({
+      'GET /matches/9': [json(401, { message: 'Unauthenticated.' })],
+      'POST /auth/anonymous': [anonymous(43, '6|ny')],
+    });
+    const auth = createAuth({ fetch: f.fetch, baseUrl: BASE, game: GAME, storage: storedSession(GAME) });
+    const err = await auth.authedMeta('GET', '/matches/9').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(401);
+    expect(f.calls.filter((c) => c.path === '/matches/9')).toHaveLength(2);
+    expect(f.calls.filter((c) => c.path === '/auth/anonymous')).toHaveLength(1);
+  });
+
+  it('authedMeta: nätverksfel behåller token', async () => {
+    const f = fakeFetch({ 'GET /matches/9': ['network-error'] });
+    const storage = storedSession(GAME);
+    const auth = createAuth({ fetch: f.fetch, baseUrl: BASE, game: GAME, storage });
+    await expect(auth.authedMeta('GET', '/matches/9')).rejects.toBeInstanceOf(NetworkError);
+    expect(JSON.parse(storage.getItem(KEY)!).token).toBe('1|stored');
+    expect(f.calls.some((c) => c.path === '/auth/anonymous')).toBe(false);
+  });
 });
