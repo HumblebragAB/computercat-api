@@ -172,6 +172,21 @@ function mergeEvents(a: MatchEvent[], b: MatchEvent[]): MatchEvent[] {
   return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
 }
 
+/** Retry-After begränsas till 1–60 s, så att ett orimligt värde inte fryser bevakningen. */
+export const RETRY_AFTER_MAX_S = 60;
+
+/** Djupfryst kopia till spelet: det kan inte ändra bevakningens interna sammanslagning. */
+function frozenCopy<T>(value: T): T {
+  const copy = structuredClone(value);
+  const freeze = (v: unknown): void => {
+    if (typeof v !== 'object' || v === null || Object.isFrozen(v)) return;
+    Object.freeze(v);
+    for (const child of Object.values(v)) freeze(child);
+  };
+  freeze(copy);
+  return copy;
+}
+
 function maxSeq(events: MatchEvent[]): number | null {
   return events.length === 0 ? null : events[events.length - 1].seq;
 }
@@ -250,6 +265,10 @@ export function createMatches(game: string, deps: MatchesDeps) {
     /** Sant efter ett icke-terminalt fel tills en poll lyckas (då kommer onChange även vid 304). */
     let failing = false;
     let lastReport = -Infinity;
+    /** Backoff eller Retry-After: pollNow väntar till dess (synlig flik, pageshow och online gör det inte). */
+    let notBefore = 0;
+    /** Senast skickade (version, etag). onChange får varje ny, oavsett vilket anrop som hämtade den. */
+    let lastEmitted: { version: number; etag: string | null } | null = null;
 
     const hidden = () => doc?.visibilityState === 'hidden';
 
@@ -261,7 +280,10 @@ export function createMatches(game: string, deps: MatchesDeps) {
       }
     }
     function change(s: MatchSnapshot): void {
-      if (!stopped) safely('onChange', () => handlers.onChange(s));
+      if (stopped) return;
+      lastEmitted = { version: s.version, etag: s.etag };
+      const frozen = frozenCopy(s);
+      safely('onChange', () => handlers.onChange(frozen));
     }
     function fail(e: WatchError): void {
       if (!stopped) safely('onError', () => handlers.onError(e));
@@ -287,19 +309,17 @@ export function createMatches(game: string, deps: MatchesDeps) {
       inFlight?.abort();
       inFlight = null;
       doc?.removeEventListener('visibilitychange', onVisibility);
-      win?.removeEventListener('pageshow', pollNow);
-      win?.removeEventListener('online', pollNow);
+      win?.removeEventListener('pageshow', pollAnyway);
+      win?.removeEventListener('online', pollAnyway);
     }
 
     /** Status och händelser i den kända ögonblicksbilden avgör nästa steg. */
-    function settle(current: MatchSnapshot | undefined, emitted: boolean): void {
+    function settle(current: MatchSnapshot | undefined): void {
       if (current && current.events.some((e) => e.type === 'rematch')) {
-        if (!emitted) change(current);
         stop();
         return;
       }
       if (current?.status === 'abandoned') {
-        if (!emitted) change(current);
         fail({ kind: 'gone', error: new Error('Matchen avbröts (abandoned).'), terminal: true });
         stop();
         return;
@@ -315,7 +335,12 @@ export function createMatches(game: string, deps: MatchesDeps) {
         fail({ kind, error, terminal: false });
       }
       failing = true;
-      schedule(backoffMs);
+      backoff(backoffMs);
+    }
+
+    function backoff(ms: number): void {
+      notBefore = Date.now() + ms;
+      schedule(ms);
     }
 
     function handleError(raw: unknown): void {
@@ -328,7 +353,7 @@ export function createMatches(game: string, deps: MatchesDeps) {
         const retryAfter = raw instanceof ApiError ? raw.retryAfter : null;
         fail({ kind: 'rate_limited', error: e, terminal: false });
         failing = true;
-        schedule(retryAfter !== null ? retryAfter * 1000 : backoffMs);
+        backoff(retryAfter === null ? backoffMs : Math.min(Math.max(retryAfter, 1), RETRY_AFTER_MAX_S) * 1000);
       } else if (e instanceof NetworkError) {
         seriesError('network', e);
       } else if (e instanceof ShapeError) {
@@ -366,7 +391,6 @@ export function createMatches(game: string, deps: MatchesDeps) {
         return;
       }
 
-      let emitted = false;
       if (res.status !== 304) {
         const snap = parseSnapshot(res.body, res.etag);
         if (!snap || snap.id !== id) {
@@ -374,22 +398,28 @@ export function createMatches(game: string, deps: MatchesDeps) {
           return;
         }
         // remember kastar ett svar med lägre version än känd (från en tidigare poll eller act).
-        if (remember(snap)) {
-          change(known.get(id)!);
-          emitted = true;
-        }
+        remember(snap);
       }
+      // Den kända ögonblicksbilden kan också komma från act, join, invite eller en omhämtning
+      // efter stale: deras ETag ger 304 här, men spelet ska ändå få den. Efter ett fel kommer
+      // onChange även utan ändring, så att spelet kan släcka sin banner.
       const current = known.get(id);
-      if (failing && !emitted && current) {
-        // Pollen lyckas igen: onChange även utan ändring, så att spelet kan släcka sin banner.
+      if (current && (failing || lastEmitted === null || lastEmitted.version !== current.version || lastEmitted.etag !== current.etag)) {
         change(current);
-        emitted = true;
       }
       failing = false;
-      settle(current, emitted);
+      notBefore = 0;
+      settle(current);
     }
 
+    /** Spelets pollNow: väntar ut en pågående backoff eller Retry-After. */
     function pollNow(): void {
+      if (Date.now() < notBefore) return;
+      void poll();
+    }
+
+    /** Synlig flik, pageshow och online: poll direkt, också under backoff. */
+    function pollAnyway(): void {
       void poll();
     }
 
@@ -401,14 +431,14 @@ export function createMatches(game: string, deps: MatchesDeps) {
         inFlight?.abort();
         inFlight = null;
       } else {
-        pollNow();
+        pollAnyway();
       }
     }
 
     doc?.addEventListener('visibilitychange', onVisibility);
-    win?.addEventListener('pageshow', pollNow);
-    win?.addEventListener('online', pollNow);
-    pollNow();
+    win?.addEventListener('pageshow', pollAnyway);
+    win?.addEventListener('online', pollAnyway);
+    pollAnyway();
 
     return { stop, pollNow };
   }
@@ -486,13 +516,13 @@ export function createMatches(game: string, deps: MatchesDeps) {
 
 export type Matches = ReturnType<typeof createMatches>;
 
-/** https-origin (valfri sökväg) eller http://localhost[:port] för utveckling. */
-const PUBLIC_ORIGIN = /^(https:\/\/[^/?#\s]+|http:\/\/localhost(:\d+)?)(\/[^?#\s]*)?$/;
+/** https-origin (valfri sökväg) eller http://localhost[:port] / http://127.0.0.1[:port] för utveckling. */
+const PUBLIC_ORIGIN = /^(https:\/\/[^/?#\s]+|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)(\/[^?#\s]*)?$/;
 
 /**
  * Inbjudningslänken `${origin}/#join=<token>`. Fragment, inte query: token hamnar varken i
  * serverloggar eller i Referer. Utan origin används window.location.origin, men bara när den är
- * https (eller http://localhost); i iOS-appen är den capacitor://localhost och måste ersättas av
+ * https (eller http://localhost, http://127.0.0.1); i iOS-appen är den capacitor://localhost och måste ersättas av
  * spelets publika adress.
  */
 export function inviteUrl(token: string, origin?: string): string {

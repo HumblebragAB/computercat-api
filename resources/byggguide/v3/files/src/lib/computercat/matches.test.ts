@@ -375,8 +375,12 @@ function fakeDoc(visibilityState: 'visible' | 'hidden' = 'visible') {
  * fakeFetch plus en "hängande" variant: medan hang är satt svarar fetch aldrig förrän signalen
  * avbryts. Fångar också init (cache) per anrop.
  */
+/** Varje watchSetup i testet; afterEach kräver att inget anrop saknade svar. */
+const watchFakes: ReturnType<typeof fakeFetch>[] = [];
+
 function watchSetup(routes: Parameters<typeof fakeFetch>[0]) {
   const f = fakeFetch(routes);
+  watchFakes.push(f);
   const inits: RequestInit[] = [];
   const state = { hang: false, aborted: 0 };
   const fetch: typeof f.fetch = (input, init) => {
@@ -410,6 +414,8 @@ describe('watch', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    const fakes = watchFakes.splice(0);
+    for (const f of fakes) expect(f.unmatched).toEqual([]);
   });
 
   it('första pollen direkt, sedan var 1500 ms, med cache no-store', async () => {
@@ -455,7 +461,7 @@ describe('watch', () => {
     expect(t.f.unmatched).toEqual([]);
   });
 
-  it('en poll med lägre version än act gav kastas (inget onChange)', async () => {
+  it('en poll med lägre version än act gav kastas; act:s version kommer i stället', async () => {
     const t = watchSetup({
       [POLL]: [withEtag(200, view(), '"7-10"')],
       [`POST ${M}/${ID}/actions`]: [withEtag(200, view({ version: 8, events: [] }), '"8-11"')],
@@ -467,7 +473,7 @@ describe('watch', () => {
     await t.m.act(t.changes[0], 'guess', { value: 1 });
     await tick(1500);
     expect(t.f.calls).toHaveLength(3);
-    expect(t.changes).toHaveLength(1);
+    expect(t.changes.map((c) => c.version)).toEqual([7, 8]);
     w.stop();
     expect(t.f.unmatched).toEqual([]);
   });
@@ -713,6 +719,100 @@ describe('watch', () => {
     expect(t.errors).toEqual([]);
   });
 
+  it('en ögonblicksbild från omhämtningen efter stale når onChange en gång trots 304', async () => {
+    const t = watchSetup({
+      [POLL]: [
+        withEtag(200, view({ version: 8 }), '"8-11"'),
+        withEtag(200, view({ version: 9, events: [{ seq: 13, type: 'guess', seat: 1, payload: {}, at: null }] }), '"9-11"'),
+      ],
+      [`POST ${M}/${ID}/actions`]: [json(409, { message: 'Matchen har ändrats.', code: 'stale', version: 9 })],
+      [`${POLL}?since=13`]: [new Response(null, { status: 304 })],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.changes.map((c) => c.version)).toEqual([8]);
+    const err = (await t.m.act(t.changes[0], 'guess', { value: 1 }).catch((e: unknown) => e)) as MatchError;
+    expect(err.snapshot?.version).toBe(9);
+    await tick(1500);
+    expect(t.f.calls.at(-1)?.headers['If-None-Match']).toBe('"9-11"');
+    expect(t.changes.map((c) => c.version)).toEqual([8, 9]);
+    expect(t.changes[1].events.map((e) => e.seq)).toEqual([12, 13]);
+    await tick(1500);
+    expect(t.changes).toHaveLength(2);
+    w.stop();
+  });
+
+  it('Retry-After begränsas: 0 ger 1000 ms, 3600 ger 60000 ms', async () => {
+    const limited = (retryAfter: string) =>
+      new Response(JSON.stringify({ message: 'För många anrop.', code: 'rate_limited' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': retryAfter },
+      });
+    const t = watchSetup({ [POLL]: [limited('0'), limited('3600'), withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(999);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    await tick(59_999);
+    expect(t.f.calls).toHaveLength(2);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(3);
+    w.stop();
+  });
+
+  it('pollNow väntar ut backoff; online går före', async () => {
+    const t = watchSetup({ [POLL]: ['network-error', withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.f.calls).toHaveLength(1);
+    await tick(100);
+    w.pollNow();
+    await tick();
+    expect(t.f.calls).toHaveLength(1);
+    t.d.fire('online');
+    await tick();
+    expect(t.f.calls).toHaveLength(2);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+  });
+
+  it('pollNow efter backoffens slut pollar direkt', async () => {
+    const t = watchSetup({ [POLL]: ['network-error', withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(5000);
+    expect(t.f.calls).toHaveLength(2);
+    w.pollNow();
+    await tick();
+    expect(t.f.calls).toHaveLength(3);
+    w.stop();
+  });
+
+  it('onChange får en fryst kopia: spelet kan inte ändra nästa sammanslagning', async () => {
+    const ev = (seq: number) => ({ seq, type: 'guess', seat: 0 as const, payload: { n: seq }, at: null });
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view({ events: [ev(11), ev(12)] }), '"7-10"')],
+      [`${POLL}?since=12`]: [withEtag(200, view({ version: 8, events: [ev(13)] }), '"8-10"')],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    const first = t.changes[0];
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(() => first.events.push(ev(99))).toThrow(TypeError);
+    expect(() => {
+      (first.events[0].payload as Record<string, unknown>).n = 0;
+    }).toThrow(TypeError);
+    expect(() => {
+      (first.players as unknown[]).length = 0;
+    }).toThrow(TypeError);
+    await tick(1500);
+    expect(t.changes[1].events).toEqual([ev(11), ev(12), ev(13)]);
+    expect(t.changes[1].players).toHaveLength(2);
+    w.stop();
+  });
+
   it('ett onChange som kastar stoppar inte bevakningen', async () => {
     const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [withEtag(200, view({ version: 8, events: [] }), '"8-10"')] });
     let n = 0;
@@ -745,13 +845,17 @@ describe('inviteUrl', () => {
     expect(inviteUrl('a b/c', 'https://duell.computercat.co/')).toBe('https://duell.computercat.co/#join=a%20b%2Fc');
   });
 
-  it('localhost över http godtas för utveckling', () => {
+  it('localhost och 127.0.0.1 över http godtas för utveckling', () => {
     expect(inviteUrl(TOKEN, 'http://localhost:3000')).toBe(`http://localhost:3000/#join=${TOKEN}`);
+    expect(inviteUrl(TOKEN, 'http://127.0.0.1')).toBe(`http://127.0.0.1/#join=${TOKEN}`);
+    expect(inviteUrl(TOKEN, 'http://127.0.0.1:3000')).toBe(`http://127.0.0.1:3000/#join=${TOKEN}`);
   });
 
   it('capacitor://localhost (iOS-appen) kastar: spelets publika adress måste skickas in', () => {
     expect(() => inviteUrl(TOKEN, 'capacitor://localhost')).toThrow(/publika webbadress/);
     expect(() => inviteUrl(TOKEN, 'http://localhost.evil.example')).toThrow(/publika webbadress/);
+    expect(() => inviteUrl(TOKEN, 'http://127.0.0.1.evil.example')).toThrow(/publika webbadress/);
+    expect(() => inviteUrl(TOKEN, 'http://127.0.0.10')).toThrow(/publika webbadress/);
     expect(() => inviteUrl(TOKEN, 'http://duell.computercat.co')).toThrow(/publika webbadress/);
   });
 
