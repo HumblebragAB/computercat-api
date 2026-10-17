@@ -9,7 +9,7 @@ use LogicException;
 
 /**
  * Reveal: båda låser ett hemligt tal och gissar turvis motspelarens, med svaret högre/lägre.
- * Hittar startspelaren rätt får motspelaren en sista chans (utjämning). Först till två
+ * I duell: hittar startspelaren rätt får motspelaren en sista chans (utjämning). Först till två
  * vunna rundor, tak på fem rundor. Motspelarens tal lämnar bara servern i round_end.
  *
  * Läget (options.mode, också i state.mode) är 'duel' eller 'echo'. I ekot bär varje gissning
