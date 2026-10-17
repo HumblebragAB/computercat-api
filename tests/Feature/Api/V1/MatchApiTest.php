@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
+use Tests\Unit\Matches\FakeRules;
 
 class MatchApiTest extends TestCase
 {
@@ -118,6 +119,24 @@ class MatchApiTest extends TestCase
         $this->as($this->bo)->postJson(self::BASE."/{$id}/leave")->assertOk()->assertJsonPath('status', 'abandoned');
         $this->as($this->anna)->getJson(self::BASE.'/active')->assertOk()->assertExactJson(['data' => []]);
         $this->poll($this->anna, $id)->assertOk()->assertJsonPath('status', 'abandoned');
+    }
+
+    public function test_empty_payload_and_you_serialize_as_json_objects(): void
+    {
+        $id = $this->startedMatch();
+
+        $this->as($this->bo)->postJson(self::BASE."/{$id}/leave")->assertOk();
+
+        $raw = $this->poll($this->anna, $id)->assertOk()->getContent();
+        $this->assertStringContainsString('"type":"left"', $raw);
+        $this->assertStringContainsString('"payload":{}', $raw);
+        $this->assertStringNotContainsString('"payload":[]', $raw);
+
+        config(['matches.rulesets.reveal.class' => FakeRules::class]);
+        $started = $this->startedMatch();
+        $rawStarted = $this->poll($this->anna, $started)->assertOk()->getContent();
+        $this->assertStringContainsString('"you":{}', $rawStarted);
+        $this->assertStringNotContainsString('"you":[]', $rawStarted);
     }
 
     public function test_rematch_route(): void

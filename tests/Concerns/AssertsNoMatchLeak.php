@@ -34,6 +34,9 @@ trait AssertsNoMatchLeak
      */
     protected function assertNoLeak(array $view, ?int $opponentSecret, ?int $ownSecret, array $guessedThisRound = []): void
     {
+        // Vyn kan innehålla stdClass för tomma objekt; kontrollen gäller JSON-formen klienten får.
+        $view = json_decode(json_encode($view, JSON_THROW_ON_ERROR), true, 512, JSON_THROW_ON_ERROR);
+
         $this->assertSame(['secret' => $ownSecret], $view['you'] ?? null, 'you must carry only the own secret');
 
         $rest = $view;

@@ -42,12 +42,12 @@ class MatchView
                 'connected' => self::connected($p),
             ])->values()->all(),
             'state' => $match->state,
-            'you' => $rules->view($own?->hidden_state),
+            'you' => self::asObject($rules->view($own?->hidden_state)),
             'events' => $events->map(fn (GameMatchEvent $e) => [
                 'seq' => $e->seq,
                 'type' => $e->type,
                 'seat' => $e->seat,
-                'payload' => $e->payload,
+                'payload' => self::asObject($e->payload),
                 'at' => $e->created_at?->toIso8601String(),
             ])->all(),
         ];
@@ -60,6 +60,12 @@ class MatchView
         $flag = fn (int $seat) => ($p = $players->firstWhere('seat', $seat)) !== null && self::connected($p) ? '1' : '0';
 
         return $match->version.'-'.$flag(0).$flag(1);
+    }
+
+    /** Tom array blir {} i JSON, inte []. Icke-tomma värden är oförändrade. */
+    private static function asObject(mixed $value): mixed
+    {
+        return $value === [] || $value === null ? new \stdClass : $value;
     }
 
     private static function connected(GameMatchPlayer $player): bool
