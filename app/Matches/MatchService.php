@@ -9,6 +9,7 @@ use App\Models\GameMatchPlayer;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -31,6 +32,14 @@ class MatchService
 
     private const NAME_PATTERN = '/\A[^\p{C}]{1,20}\z/u';
 
+    /** Försök att hitta en ledig inbjudan innan det räknas som fel (koder har liten rymd). */
+    private const INVITE_ATTEMPTS = 10;
+
+    /** Omtag av hela transaktionen när två samtidiga anrop ändå hann välja samma kod. */
+    private const INVITE_RACE_RETRIES = 3;
+
+    public function __construct(private readonly InviteTokens $invites) {}
+
     /** @return array{match: GameMatch, token: string} */
     public function create(Game $game, User $user, string $ruleset, array $options, ?string $name): array
     {
@@ -39,15 +48,17 @@ class MatchService
         $options = $rules->validateOptions($options);
         $name = $this->name($name, 0);
 
-        $token = $this->newToken();
+        $type = InviteTokens::typeFor($ruleset);
 
-        $match = DB::transaction(function () use ($game, $user, $ruleset, $options, $name, $rules, $token) {
+        return $this->retryOnInviteRace(fn () => DB::transaction(function () use ($game, $user, $ruleset, $options, $name, $rules, $type) {
+            [$token, $hash] = $this->freshInvite($type);
+
             $match = new GameMatch;
             $match->game_id = $game->id;
             $match->ruleset = $ruleset;
             $match->options = $options;
             $match->status = GameMatch::STATUS_WAITING;
-            $match->join_token_hash = hash('sha256', $token);
+            $match->join_token_hash = $hash;
             $match->state = $rules->initialState($options);
             $match->version = 1;
             $match->expires_at = now()->addMinutes(self::WAITING_MINUTES);
@@ -55,10 +66,8 @@ class MatchService
 
             $this->addPlayer($match, $user, 0, $name);
 
-            return $match;
-        });
-
-        return ['match' => $match, 'token' => $token];
+            return ['match' => $match, 'token' => $token];
+        }));
     }
 
     public function join(Game $game, User $user, string $token, ?string $name): GameMatch
@@ -66,7 +75,7 @@ class MatchService
         $name = $this->name($name, 1);
 
         return DB::transaction(function () use ($game, $user, $token, $name) {
-            $match = GameMatch::where('join_token_hash', hash('sha256', $token))->lockForUpdate()->first();
+            $match = GameMatch::where('join_token_hash', $this->invites->hash($token))->lockForUpdate()->first();
 
             if ($match === null
                 || (int) $match->game_id !== (int) $game->id
@@ -98,13 +107,13 @@ class MatchService
     }
 
     /**
-     * Ny inbjudningstoken för en väntande match, t.ex. när skaparen laddat om och tappat
-     * QR-koden. Bara skaparen (säte 0) och bara i waiting. Den gamla token slutar gälla,
-     * väntetiden börjar om. Ingen händelse skrivs, men version ökar.
+     * Ny inbjudan (token eller kod enligt regeluppsättningen) för en väntande match, t.ex.
+     * när skaparen laddat om och tappat den. Bara skaparen (säte 0) och bara i waiting. Den
+     * gamla slutar gälla, väntetiden börjar om. Ingen händelse skrivs, men version ökar.
      */
     public function invite(GameMatch $match, User $user): string
     {
-        return DB::transaction(function () use ($match, $user) {
+        return $this->retryOnInviteRace(fn () => DB::transaction(function () use ($match, $user) {
             $match = $this->lock($match);
             $seat = $this->requireSeat($match, $user);
 
@@ -112,14 +121,14 @@ class MatchService
                 throw MatchError::wrongPhase();
             }
 
-            $token = $this->newToken();
-            $match->join_token_hash = hash('sha256', $token);
+            [$token, $hash] = $this->freshInvite(InviteTokens::typeFor($match->ruleset));
+            $match->join_token_hash = $hash;
             $match->expires_at = now()->addMinutes(self::WAITING_MINUTES);
             $match->version = $match->version + 1;
             $match->save();
 
             return $token;
-        });
+        }));
     }
 
     public function act(GameMatch $match, User $user, string $type, array $payload, int $version): GameMatch
@@ -266,10 +275,42 @@ class MatchService
         return $seat === null ? null : (int) $seat;
     }
 
-    /** 32 slumpbytes som base64url utan utfyllnad. Bara sha256 av den lagras. */
-    private function newToken(): string
+    /**
+     * En inbjudan vars hash ingen annan rad har (join_token_hash är unik). En kod har bara
+     * 31^4 värden, så krockar med andra öppna matcher är möjliga och tas om. Tar det aldrig
+     * slut är något fel (trasig generator), och då ska det synas.
+     *
+     * @return array{0: string, 1: string} klartext och hash
+     */
+    private function freshInvite(string $type): array
     {
-        return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+        for ($attempt = 0; $attempt < self::INVITE_ATTEMPTS; $attempt++) {
+            $token = $this->invites->generate($type);
+            $hash = $this->invites->hash($token);
+            if (! GameMatch::where('join_token_hash', $hash)->exists()) {
+                return [$token, $hash];
+            }
+        }
+
+        throw new \RuntimeException('Hittade ingen ledig inbjudningskod efter '.self::INVITE_ATTEMPTS.' försök.');
+    }
+
+    /**
+     * Förkontrollen i freshInvite() låser inget, så två samtidiga anrop kan välja samma kod.
+     * Då slår det unika indexet till, transaktionen rullas tillbaka och tas om med ny kod.
+     * Andra unikhetsfel släpps igenom.
+     */
+    private function retryOnInviteRace(\Closure $fn): mixed
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return $fn();
+            } catch (UniqueConstraintViolationException $e) {
+                if ($attempt >= self::INVITE_RACE_RETRIES || ! str_contains($e->getMessage(), 'join_token_hash')) {
+                    throw $e;
+                }
+            }
+        }
     }
 
     private function startRematch(GameMatch $old, Collection $oldPlayers): GameMatch

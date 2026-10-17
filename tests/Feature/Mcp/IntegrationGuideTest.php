@@ -207,6 +207,9 @@ class IntegrationGuideTest extends McpTestCase
             'rematch_requested', 'abandoned', '7 days', '`matches`',
             '/games/reveal/matches/{id}/invite', 'fresh QR', 'old link stops working', "cache: 'no-store'",
             'exposed via CORS', 'not checked against the cap of 5', 'idempotent no-op', '{message}` only',
+            '- `reveal`: `code`', '4-character code (A–Z without I, L, O; digits 2–9)', 'let the opponent type it',
+            'case-insensitive', 'Invite type `token`', 'Failed joins (`invite_expired`)', '20 in an hour per user', '60 per IP',
+            'so does the old code',
         ] as $needle) {
             $this->assertStringContainsString($needle, $manual, $needle);
         }

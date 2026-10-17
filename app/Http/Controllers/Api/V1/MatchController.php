@@ -12,8 +12,10 @@ use App\Models\Game;
 use App\Models\GameMatch;
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Validator;
 
 /**
@@ -52,12 +54,45 @@ class MatchController extends Controller
             'name' => ['sometimes', 'nullable', 'string', 'max:100'],
         ]);
 
-        return $this->guard(function () use ($request, $game, $data) {
-            $match = $this->reload($this->matches->join($game, $request->user(), $data['token'], $data['name'] ?? null), $game);
+        $failLimits = $this->joinFailLimits($request);
+        foreach ($failLimits as $limit) {
+            if (RateLimiter::tooManyAttempts($limit->key, $limit->maxAttempts)) {
+                return response()->json([
+                    'message' => 'För många anrop just nu. Vänta en stund och försök igen.',
+                    'code' => 'rate_limited',
+                ], 429, ['Retry-After' => RateLimiter::availableIn($limit->key)]);
+            }
+        }
+
+        return $this->guard(function () use ($request, $game, $data, $failLimits) {
+            try {
+                $match = $this->matches->join($game, $request->user(), $data['token'], $data['name'] ?? null);
+            } catch (MatchError $e) {
+                if ($e->errorCode === 'invite_expired') {
+                    foreach ($failLimits as $limit) {
+                        RateLimiter::hit($limit->key, $limit->decaySeconds);
+                    }
+                }
+                throw $e;
+            }
+            $match = $this->reload($match, $game);
             $seat = $this->matches->memberSeat($match, $request->user());
 
             return $this->respond($match, MatchView::for($match, $seat, null));
         });
+    }
+
+    /**
+     * Gränserna för misslyckade join (AppServiceProvider, match-join-fail). Spärrar innan
+     * uppslaget, så att en spärrad gissare inte heller kan träffa en giltig kod.
+     *
+     * @return list<Limit>
+     */
+    private function joinFailLimits(Request $request): array
+    {
+        $limits = RateLimiter::limiter('match-join-fail')($request);
+
+        return is_array($limits) ? $limits : [$limits];
     }
 
     public function active(Request $request, Game $game): JsonResponse

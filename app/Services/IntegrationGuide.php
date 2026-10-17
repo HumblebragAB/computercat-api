@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Filament\Resources\GameResource;
+use App\Matches\InviteTokens;
 use App\Matches\Rules\RevealRules;
 use App\Matches\RulesetRegistry;
 use App\Models\Game;
@@ -708,9 +709,17 @@ class IntegrationGuide
             $lines[] = '- Numbers in a payload must be JSON integers. `"37"`, `37.0` and `37.5` give 422 `invalid_payload`.';
             $lines[] = '';
             $lines[] = '### Inviting a friend';
-            $lines[] = '`POST /matches` returns `join_token`. Build the link yourself as `https://<game origin>/#join=<token>` (a fragment, so the token never reaches server logs or the Referer header; do not use `?join=`) and show it as a QR code. The friend\'s client reads `join` from `location.hash` and calls `POST /matches/join`. The server does not know your origin. The token is single use.';
+            $lines[] = '`POST /matches` returns `join_token`, and `POST /matches/join` takes it back as `token`. What `join_token` looks like depends on the ruleset\'s invite type:';
             $lines[] = '';
-            $lines[] = 'The token is only returned once and the server keeps only a hash of it. If the creator reloads while waiting (find the match with `GET /matches/active`), call `POST /matches/{id}/invite` to get a new `join_token` and show a fresh QR code. The old link stops working.';
+            foreach ($rulesets as $ruleset) {
+                $lines[] = '- `'.self::code($ruleset).'`: `'.InviteTokens::typeFor($ruleset).'`';
+            }
+            $lines[] = '';
+            $lines[] = '**Invite type `token`**: `join_token` is 43 characters. Build the link yourself as `https://<game origin>/#join=<token>` (a fragment, so the token never reaches server logs or the Referer header; do not use `?join=`) and show it as a QR code. The friend\'s client reads `join` from `location.hash` and calls `POST /matches/join`. The server does not know your origin. The token is case-sensitive; send it unchanged.';
+            $lines[] = '';
+            $lines[] = '**Invite type `code`**: `join_token` is a 4-character code (A–Z without I, L, O; digits 2–9). Show it large on the creator\'s screen and let the opponent type it; send what they typed as `token`. Matching is case-insensitive and spaces are ignored. No link or QR code is needed.';
+            $lines[] = '';
+            $lines[] = 'Either kind is single use, is only returned once, and the server keeps only a hash of it. If the creator reloads while waiting (find the match with `GET /matches/active`), call `POST /matches/{id}/invite` to get a new `join_token` and show it again (a fresh QR code or the new code). The old link stops working, and so does the old code.';
             $lines[] = '';
             $lines[] = '### Rematch';
             $lines[] = 'Only allowed when `status` is `finished`. The first call adds `rematch_requested` (with `seat`). When both seats have asked, a new match is created with the same players, seats, names and options, and the old match gets a `rematch` event with `{match_id}`. Switch to that match when you see the event. A rematch needs no `join_token`.';
@@ -733,6 +742,8 @@ class IntegrationGuide
             $lines[] = '| 429 | `rate_limited` | Too many requests. Back off and retry after `Retry-After` |';
             $lines[] = '';
             $lines[] = 'Limits per user: create 10/min, join 10/min (30/min per IP), poll 120/min, actions/leave/rematch/invite 60/min.';
+            $lines[] = '';
+            $lines[] = 'Failed joins (`invite_expired`) are also counted: after 20 in an hour per user, or 60 per IP, every join gets 429 `rate_limited` until `Retry-After`, even with a valid invite. Successful joins and `own_match` do not count. Show the error and let the player try again later; do not retry on a timer.';
             $lines[] = '';
             $lines[] = '### Lifecycle';
             $lines[] = '- `waiting` with no opponent for 15 min becomes `abandoned`.';

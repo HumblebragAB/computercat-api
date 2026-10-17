@@ -90,7 +90,7 @@ class MatchApiTest extends TestCase
             ->assertJsonPath('match.status', 'waiting')
             ->assertJsonPath('match.your_seat', 0);
         $this->assertSame(['match', 'join_token'], array_keys($created->json()));
-        $this->assertMatchesRegularExpression('/\A[A-Za-z0-9_-]{43}\z/', $created->json('join_token'));
+        $this->assertMatchesRegularExpression('/\A[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}\z/', $created->json('join_token'));
         $id = $created->json('match.id');
 
         $joined = $this->as($this->bo)->postJson(self::BASE.'/join', ['token' => $created->json('join_token'), 'name' => 'Bo']);
@@ -356,20 +356,21 @@ class MatchApiTest extends TestCase
         $response = $this->as($this->anna)->postJson(self::BASE."/{$id}/invite")->assertOk();
         $this->assertSame(['match', 'join_token'], array_keys($response->json()));
         $new = $response->json('join_token');
-        $this->assertMatchesRegularExpression('/\A[A-Za-z0-9_-]{43}\z/', $new);
+        $this->assertMatchesRegularExpression('/\A[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}\z/', $new);
         $this->assertNotSame($old, $new);
         $response->assertJsonPath('match.id', $id)->assertJsonPath('match.status', 'waiting')->assertJsonPath('match.your_seat', 0);
 
         $after = GameMatch::findOrFail($id);
-        $this->assertSame(hash('sha256', $new), $after->join_token_hash);
+        $this->assertSame(hash_hmac('sha256', $new, config('app.key')), $after->join_token_hash);
         $this->assertSame($before->version + 1, $after->version);
         $this->assertTrue($after->expires_at->equalTo(now()->addMinutes(15)->startOfSecond()));
         $this->assertSame(0, $after->events()->count());
 
         // Tokenet syns aldrig i vyn.
         $view = $this->poll($this->anna, $id)->assertOk()->getContent();
-        $this->assertStringNotContainsString($new, $view);
-        $this->assertStringNotContainsString($old, $view);
+        // Som JSON-värde: fyra tecken kan av en slump stå inuti t.ex. ett id.
+        $this->assertStringNotContainsString('"'.$new.'"', $view);
+        $this->assertStringNotContainsString('"'.$old.'"', $view);
         $this->assertStringNotContainsString('join_token', $view);
 
         $this->as($this->bo)->postJson(self::BASE.'/join', ['token' => $old])

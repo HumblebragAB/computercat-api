@@ -114,9 +114,9 @@ class MatchServiceTest extends TestCase
         ['match' => $created, 'token' => $token] = $this->create();
         $this->assertSame(GameMatch::STATUS_WAITING, $created->status);
         $this->assertSame(1, $created->version);
-        $this->assertSame(43, strlen($token));
-        $this->assertMatchesRegularExpression('/\A[A-Za-z0-9_-]{43}\z/', $token);
-        $this->assertSame(hash('sha256', $token), $created->fresh()->join_token_hash);
+        // Reveal bjuder in med kort kod (invite => code), lagrad som HMAC. Se MatchInviteCodeTest.
+        $this->assertMatchesRegularExpression('/\A[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}\z/', $token);
+        $this->assertSame(hash_hmac('sha256', $token, config('app.key')), $created->fresh()->join_token_hash);
 
         $match = $this->service->join($this->game, $this->bo, $token, 'Bo');
 
