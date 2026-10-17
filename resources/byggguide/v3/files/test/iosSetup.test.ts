@@ -24,7 +24,9 @@ ${extra}</dict>
 `;
 const SPM = (v: string) =>
   `let package = Package(\n    dependencies: [\n        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "${v}")\n    ]\n)\n`;
-const PBX = (id: string) => `\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${id};\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${id};\n`;
+// Samma form som Capacitor 8.5.3:s mall (Task 5, fixrunda 1): Debug och Release har var sin rad.
+const PBX = (id: string) =>
+  `\t\t\t\tINFOPLIST_FILE = App/Info.plist;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${id};\n\t\t\t\tINFOPLIST_FILE = App/Info.plist;\n\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${id};\n`;
 const PKG = (over: Record<string, unknown> = {}) =>
   JSON.stringify({
     version: '0.1.0',
@@ -141,6 +143,26 @@ describe('checkIos', () => {
     expect(errors).toContain('ios/App/App/kopia.plist: symbolisk länk');
   });
 
+  it('fäller när ios/ själv är en symbolisk länk', () => {
+    const real = project();
+    const root = write(tempRoot(), { 'package.json': PACKAGE, 'capacitor.config.ts': capacitorConfigSource(ID, 'Kattsvep') });
+    symlinkSync(join(real, 'ios'), join(root, 'ios'));
+    const { present, errors } = checkIos(root);
+    expect(present).toBe(true);
+    expect(errors.join('\n')).toContain('ios: symbolisk länk');
+  });
+
+  it('fäller när ios är en fil', () => {
+    const root = write(tempRoot(), { 'package.json': PACKAGE, ios: 'x' });
+    expect(checkIos(root).errors.join('\n')).toContain('ios: ska vara en katalog');
+  });
+
+  it('fäller på en symbolisk länk som heter ios/App/App/public', () => {
+    const root = project();
+    symlinkSync('/etc', join(root, 'ios/App/App/public'));
+    expect(checkIos(root).errors.join('\n')).toContain('ios/App/App/public: symbolisk länk');
+  });
+
   it('hoppar bara över exakt ios/App/App/public', () => {
     const root = project({ 'ios/App/App/public/x.p12': 'kopia av out/', 'ios/App/public/dist.p12': 'x' });
     const errors = checkIos(root).errors.join('\n');
@@ -167,6 +189,25 @@ describe('checkIos', () => {
     ['certifikat i repot', { 'ios/App/dist.p12': 'x' }, 'dist.p12'],
     ['profil i repot', { 'ios/App/App/app.mobileprovision': 'x' }, 'app.mobileprovision'],
     ['ExportOptions.plist i repot', { 'ios/ExportOptions.plist': '<plist/>' }, 'ExportOptions.plist'],
+    ['exportoptions.plist med små bokstäver', { 'ios/exportoptions.plist': '<plist/>' }, 'exportoptions.plist'],
+    ['.crt i repot', { 'ios/a.crt': 'x' }, 'a.crt'],
+    ['.der i repot', { 'ios/a.der': 'x' }, 'a.der'],
+    ['.provisionprofile i repot', { 'ios/a.provisionprofile': 'x' }, 'a.provisionprofile'],
+    ['.keychain i repot', { 'ios/a.keychain': 'x' }, 'a.keychain'],
+    ['.p7b i repot', { 'ios/a.p7b': 'x' }, 'a.p7b'],
+    ['.P12 med versaler', { 'ios/a.P12': 'x' }, 'a.P12'],
+    ['kommenterad Package.swift-rad och en annan version', { 'ios/App/CapApp-SPM/Package.swift': `// capacitor-swift-pm.git", exact: "8.5.3"\n${SPM('9.0.0')}` }, 'capacitor-swift-pm'],
+    ['två capacitor-swift-pm i Package.swift', { 'ios/App/CapApp-SPM/Package.swift': SPM('8.5.3') + SPM('9.0.0') }, 'capacitor-swift-pm'],
+    ['kommenterad exportdeklaration', { 'ios/App/App/Info.plist': PLIST(`<!--\n${COMPLIANT}-->\n`) }, 'ITSAppUsesNonExemptEncryption'],
+    ['dubbel exportdeklaration', { 'ios/App/App/Info.plist': PLIST(COMPLIANT + COMPLIANT) }, 'ITSAppUsesNonExemptEncryption'],
+    ['dubbel CFBundleVersion', { 'ios/App/App/Info.plist': PLIST(COMPLIANT + '\t<key>CFBundleVersion</key>\n\t<string>7</string>\n') }, 'CFBundleVersion'],
+    ['dubbel CFBundleShortVersionString', { 'ios/App/App/Info.plist': PLIST(COMPLIANT + '\t<key>CFBundleShortVersionString</key>\n\t<string>1.0</string>\n') }, 'CFBundleShortVersionString'],
+    ['extra bundle-id utan mellanslag', { 'ios/App/App.xcodeproj/project.pbxproj': `${PBX(ID)}\t\tPRODUCT_BUNDLE_IDENTIFIER=se.evil.x;\n` }, 'PRODUCT_BUNDLE_IDENTIFIER'],
+    ['bundle-id för en sdk-variant', { 'ios/App/App.xcodeproj/project.pbxproj': `${PBX(ID)}\t\t"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = se.evil.y;\n` }, 'PRODUCT_BUNDLE_IDENTIFIER'],
+    ['bundle-id med citattecken och fel värde', { 'ios/App/App.xcodeproj/project.pbxproj': `${PBX(ID)}\t\tPRODUCT_BUNDLE_IDENTIFIER = "se.evil.z";\n` }, 'PRODUCT_BUNDLE_IDENTIFIER'],
+    ['annan INFOPLIST_FILE', { 'ios/App/App.xcodeproj/project.pbxproj': `${PBX(ID)}\t\tINFOPLIST_FILE = App/Other.plist;\n` }, 'INFOPLIST_FILE'],
+    ['saknad INFOPLIST_FILE', { 'ios/App/App.xcodeproj/project.pbxproj': `\t\tPRODUCT_BUNDLE_IDENTIFIER = ${ID};\n` }, 'INFOPLIST_FILE'],
+    ['appId bara i en kommentar', { 'capacitor.config.ts': `/*\n  appId: "${ID}",\n*/\nconst config = { appId: process.env.X };\n  webDir: 'out',\n` }, 'appId'],
   ])('fäller: %s', (_name, files, needle) => {
     const { present, errors } = checkIos(project(files));
     expect(present).toBe(true);
@@ -237,5 +278,38 @@ describe('setupIos', () => {
     setupIos({ root, appId: ID, appName: `  ${name}  `, addIos: rightName });
     expect(readFileSync(join(root, 'capacitor.config.ts'), 'utf8')).toContain(`appName: ${JSON.stringify(name)},`);
     expect(checkIos(root)).toEqual({ present: true, errors: [] });
+  });
+
+  it('ett misslyckat cap add lämnar besked om hur man kör om, med orsaken kvar', () => {
+    const root = freshRepo();
+    const boom = new Error('cap add ios misslyckades (exitkod 1)');
+    const failing = () => {
+      throw boom;
+    };
+    let thrown: unknown;
+    try {
+      setupIos({ root, appId: ID, appName: 'Kattsvep', addIos: failing });
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as Error).message).toContain('cap add ios misslyckades');
+    expect((thrown as Error).message).toContain('ta bort ios/ och capacitor.config.ts');
+    expect((thrown as Error).cause).toBe(boom);
+    expect(existsSync(join(root, 'capacitor.config.ts'))).toBe(true); // raderas aldrig automatiskt
+  });
+
+  it('fel visningsnamn säger också åt en att fråga en människa om namnet', () => {
+    const root = freshRepo();
+    const wrongName = (r: string) => {
+      fakeCapAdd(r);
+      write(r, { 'ios/App/App/Info.plist': PLIST().replace('<string>Kattsvep</string>', '<string>Katt $1</string>') });
+    };
+    expect(() => setupIos({ root, appId: ID, appName: 'Kattsvep', addIos: wrongName })).toThrow('fråga en människa om namnet');
+  });
+
+  it('"ios/ finns redan" säger hur man kör om', () => {
+    const root = freshRepo();
+    mkdirSync(join(root, 'ios'));
+    expect(() => setupIos({ root, appId: ID, appName: 'Kattsvep', addIos: fakeCapAdd })).toThrow('ta bort ios/ och capacitor.config.ts');
   });
 });

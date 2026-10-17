@@ -135,14 +135,14 @@
         {
             "path": "scripts/check-ios.mjs",
             "source": "files/scripts/check-ios.mjs",
-            "sha256": "a7935a503c7817eb6d7a3cf9d22a7d34b1d0af1f71abc99e73204798fe00e272",
-            "bytes": 8600
+            "sha256": "76b45d72d3052d4d438ab7780c5c393c603cd3558312bcf2dd180774d2ad8a0a",
+            "bytes": 10632
         },
         {
             "path": "scripts/ios-setup.mjs",
             "source": "files/scripts/ios-setup.mjs",
-            "sha256": "8aaa214cca7effa708b66d2aeac05717a32cef6585e5fdcd2f1401db0584250d",
-            "bytes": 3155
+            "sha256": "acf4c477f296bf8ed5dc6ed7c0043c36c1781c467fe1c54d00e6712077e071b9",
+            "bytes": 4016
         },
         {
             "path": "src/app/globals.css",
@@ -405,8 +405,8 @@
         {
             "path": "test/iosSetup.test.ts",
             "source": "files/test/iosSetup.test.ts",
-            "sha256": "d714a5745c0242387bdfc6fb63f570e7acfa7d848c569503cfb04667e2ed0cea",
-            "bytes": 11921
+            "sha256": "19f8d0ff4950390850a21d9518604f36b10aec59ab367d253be31b4817fe51da",
+            "bytes": 16846
         },
         {
             "path": "test/security.test.ts",

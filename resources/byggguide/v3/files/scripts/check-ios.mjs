@@ -9,10 +9,14 @@ import { pathToFileURL } from 'node:url';
 // Samma mönster som Computercat (BundleId) och släpprepots "Validera indata".
 export const BUNDLE_ID = /^se\.computercat\.[a-z][a-z0-9]{1,39}$/;
 const VERSION = /^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$/;
-const SECRET_FILE = /\.(p8|p12|cer|pem|key|mobileprovision)$/i;
+const SECRET_FILE = /\.(p8|p12|cer|crt|der|pem|key|mobileprovision|provisionprofile|keychain|p7b)$/i;
 // Guidens Capacitor; samma som manifestets ios.capacitor (BuildGuideV3Test jämför).
 export const CAPACITOR = '8.5.3';
 const CAPACITOR_PACKAGES = [['@capacitor/core', 'dependencies'], ['@capacitor/ios', 'dependencies'], ['@capacitor/cli', 'devDependencies']];
+const stripXml = (s) => s.replace(/<!--[\s\S]*?-->/g, '');
+// Tar bort /* */ och //-rader men låter // i URL:er (https://) vara kvar.
+const stripCode = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+const count = (s, needle) => s.split(needle).length - 1;
 // Bara Capacitors kopia av out/ (ignorerad av ios/.gitignore) hoppas över, och bara på exakt den platsen.
 const SKIP = join('ios', 'App', 'App', 'public');
 
@@ -44,7 +48,7 @@ export function capacitorConfigSource(appId, appName) {
 
 /** Exportdeklarationen (bilagan B8): utan den frågar App Store Connect för varje bygge. */
 export function addExportCompliance(plist) {
-  if (/<key>ITSAppUsesNonExemptEncryption<\/key>/.test(plist)) return plist;
+  if (/<key>ITSAppUsesNonExemptEncryption<\/key>/.test(stripXml(plist))) return plist;
   const end = plist.lastIndexOf('</dict>');
   if (end === -1) throw new Error('Info.plist saknar </dict>');
   return `${plist.slice(0, end)}\t<key>ITSAppUsesNonExemptEncryption</key>\n\t<false/>\n${plist.slice(end)}`;
@@ -52,15 +56,16 @@ export function addExportCompliance(plist) {
 
 /** CFBundleDisplayName ur Info.plist, med XML-entiteter avkodade; null om nyckeln saknas. */
 export function readDisplayName(plist) {
-  const m = /<key>CFBundleDisplayName<\/key>\s*<string>([^<]*)<\/string>/.exec(plist);
-  if (m === null) return null;
+  const clean = stripXml(plist);
+  const m = /<key>CFBundleDisplayName<\/key>\s*<string>([^<]*)<\/string>/.exec(clean);
+  if (m === null || count(clean, '<key>CFBundleDisplayName</key>') !== 1) return null;
   const entities = { quot: '"', apos: "'", lt: '<', gt: '>' };
   // &amp; sist och i samma pass: ett enda tolkningssteg, så att &amp;quot; blir &quot; och inte ".
   return m[1].replace(/&(quot|apos|lt|gt|amp);/g, (_, e) => (e === 'amp' ? '&' : entities[e]));
 }
 
 function readAppId(source) {
-  const found = [...source.matchAll(/^\s*appId:\s*("(?:[^"\\]|\\.)*"),\s*$/gm)];
+  const found = [...stripCode(source).matchAll(/^\s*appId:\s*("(?:[^"\\]|\\.)*"),\s*$/gm)];
   if (found.length !== 1) return null;
   try {
     return JSON.parse(found[0][1]);
@@ -73,9 +78,10 @@ function readAppId(source) {
 function walk(root, dir) {
   return readdirSync(join(root, dir)).flatMap((name) => {
     const rel = join(dir, name);
-    if (rel === SKIP) return [];
     const st = lstatSync(join(root, rel));
     if (st.isSymbolicLink()) return [{ rel, link: true }];
+    // Hoppa bara över en riktig katalog på exakt den platsen; en länk där fälls ovan.
+    if (rel === SKIP && st.isDirectory()) return [];
     if (st.isDirectory()) return walk(root, rel);
     return [{ rel, link: false }];
   });
@@ -83,7 +89,17 @@ function walk(root, dir) {
 
 /** Fel i spelets iOS-projekt. present: false när ios/ saknas (spelet är inte förberett för iOS). */
 export function checkIos(root) {
-  if (!existsSync(join(root, 'ios'))) return { present: false, errors: [] };
+  let iosStat = null;
+  try {
+    iosStat = lstatSync(join(root, 'ios'));
+  } catch (e) {
+    if (e?.code !== 'ENOENT') throw e;
+  }
+  if (iosStat === null) return { present: false, errors: [] };
+  if (iosStat.isSymbolicLink()) {
+    return { present: true, errors: ['ios: symbolisk länk; ios/ ska vara en riktig katalog i repot (en länk kan peka ut ur repot i bygget)'] };
+  }
+  if (!iosStat.isDirectory()) return { present: true, errors: ['ios: ska vara en katalog'] };
   const errors = [];
   const read = (p) => (existsSync(join(root, p)) ? readFileSync(join(root, p), 'utf8') : null);
 
@@ -97,7 +113,7 @@ export function checkIos(root) {
     errors.push(`package.json: version ${JSON.stringify(pkg.version)} ska vara MAJOR.MINOR.PATCH (0–999 per del); versionen sätts bara där`);
   }
 
-  const config = read('capacitor.config.ts');
+  const config = read('capacitor.config.ts') === null ? null : stripCode(read('capacitor.config.ts'));
   const appId = config === null ? null : readAppId(config);
   if (config === null) {
     errors.push('capacitor.config.ts saknas; iOS-projektet skapas med node scripts/ios-setup.mjs');
@@ -110,26 +126,34 @@ export function checkIos(root) {
   const pbx = read('ios/App/App.xcodeproj/project.pbxproj');
   if (pbx === null) {
     errors.push('ios/App/App.xcodeproj/project.pbxproj saknas; iOS-projektet skapas med node scripts/ios-setup.mjs');
-  } else if (appId !== null) {
-    const ids = [...new Set([...pbx.matchAll(/^\s*PRODUCT_BUNDLE_IDENTIFIER = "?([^";]+)"?;/gm)].map((m) => m[1]))];
-    if (ids.length !== 1 || ids[0] !== appId) {
-      errors.push(`project.pbxproj: PRODUCT_BUNDLE_IDENTIFIER är ${ids.join(', ') || 'saknas'}, ska vara ${appId} som i capacitor.config.ts`);
+  } else {
+    const code = pbx.replace(/\/\*[\s\S]*?\*\//g, '');
+    if (appId !== null) {
+      // Varje förekomst, med eller utan mellanslag, citattecken eller [sdk=...], ska vara exakt appId.
+      const strict = [...code.matchAll(/"?PRODUCT_BUNDLE_IDENTIFIER(?:\[[^\]\n]*\])?"?[ \t]*=[ \t]*("?)([^";\n]*)\1[ \t]*;/g)].map((m) => m[2]);
+      const seen = count(code, 'PRODUCT_BUNDLE_IDENTIFIER');
+      if (strict.length === 0 || strict.length !== seen || strict.some((id) => id !== appId)) {
+        errors.push(`project.pbxproj: varje PRODUCT_BUNDLE_IDENTIFIER ska vara ${appId} som i capacitor.config.ts (hittade ${strict.join(', ') || 'inget läsbart'}, ${seen} förekomster)`);
+      }
+    }
+    const info = [...code.matchAll(/^[ \t]*INFOPLIST_FILE = App\/Info\.plist;[ \t]*$/gm)].length;
+    if (info === 0 || info !== count(code, 'INFOPLIST_FILE')) {
+      errors.push('project.pbxproj: varje INFOPLIST_FILE ska vara App/Info.plist (och minst en ska finnas)');
     }
   }
 
-  const plist = read('ios/App/App/Info.plist');
-  if (plist === null) {
+  const rawPlist = read('ios/App/App/Info.plist');
+  if (rawPlist === null) {
     errors.push('ios/App/App/Info.plist saknas');
   } else {
-    if (!/<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\s*\/>/.test(plist)) {
-      errors.push('Info.plist: ITSAppUsesNonExemptEncryption ska vara false');
-    }
-    if (!/<key>CFBundleShortVersionString<\/key>\s*<string>\$\(MARKETING_VERSION\)<\/string>/.test(plist)) {
-      errors.push('Info.plist: CFBundleShortVersionString ska vara $(MARKETING_VERSION); versionen sätts bara i package.json');
-    }
-    if (!/<key>CFBundleVersion<\/key>\s*<string>\$\(CURRENT_PROJECT_VERSION\)<\/string>/.test(plist)) {
-      errors.push('Info.plist: CFBundleVersion ska vara $(CURRENT_PROJECT_VERSION); byggnumret sätts av Computercat');
-    }
+    const plist = stripXml(rawPlist);
+    // Varje kontrollerad nyckel ska stå exakt en gång, annars är det oklart vilket värde som gäller.
+    const once = (key, valuePattern, message) => {
+      if (count(plist, `<key>${key}</key>`) !== 1 || !new RegExp(`<key>${key}</key>\\s*${valuePattern}`).test(plist)) errors.push(message);
+    };
+    once('ITSAppUsesNonExemptEncryption', '<false\\s*/>', 'Info.plist: ITSAppUsesNonExemptEncryption ska stå en gång och vara false');
+    once('CFBundleShortVersionString', '<string>\\$\\(MARKETING_VERSION\\)</string>', 'Info.plist: CFBundleShortVersionString ska stå en gång och vara $(MARKETING_VERSION); versionen sätts bara i package.json');
+    once('CFBundleVersion', '<string>\\$\\(CURRENT_PROJECT_VERSION\\)</string>', 'Info.plist: CFBundleVersion ska stå en gång och vara $(CURRENT_PROJECT_VERSION); byggnumret sätts av Computercat');
   }
 
   for (const [name, section] of CAPACITOR_PACKAGES) {
@@ -140,11 +164,14 @@ export function checkIos(root) {
       errors.push(`package.json: ${name} är ${got}, byggguiden kräver exakt ${CAPACITOR}; ändra inte Capacitors version i spelet`);
     }
   }
-  const spm = read('ios/App/CapApp-SPM/Package.swift');
-  if (spm === null) {
+  const spmRaw = read('ios/App/CapApp-SPM/Package.swift');
+  if (spmRaw === null) {
     errors.push('ios/App/CapApp-SPM/Package.swift saknas: iOS-projektet ska använda Swift Package Manager');
-  } else if (!spm.includes(`capacitor-swift-pm.git", exact: "${CAPACITOR}"`)) {
-    errors.push(`Package.swift: capacitor-swift-pm ska vara exakt ${CAPACITOR}; kör npx cap sync ios`);
+  } else {
+    const spm = stripCode(spmRaw);
+    if (count(spm, 'capacitor-swift-pm.git') !== 1 || !spm.includes(`capacitor-swift-pm.git", exact: "${CAPACITOR}"`)) {
+      errors.push(`Package.swift: capacitor-swift-pm ska stå en gång och vara exakt ${CAPACITOR}; kör npx cap sync ios`);
+    }
   }
   if (existsSync(join(root, 'ios', 'App', 'Podfile'))) {
     errors.push('ios/App/Podfile finns: byggguiden använder Swift Package Manager, inte CocoaPods');
@@ -153,7 +180,7 @@ export function checkIos(root) {
   for (const { rel, link } of walk(root, 'ios')) {
     if (link) {
       errors.push(`${rel}: symbolisk länk; ios/ får inte innehålla länkar (en länk kan peka ut ur repot i bygget)`);
-    } else if (SECRET_FILE.test(rel) || basename(rel) === 'ExportOptions.plist') {
+    } else if (SECRET_FILE.test(rel) || basename(rel).toLowerCase() === 'exportoptions.plist') {
       errors.push(`${rel}: certifikat, nycklar, profiler och exportinställningar hör inte hemma i repot; Computercat signerar`);
     }
   }

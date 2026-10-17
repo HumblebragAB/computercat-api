@@ -13,14 +13,16 @@ function capAddIos(root) {
   const cap = join(root, 'node_modules', '.bin', 'cap');
   if (!existsSync(cap)) throw new Error('node_modules/.bin/cap saknas; kör npm ci --ignore-scripts först');
   const r = spawnSync(cap, ['add', 'ios', '--packagemanager', 'SPM'], { cwd: root, stdio: 'inherit' });
-  if (r.status !== 0) throw new Error(`cap add ios misslyckades (exitkod ${r.status})`);
+  if (r.status !== 0) throw new Error(`cap add ios misslyckades (exitkod ${r.status}${r.signal ? `, signal ${r.signal}` : ''}${r.error ? `, ${r.error.message}` : ''})`);
 }
+
+const RERUN = 'ta bort ios/ och capacitor.config.ts och kör ios-setup igen (inget raderas automatiskt)';
 
 export function setupIos({ root, appId, appName, addIos = capAddIos }) {
   // Indata först: ett ogiltigt id eller namn ska aldrig lämna något efter sig.
   const config = capacitorConfigSource(appId, appName);
   if (existsSync(join(root, 'ios'))) {
-    throw new Error('ios/ finns redan. ios-setup körs bara en gång; kontrollera projektet med node scripts/check-ios.mjs');
+    throw new Error(`ios/ finns redan. ios-setup körs bara en gång; kontrollera projektet med node scripts/check-ios.mjs. Efter ett avbrutet försök: ${RERUN}`);
   }
   const configPath = join(root, 'capacitor.config.ts');
   if (existsSync(configPath) && readFileSync(configPath, 'utf8') !== config) {
@@ -31,12 +33,24 @@ export function setupIos({ root, appId, appName, addIos = capAddIos }) {
   }
 
   writeFileSync(configPath, config);
+  // Från och med nu kan ett avbrott lämna capacitor.config.ts och en del av ios/ kvar.
+  // Felet behåller originalet (cause) och säger hur man kör om; inget raderas automatiskt.
+  try {
+    finishIos({ root, appName, addIos });
+  } catch (cause) {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    const name = /CFBundleDisplayName/.test(original) ? ' Därefter: fråga en människa om namnet om det inte går att skriva rätt.' : '';
+    throw new Error(`${original}\nios-setup avbröts efter att filer skrivits: ${RERUN}.${name}`, { cause });
+  }
+}
+
+function finishIos({ root, appName, addIos }) {
   addIos(root);
 
   const plistPath = join(root, 'ios', 'App', 'App', 'Info.plist');
   if (!existsSync(plistPath)) throw new Error('ios/App/App/Info.plist saknas efter cap add ios');
   const plist = readFileSync(plistPath, 'utf8');
-  // Capacitor sätter namnet med String.replace, så $&, $1 eller $$ i namnet blir tyst ett annat namn.
+  // Capacitor sätter namnet med String.replace, så $1 eller $$ i namnet blir tyst ett annat namn.
   const shown = readDisplayName(plist);
   if (shown !== appName.trim()) {
     throw new Error(`CFBundleDisplayName i Info.plist är ${JSON.stringify(shown)}, ska vara ${JSON.stringify(appName.trim())}; cap add ios skrev fel visningsnamn`);

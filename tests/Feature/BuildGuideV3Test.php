@@ -70,7 +70,10 @@ class BuildGuideV3Test extends TestCase
         $script = BuildGuide::file('v3', 'scripts/check-ios.mjs')['content'];
 
         $this->assertSame(1, preg_match("/^export const CAPACITOR = '([0-9.]+)';$/m", $script, $m));
-        $this->assertSame(BuildGuide::manifest('v3')['ios']['capacitor'] ?? '8.5.3', $m[1]);
+        $stack = BuildGuide::manifest('v3')['stack'];
+        foreach (['@capacitor/core', '@capacitor/ios', '@capacitor/cli'] as $name) {
+            $this->assertSame($stack[$name] ?? null, $m[1], $name);
+        }
     }
 
     public function test_check_runs_the_ios_check_last(): void
