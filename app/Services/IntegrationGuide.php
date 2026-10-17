@@ -665,7 +665,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = 'Rulesets available to this game: '.($rulesets === [] ? 'none' : implode(', ', array_map(fn ($r) => '`'.self::code($r).'`', $rulesets))).'. Any other ruleset gets 403 `ruleset_not_allowed`.';
             $lines[] = '';
-            $lines[] = '**Games built from the build guide use its `matches` client module when their build guide version has one (build guide v3 and later). Until then, do not call these routes directly; ask Computercat (the platform team) instead.** The module polls and handle ETag, `version`, backoff and errors. The routes below are for reference.';
+            $lines[] = '**Games built from the build guide use its `matches` client module when their build guide version has one (build guide v3 and later). Until then, do not call these routes directly; ask Computercat (the platform team) instead.** The module polls and handles ETag, `version`, backoff and errors. The routes below are for reference.';
             $lines[] = '';
             $lines[] = 'All routes need `Authorization: Bearer <token>`.';
             $lines[] = '';
