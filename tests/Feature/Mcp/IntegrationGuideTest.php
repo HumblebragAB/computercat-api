@@ -271,6 +271,7 @@ class IntegrationGuideTest extends McpTestCase
             '`mode`', '`echo`', '`guess` `{value, result, echo}`', 'only in mode `echo`',
             "the guesser's own secret is greater than the guess", "reveals the guesser's number",
             'never changes during the match', 'computed by the server',
+            'In mode `echo` the first correct guess wins the round; there is no last chance', 'draws are only possible in mode `duel`',
         ] as $needle) {
             $this->assertStringContainsString($needle, $section, $needle);
         }

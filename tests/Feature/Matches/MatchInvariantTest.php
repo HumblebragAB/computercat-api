@@ -332,16 +332,22 @@ class MatchInvariantTest extends TestCase
         $this->step($id, 0, 'ready');
         $this->step($id, 1, 'ready');
 
-        // Runda 3, säte 0 startar och träffar, säte 1 missar sista chansen: 2–1.
+        // Runda 3, säte 0 startar och träffar: ingen sista chans i ekot, 2–1 direkt.
         $this->step($id, 0, 'set_secret', ['value' => 6]);
         $this->step($id, 1, 'set_secret', ['value' => 8]);
-        $this->step($id, 0, 'guess', ['value' => 8]);
-        $end = $this->step($id, 1, 'guess', ['value' => 8], ends: true);
+        $this->step($id, 0, 'guess', ['value' => 9]);
+        $this->step($id, 1, 'guess', ['value' => 8]);
+        $end = $this->step($id, 0, 'guess', ['value' => 8], ends: true);
 
         $this->assertSame(GameMatch::STATUS_FINISHED, $end['status']);
         $this->assertSame([2, 1], $end['state']['score']);
+        $this->assertSame(0, $end['state']['winner']);
+        $types = array_column($end['events'], 'type');
+        $this->assertNotContains('last_chance', $types);
+        $roundEnds = array_values(array_filter($end['events'], fn ($e) => $e['type'] === 'round_end'));
+        $this->assertSame([1, 0, 0], array_column(array_column($roundEnds, 'payload'), 'winner'));
         $echoes = array_column(array_column(array_filter($end['events'], fn ($e) => $e['type'] === 'guess'), 'payload'), 'echo');
-        $this->assertSame(['lower', 'higher', 'self', 'higher', 'self', 'higher', 'lower', 'lower', 'lower', 'self'], $echoes);
+        $this->assertSame(['lower', 'higher', 'self', 'higher', 'self', 'higher', 'lower', 'lower', 'lower', 'self', 'lower'], $echoes);
         $this->check($this->poll(0, $id), 0, 'final poll');
         $this->check($this->poll(1, $id), 1, 'final poll');
 

@@ -73,7 +73,8 @@ class RevealRulesTest extends TestCase
 
     /**
      * Spelar en hel runda med givet utfall: 'starter', 'other' eller null (oavgjort).
-     * Säte 0 har talet 10, säte 1 talet 20.
+     * Säte 0 har talet 10, säte 1 talet 20. I ekot finns ingen sista chans, så där ger
+     * 'starter' och null samma sak: startspelaren vinner.
      */
     private function playRound(MatchContext $ctx, ?string $outcome): void
     {
@@ -87,7 +88,10 @@ class RevealRulesTest extends TestCase
             $this->guess($ctx, $other, $secretOf[$starter]);
         } else {
             $this->guess($ctx, $starter, $secretOf[$other]);
-            $this->guess($ctx, $other, $outcome === 'starter' ? 50 : $secretOf[$starter]);
+            // I ekot avslutar startspelarens träff rundan direkt (ingen sista chans).
+            if ($ctx->state()['phase'] === 'guessing') {
+                $this->guess($ctx, $other, $outcome === 'starter' ? 50 : $secretOf[$starter]);
+            }
         }
     }
 
@@ -417,7 +421,7 @@ class RevealRulesTest extends TestCase
 
         // Läget ändras aldrig av en händelse, inte heller över rundor.
         $ctx = $this->started(['mode' => 'echo']);
-        $this->playRound($ctx, null);
+        $this->playRound($ctx, 'other');
         $this->bothReady($ctx);
         $this->assertSame('echo', $ctx->state()['mode']);
     }
@@ -446,11 +450,75 @@ class RevealRulesTest extends TestCase
         }
         $this->assertSame($expected, $ctx->state()['guesses']);
 
-        // Träff har också ett eko; turordning och sista chans är som i ren duell.
+        // Träff har också ett eko. I ekot vinner första träffen, också startspelarens.
         $this->assertSame(['value' => 42, 'result' => 'correct', 'echo' => 'lower'], $this->guess($ctx, 0, 42)['payload']);
+        $this->assertNull($this->lastOf($ctx, 'last_chance'));
+        $this->assertSame(['winner' => 0, 'secrets' => [17, 42], 'guesses' => [4, 3]], $this->lastOf($ctx, 'round_end')['payload']);
+    }
+
+    // Ekot har ingen sista chans: första träffen vinner rundan, oavsett vem som startade.
+    public function test_echo_starter_hit_wins_at_once(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 10, 20);
+        $this->guess($ctx, 0, 20);
+
+        $this->assertNull($this->lastOf($ctx, 'last_chance'));
+        $this->assertSame(['winner' => 0, 'secrets' => [10, 20], 'guesses' => [1, 0]], $this->lastOf($ctx, 'round_end')['payload']);
+        $this->assertFalse($ctx->state()['last_chance']);
+        $this->assertSame('round_over', $ctx->state()['phase']);
+        $this->assertNull($ctx->state()['turn']);
+        $this->assertSame([1, 0], $ctx->state()['score']);
+        $this->illegal($ctx, 1, 'guess', ['value' => 10], 'wrong_phase');
+    }
+
+    public function test_echo_non_starter_hit_wins_at_once(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 10, 20);
+        $this->guess($ctx, 0, 50);
+        $this->guess($ctx, 1, 10);
+
+        $this->assertNull($this->lastOf($ctx, 'last_chance'));
+        $this->assertSame(['winner' => 1, 'secrets' => [10, 20], 'guesses' => [1, 1]], $this->lastOf($ctx, 'round_end')['payload']);
+        $this->assertSame([0, 1], $ctx->state()['score']);
+    }
+
+    // Ekot kan inte sluta oavgjort: varje runda har en vinnare, så matchen avgörs på högst tre rundor.
+    public function test_echo_has_no_draws(): void
+    {
+        // Startspelaren växlar: 'starter' i runda 2 är säte 1. Utfall: 2–0, 0–2, 2–1, 2–1.
+        foreach ([['starter', 'other'], ['other', 'starter'], ['starter', 'starter', 'starter'], ['other', 'other', 'starter']] as $outcomes) {
+            $ctx = $this->started(['mode' => 'echo']);
+            foreach ($outcomes as $i => $outcome) {
+                if ($i > 0) {
+                    $this->bothReady($ctx);
+                }
+                $this->playRound($ctx, $outcome);
+                $this->assertNotNull($this->lastOf($ctx, 'round_end')['payload']['winner'], json_encode($outcomes));
+            }
+            $this->assertTrue($ctx->isFinished(), json_encode($outcomes));
+            $this->assertNotNull($this->lastOf($ctx, 'match_end')['payload']['winner']);
+            $this->assertSame(2, max($ctx->state()['score']));
+            $this->assertNull($this->lastOf($ctx, 'last_chance'));
+        }
+
+        // playRound(null) är i ekot en vinst för startspelaren: hans träff avslutar rundan direkt.
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 10, 20);
+        $this->guess($ctx, 0, 20);
+        $this->assertSame(0, $this->lastOf($ctx, 'round_end')['payload']['winner']);
+    }
+
+    // Ren duell behåller utjämningen.
+    public function test_duel_keeps_last_chance(): void
+    {
+        $ctx = $this->started(['mode' => 'duel']);
+        $this->lock($ctx, 10, 20);
+        $this->guess($ctx, 0, 20);
         $this->assertSame(1, $this->lastOf($ctx, 'last_chance')['seat']);
-        $this->assertSame(['value' => 17, 'result' => 'correct', 'echo' => 'higher'], $this->guess($ctx, 1, 17)['payload']);
-        $this->assertSame(['winner' => null, 'secrets' => [17, 42], 'guesses' => [4, 4]], $this->lastOf($ctx, 'round_end')['payload']);
+        $this->guess($ctx, 1, 10);
+        $this->assertNull($this->lastOf($ctx, 'round_end')['payload']['winner']);
     }
 
     public function test_echo_when_both_secrets_are_equal(): void
@@ -496,7 +564,7 @@ class RevealRulesTest extends TestCase
     public function test_replay_equals_state_in_echo_mode(): void
     {
         $ctx = $this->started(['mode' => 'echo']);
-        foreach (['starter', null, 'other', 'starter'] as $i => $outcome) {
+        foreach (['starter', 'starter', 'other'] as $i => $outcome) {
             if ($i > 0) {
                 $this->bothReady($ctx);
             }

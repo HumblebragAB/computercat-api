@@ -14,7 +14,9 @@ use LogicException;
  *
  * Läget (options.mode, också i state.mode) är 'duel' eller 'echo'. I ekot bär varje gissning
  * dessutom ett eko till motspelaren: högre, lägre eller self mot gissarens EGET tal. Ekot är
- * alltid ett ord, aldrig talet. Lagrad state från före läget saknar mode och räknas som 'duel'.
+ * alltid ett ord, aldrig talet. I ekot vinner första träffen rundan: ingen sista chans, så
+ * rundor och matcher kan bara sluta oavgjort i duell. Lagrad state från före läget saknar
+ * mode och räknas som 'duel'.
  */
 class RevealRules implements MatchRules
 {
@@ -214,7 +216,10 @@ class RevealRules implements MatchRules
         $starter = $state['starter'];
         $correct = $result === 'correct';
 
-        if ($state['last_chance']) {
+        if ($correct && ($state['mode'] ?? self::LEGACY_MODE) === 'echo') {
+            // Ekot: första träffen vinner rundan, ingen sista chans och ingen oavgjord runda.
+            $this->endRound($ctx, $seat);
+        } elseif ($state['last_chance']) {
             // Sista chansen: träff ger oavgjort, miss ger startspelaren rundan.
             $this->endRound($ctx, $correct ? null : $starter);
         } elseif ($correct && $seat !== $starter) {
