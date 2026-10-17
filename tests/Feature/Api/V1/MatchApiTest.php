@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Api\V1;
 
+use App\Matches\Rules\RevealRules;
 use App\Models\Game;
 use App\Models\GameMatch;
 use App\Models\User;
@@ -28,6 +29,8 @@ class MatchApiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Lottningen av startspelare är slump i produktion; testerna förutsätter säte 0.
+        app()->instance(RevealRules::STARTER_DRAW_BINDING, fn (): int => 0);
         $this->game = Game::create(['slug' => 'reveal', 'name' => 'Reveal', 'is_active' => true]);
         $this->anna = User::factory()->create();
         $this->bo = User::factory()->create();

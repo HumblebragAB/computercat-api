@@ -3,6 +3,7 @@
 namespace Tests\Feature\Matches;
 
 use App\Matches\MatchContext;
+use App\Matches\Rules\RevealRules;
 use App\Matches\RulesetRegistry;
 use App\Models\Game;
 use App\Models\GameMatch;
@@ -54,6 +55,8 @@ class MatchInvariantTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Lottningen av startspelare är slump i produktion; testerna förutsätter säte 0.
+        app()->instance(RevealRules::STARTER_DRAW_BINDING, fn (): int => 0);
         $this->game = Game::create(['slug' => 'reveal', 'name' => 'Reveal', 'is_active' => true]);
         $this->users = [User::factory()->create(), User::factory()->create()];
     }

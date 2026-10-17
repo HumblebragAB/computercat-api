@@ -259,6 +259,14 @@ class IntegrationGuideTest extends McpTestCase
     }
 
     // Ekoläget: options.mode, state.mode och guess-händelsens echo står i manualen, ur konstanterna.
+    public function test_manual_documents_the_random_starter(): void
+    {
+        $game = $this->game('reveal');
+        $section = $this->rulesetSection(IntegrationGuide::manual($game, ['matches']), 'reveal');
+
+        $this->assertStringContainsString('The starter of round 1 is drawn at random; then it alternates.', $section);
+    }
+
     public function test_manual_documents_the_echo_mode(): void
     {
         $game = $this->game('reveal');

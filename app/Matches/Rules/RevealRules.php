@@ -11,6 +11,7 @@ use LogicException;
  * Reveal: båda låser ett hemligt tal och gissar turvis motspelarens, med svaret högre/lägre.
  * I duell: hittar startspelaren rätt får motspelaren en sista chans (utjämning). Först till två
  * vunna rundor, tak på fem rundor. Motspelarens tal lämnar bara servern i round_end.
+ * Rundan 1:s startspelare lottas (random_int); därefter växlar den.
  *
  * Läget (options.mode, också i state.mode) är 'duel' eller 'echo'. I ekot bär varje gissning
  * dessutom ett eko till motspelaren: högre, lägre eller self mot gissarens EGET tal. Ekot är
@@ -41,6 +42,9 @@ class RevealRules implements MatchRules
     public const WINS_NEEDED = 2;
 
     public const MAX_ROUNDS = 5;
+
+    /** Containernyckel tester binder för att bestämma lottningen (returnerar 0 eller 1). */
+    public const STARTER_DRAW_BINDING = 'reveal.starter_draw';
 
     public function validateOptions(array $options): array
     {
@@ -143,7 +147,21 @@ class RevealRules implements MatchRules
     {
         $ctx->setHidden(0, null);
         $ctx->setHidden(1, null);
-        $ctx->emit('round_begin', null, ['round' => 1, 'starter' => 0]);
+        $ctx->emit('round_begin', null, ['round' => 1, 'starter' => $this->drawStarter()]);
+    }
+
+    /** Rundans 1 startspelare lottas slumpmässigt på servern; händelsen bär utfallet så replay är deterministisk. */
+    private function drawStarter(): int
+    {
+        $starter = app()->bound(self::STARTER_DRAW_BINDING)
+            ? app(self::STARTER_DRAW_BINDING)()
+            : random_int(0, 1);
+
+        if ($starter !== 0 && $starter !== 1) {
+            throw new LogicException('Starter draw must return 0 or 1.');
+        }
+
+        return $starter;
     }
 
     public function act(MatchContext $ctx, int $seat, string $type, array $payload): void

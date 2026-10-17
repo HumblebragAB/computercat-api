@@ -15,6 +15,8 @@ class RevealRulesTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Lottningen av startspelare är slump i produktion; testerna förutsätter säte 0.
+        app()->instance(RevealRules::STARTER_DRAW_BINDING, fn (): int => 0);
         $this->rules = new RevealRules;
     }
 
@@ -219,6 +221,47 @@ class RevealRulesTest extends TestCase
         $this->rules->act($ctx, 0, 'ready', []);
         $this->illegal($ctx, 0, 'ready', [], 'already_ready');
         $this->illegal($ctx, 1, 'guess', ['value' => 5], 'wrong_phase');
+    }
+
+    private function forceStarter(int $seat): void
+    {
+        app()->instance(RevealRules::STARTER_DRAW_BINDING, fn (): int => $seat);
+    }
+
+    public function test_drawn_starter_is_in_round_begin_state_and_turn(): void
+    {
+        foreach ([0, 1] as $seat) {
+            $this->forceStarter($seat);
+            $ctx = $this->started();
+            $this->assertSame(['round' => 1, 'starter' => $seat], $this->lastOf($ctx, 'round_begin')['payload']);
+            $this->assertSame($seat, $ctx->state()['starter']);
+            $this->lock($ctx, 10, 20);
+            $this->assertSame($seat, $ctx->state()['turn']);
+        }
+    }
+
+    public function test_later_rounds_alternate_from_the_drawn_starter(): void
+    {
+        $this->forceStarter(1);
+        $ctx = $this->started();
+        $this->playRound($ctx, null);
+        $this->bothReady($ctx);
+        $this->assertSame(['round' => 2, 'starter' => 0], $this->lastOf($ctx, 'round_begin')['payload']);
+        $this->playRound($ctx, null);
+        $this->bothReady($ctx);
+        $this->assertSame(['round' => 3, 'starter' => 1], $this->lastOf($ctx, 'round_begin')['payload']);
+    }
+
+    public function test_unforced_draw_yields_both_starters(): void
+    {
+        app()->forgetInstance(RevealRules::STARTER_DRAW_BINDING);
+        app()->offsetUnset(RevealRules::STARTER_DRAW_BINDING);
+        $seen = [];
+        for ($i = 0; $i < 200; $i++) {
+            $seen[$this->started()->state()['starter']] = true;
+        }
+        // Båda utfallen uteblir med sannolikhet 2^-199.
+        $this->assertEqualsCanonicalizing([0, 1], array_keys($seen));
     }
 
     public function test_starter_alternates(): void
