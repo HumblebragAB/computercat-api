@@ -485,3 +485,67 @@ export function createMatches(game: string, deps: MatchesDeps) {
 }
 
 export type Matches = ReturnType<typeof createMatches>;
+
+/** https-origin (valfri sökväg) eller http://localhost[:port] för utveckling. */
+const PUBLIC_ORIGIN = /^(https:\/\/[^/?#\s]+|http:\/\/localhost(:\d+)?)(\/[^?#\s]*)?$/;
+
+/**
+ * Inbjudningslänken `${origin}/#join=<token>`. Fragment, inte query: token hamnar varken i
+ * serverloggar eller i Referer. Utan origin används window.location.origin, men bara när den är
+ * https (eller http://localhost); i iOS-appen är den capacitor://localhost och måste ersättas av
+ * spelets publika adress.
+ */
+export function inviteUrl(token: string, origin?: string): string {
+  const o = origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+  if (!PUBLIC_ORIGIN.test(o)) {
+    throw new Error(`inviteUrl: skicka in spelets publika webbadress (https://…) som origin; "${o}" fungerar inte som länk för en vän.`);
+  }
+  return `${o.replace(/\/+$/, '')}/#join=${encodeURIComponent(token)}`;
+}
+
+/** Inbjudningstoken: 32 byte som base64url utan utfyllnad (MatchService::token). */
+const JOIN_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+/** Delar `a=1&join=x` i join-värdet och resten (ordagrant, inget omkodas). */
+function takeJoin(part: string): { value: string | null; found: boolean; rest: string } {
+  let value: string | null = null;
+  let found = false;
+  const rest = part
+    .split('&')
+    .filter((kv) => {
+      if (kv.split('=', 1)[0] !== 'join') return true;
+      if (!found) {
+        found = true;
+        const raw = kv.slice('join='.length);
+        try {
+          value = decodeURIComponent(raw);
+        } catch {
+          value = null;
+        }
+      }
+      return false;
+    })
+    .join('&');
+  return { value, found, rest };
+}
+
+/**
+ * Läser inbjudningstoken ur `#join=` (och, bakåtkompatibelt, `?join=`). Bara en giltig token
+ * (43 tecken base64url) returneras; annars null. `join` tas alltid bort ur adressen med
+ * history.replaceState, också när värdet var ogiltigt, så att token inte ligger kvar i historiken.
+ */
+export function readJoinToken(
+  loc?: Pick<Location, 'pathname' | 'search' | 'hash'>,
+  hist?: Pick<History, 'state' | 'replaceState'>,
+): string | null {
+  const l = loc ?? (typeof location !== 'undefined' ? location : undefined);
+  const h = hist ?? (typeof history !== 'undefined' ? history : undefined);
+  if (!l) return null;
+  const hash = takeJoin(l.hash.replace(/^#/, ''));
+  const search = takeJoin(l.search.replace(/^\?/, ''));
+  if (!hash.found && !search.found) return null;
+  const url = `${l.pathname}${search.rest ? `?${search.rest}` : ''}${hash.rest ? `#${hash.rest}` : ''}`;
+  h?.replaceState(h.state, '', url);
+  const value = hash.found ? hash.value : search.value;
+  return value !== null && JOIN_TOKEN.test(value) ? value : null;
+}

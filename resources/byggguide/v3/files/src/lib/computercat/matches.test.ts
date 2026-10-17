@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BASE, fakeFetch, json, storedSession } from '../../../test/fakeFetch';
 import { createAuth } from './auth';
 import { ApiError } from './http';
-import { MatchError, assertName, createMatches, type MatchSnapshot } from './matches';
+import { MatchError, assertName, createMatches, inviteUrl, readJoinToken, type MatchSnapshot } from './matches';
 
 const GAME = 'duell';
 const ID = '01JB8Z3Q4WXYZ0123456789ABC';
 const M = `/games/${GAME}/matches`;
-const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd';
+/** Som MatchService::token(): 32 slumpbytes som base64url utan utfyllnad = 43 tecken. */
+const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde';
 
 /** Svarsformen från MatchView::for. */
 function view(over: Record<string, unknown> = {}) {
@@ -721,5 +722,87 @@ describe('watch', () => {
     expect(n).toBe(2);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('onChange'), expect.any(Error));
     w.stop();
+  });
+});
+
+// ── Inbjudningslänken ─────────────────────────────────────────────────────────
+
+function fakeLocation(pathname: string, search: string, hash: string) {
+  const loc = { pathname, search, hash };
+  const replaced: string[] = [];
+  const hist = {
+    state: { keep: true },
+    replaceState(_state: unknown, _unused: string, url?: string | URL | null) {
+      replaced.push(String(url));
+    },
+  };
+  return { loc, hist, replaced };
+}
+
+describe('inviteUrl', () => {
+  it('bygger en fragmentlänk med kodad token', () => {
+    expect(inviteUrl(TOKEN, 'https://duell.computercat.co')).toBe(`https://duell.computercat.co/#join=${TOKEN}`);
+    expect(inviteUrl('a b/c', 'https://duell.computercat.co/')).toBe('https://duell.computercat.co/#join=a%20b%2Fc');
+  });
+
+  it('localhost över http godtas för utveckling', () => {
+    expect(inviteUrl(TOKEN, 'http://localhost:3000')).toBe(`http://localhost:3000/#join=${TOKEN}`);
+  });
+
+  it('capacitor://localhost (iOS-appen) kastar: spelets publika adress måste skickas in', () => {
+    expect(() => inviteUrl(TOKEN, 'capacitor://localhost')).toThrow(/publika webbadress/);
+    expect(() => inviteUrl(TOKEN, 'http://localhost.evil.example')).toThrow(/publika webbadress/);
+    expect(() => inviteUrl(TOKEN, 'http://duell.computercat.co')).toThrow(/publika webbadress/);
+  });
+
+  it('utan origin och utan window kastar (miljön är node)', () => {
+    expect(() => inviteUrl(TOKEN)).toThrow(/publika webbadress/);
+  });
+});
+
+describe('readJoinToken', () => {
+  it('läser fragmentet och tar bort det', () => {
+    const { loc, hist, replaced } = fakeLocation('/spela', '', `#join=${TOKEN}`);
+    expect(readJoinToken(loc, hist)).toBe(TOKEN);
+    expect(replaced).toEqual(['/spela']);
+  });
+
+  it('behåller övriga delar av fragmentet', () => {
+    const { loc, hist, replaced } = fakeLocation('/', '', `#join=${TOKEN}&tab=2`);
+    expect(readJoinToken(loc, hist)).toBe(TOKEN);
+    expect(replaced).toEqual(['/#tab=2']);
+  });
+
+  it('läser ?join= (bakåtkompatibelt) och tar bort det, med andra parametrar och fragment kvar', () => {
+    const { loc, hist, replaced } = fakeLocation('/', `?ref=qr&join=${TOKEN}&x=1`, '#regler');
+    expect(readJoinToken(loc, hist)).toBe(TOKEN);
+    expect(replaced).toEqual(['/?ref=qr&x=1#regler']);
+  });
+
+  it('ogiltig token ger null och tas ändå bort', () => {
+    const { loc, hist, replaced } = fakeLocation('/', '?a=1', '#join=kort');
+    expect(readJoinToken(loc, hist)).toBeNull();
+    expect(replaced).toEqual(['/?a=1']);
+  });
+
+  it('token med otillåtna tecken (43 långa) ger null', () => {
+    const { loc, hist } = fakeLocation('/', '', `#join=${TOKEN.slice(0, 42)}%2F`);
+    expect(readJoinToken(loc, hist)).toBeNull();
+  });
+
+  it('trasig procentkodning ger null och tas bort', () => {
+    const { loc, hist, replaced } = fakeLocation('/', '', '#join=%E0%A4%A');
+    expect(readJoinToken(loc, hist)).toBeNull();
+    expect(replaced).toEqual(['/']);
+  });
+
+  it('ingen token ger null och inget replaceState', () => {
+    const { loc, hist, replaced } = fakeLocation('/', '?join2=x', '#joinx=y');
+    expect(readJoinToken(loc, hist)).toBeNull();
+    expect(replaced).toEqual([]);
+  });
+
+  it('utan location (miljön är node) ger null', () => {
+    expect(readJoinToken()).toBeNull();
   });
 });
