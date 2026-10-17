@@ -111,8 +111,8 @@
         {
             "path": "package.json",
             "source": "files/package.json",
-            "sha256": "08cc26bb9f59eb4172718ff7878bb6321df9791c39e04d6cb9fd8ef0aac78cf7",
-            "bytes": 1197
+            "sha256": "46c9871402f934a16fabac7d42b0b931184819c9120921991ea9cb3b7538d57b",
+            "bytes": 1227
         },
         {
             "path": "postcss.config.mjs",
@@ -131,6 +131,18 @@
             "source": "files/scripts/check-export.mjs",
             "sha256": "cc64163bcc8c45df8d0e77f5df825c09c367794a95eec0b877ee0569164c53b8",
             "bytes": 1966
+        },
+        {
+            "path": "scripts/check-ios.mjs",
+            "source": "files/scripts/check-ios.mjs",
+            "sha256": "a7935a503c7817eb6d7a3cf9d22a7d34b1d0af1f71abc99e73204798fe00e272",
+            "bytes": 8600
+        },
+        {
+            "path": "scripts/ios-setup.mjs",
+            "source": "files/scripts/ios-setup.mjs",
+            "sha256": "8aaa214cca7effa708b66d2aeac05717a32cef6585e5fdcd2f1401db0584250d",
+            "bytes": 3155
         },
         {
             "path": "src/app/globals.css",
@@ -389,6 +401,12 @@
             "source": "files/test/integration.test.tsx",
             "sha256": "509b5a76c60ef5ede61fd46e81df2df44e8c022ba038ceb766680f5bd6bd5a6f",
             "bytes": 6500
+        },
+        {
+            "path": "test/iosSetup.test.ts",
+            "source": "files/test/iosSetup.test.ts",
+            "sha256": "d714a5745c0242387bdfc6fb63f570e7acfa7d848c569503cfb04667e2ed0cea",
+            "bytes": 11921
         },
         {
             "path": "test/security.test.ts",

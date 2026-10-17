@@ -12,7 +12,7 @@
     "test": "NODE_ENV=test vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm test && NEXT_TELEMETRY_DISABLED=1 npm run build && node scripts/check-export.mjs && node scripts/cc-gate.mjs"
+    "check": "npm run typecheck && npm run lint && npm test && NEXT_TELEMETRY_DISABLED=1 npm run build && node scripts/check-export.mjs && node scripts/cc-gate.mjs && node scripts/check-ios.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.3",
