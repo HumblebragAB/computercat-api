@@ -21,7 +21,9 @@ return new class extends Migration
             $table->json('state');
             $table->unsignedInteger('version')->default(0);
             $table->timestamp('last_action_at')->nullable();
-            $table->timestamp('expires_at')->index();
+            // Nullable: en NOT NULL timestamp kan i MySQL utan explicit_defaults_for_timestamp
+            // få ON UPDATE CURRENT_TIMESTAMP. Tjänsten sätter alltid värdet; null går aldrig ut.
+            $table->timestamp('expires_at')->nullable()->index();
             $table->ulid('rematch_of')->nullable();
             $table->timestamps();
 

@@ -6,6 +6,7 @@ use App\Models\Game;
 use App\Models\GameMatch;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
@@ -278,6 +279,7 @@ class MatchApiTest extends TestCase
             'stranger acts' => $this->act($stranger, $id, 'set_secret', ['value' => 10]),
             'stranger leaves' => $this->as($stranger)->postJson(self::BASE."/{$id}/leave"),
             'stranger rematch' => $this->as($stranger)->postJson(self::BASE."/{$id}/rematch"),
+            'stranger invite' => $this->as($stranger)->postJson(self::BASE."/{$id}/invite"),
         ];
 
         $expected = $responses['missing']->assertStatus(404)->getContent();
@@ -288,6 +290,114 @@ class MatchApiTest extends TestCase
 
         $this->assertSame(GameMatch::STATUS_ACTIVE, GameMatch::findOrFail($id)->status);
         $this->as($stranger)->getJson(self::BASE.'/active')->assertOk()->assertExactJson(['data' => []]);
+    }
+
+    public function test_match_responses_expose_etag_and_retry_after_via_cors(): void
+    {
+        $this->game->update(['allowed_origins' => ['https://reveal.apps.humblebrag.se']]);
+        $id = $this->startedMatch();
+
+        $response = $this->poll($this->anna, $id, ['Origin' => 'https://reveal.apps.humblebrag.se'])->assertOk();
+
+        $response->assertHeader('Access-Control-Allow-Origin', 'https://reveal.apps.humblebrag.se');
+        $exposed = array_map('trim', explode(',', strtolower((string) $response->headers->get('Access-Control-Expose-Headers'))));
+        $this->assertContains('etag', $exposed);
+        $this->assertContains('retry-after', $exposed);
+    }
+
+    public function test_post_responses_carry_the_same_etag_as_a_poll(): void
+    {
+        ['id' => $id, 'token' => $token] = $this->createMatch();
+
+        $joined = $this->as($this->bo)->postJson(self::BASE.'/join', ['token' => $token, 'name' => 'Bo'])->assertOk();
+        $this->assertStringStartsWith('"'.$this->version($id).'-', $this->etagOf($joined));
+
+        $this->poll($this->anna, $id)->assertOk();
+        $this->poll($this->bo, $id)->assertOk(); // båda anslutna, så ETag är stabil.
+
+        $acted = $this->act($this->anna, $id, 'set_secret', ['value' => 10])->assertOk();
+        $etag = $this->etagOf($acted);
+        $this->assertSame($etag, $this->etagOf($this->poll($this->anna, $id)->assertOk()));
+        $this->poll($this->anna, $id, ['If-None-Match' => $etag])->assertStatus(304);
+
+        $this->etagOf($this->as($this->anna)->postJson(self::BASE."/{$id}/leave")->assertOk());
+        GameMatch::whereKey($id)->update(['status' => GameMatch::STATUS_FINISHED]);
+        $this->etagOf($this->as($this->anna)->postJson(self::BASE."/{$id}/rematch")->assertOk());
+
+        $fresh = $this->createMatch();
+        $this->etagOf($this->as($this->anna)->postJson(self::BASE."/{$fresh['id']}/invite")->assertOk());
+    }
+
+    public function test_invite_replaces_the_token(): void
+    {
+        ['id' => $id, 'token' => $old] = $this->createMatch();
+        $before = GameMatch::findOrFail($id);
+        $this->travel(10)->minutes();
+
+        $response = $this->as($this->anna)->postJson(self::BASE."/{$id}/invite")->assertOk();
+        $this->assertSame(['match', 'join_token'], array_keys($response->json()));
+        $new = $response->json('join_token');
+        $this->assertMatchesRegularExpression('/\A[A-Za-z0-9_-]{43}\z/', $new);
+        $this->assertNotSame($old, $new);
+        $response->assertJsonPath('match.id', $id)->assertJsonPath('match.status', 'waiting')->assertJsonPath('match.your_seat', 0);
+
+        $after = GameMatch::findOrFail($id);
+        $this->assertSame(hash('sha256', $new), $after->join_token_hash);
+        $this->assertSame($before->version + 1, $after->version);
+        $this->assertTrue($after->expires_at->equalTo(now()->addMinutes(15)->startOfSecond()));
+        $this->assertSame(0, $after->events()->count());
+
+        // Tokenet syns aldrig i vyn.
+        $view = $this->poll($this->anna, $id)->assertOk()->getContent();
+        $this->assertStringNotContainsString($new, $view);
+        $this->assertStringNotContainsString($old, $view);
+        $this->assertStringNotContainsString('join_token', $view);
+
+        $this->as($this->bo)->postJson(self::BASE.'/join', ['token' => $old])
+            ->assertStatus(410)->assertJsonPath('code', 'invite_expired');
+        $this->as($this->bo)->postJson(self::BASE.'/join', ['token' => $new, 'name' => 'Bo'])
+            ->assertOk()->assertJsonPath('status', 'active')->assertJsonPath('your_seat', 1);
+    }
+
+    public function test_invite_only_for_the_creator_while_waiting(): void
+    {
+        $id = $this->startedMatch();
+        $version = $this->version($id);
+
+        $this->as($this->anna)->postJson(self::BASE."/{$id}/invite")
+            ->assertStatus(422)->assertJsonPath('code', 'wrong_phase');
+        $this->as($this->bo)->postJson(self::BASE."/{$id}/invite")
+            ->assertStatus(422)->assertJsonPath('code', 'wrong_phase');
+        $this->assertSame($version, $this->version($id));
+        $this->assertNull(GameMatch::findOrFail($id)->join_token_hash);
+
+        $stranger = User::factory()->create();
+        $waiting = $this->createMatch();
+        $missing = $this->as($this->anna)->postJson(self::BASE.'/'.strtolower((string) Str::ulid()).'/invite')->assertStatus(404);
+        $this->as($stranger)->postJson(self::BASE."/{$waiting['id']}/invite")
+            ->assertStatus(404)->assertExactJson($missing->json());
+
+        // Övergiven match: fel läge, även för skaparen.
+        $this->as($this->anna)->postJson(self::BASE."/{$waiting['id']}/leave")->assertOk();
+        $this->as($this->anna)->postJson(self::BASE."/{$waiting['id']}/invite")
+            ->assertStatus(422)->assertJsonPath('code', 'wrong_phase');
+    }
+
+    public function test_poll_loads_game_and_players_once(): void
+    {
+        $id = $this->startedMatch();
+        $this->poll($this->anna, $id)->assertOk();
+        $this->travel(6)->seconds(); // så att touch skriver igen
+
+        DB::enableQueryLog();
+        $this->poll($this->anna, $id)->assertOk();
+        $queries = array_column(DB::getQueryLog(), 'query');
+        DB::disableQueryLog();
+
+        $selects = fn (string $table) => count(array_filter($queries, fn ($q) => preg_match('/^select .* from "'.$table.'"/i', $q) === 1));
+        $this->assertSame(1, $selects('games'), implode("\n", $queries));
+        $this->assertSame(1, $selects('match_players'), implode("\n", $queries));
+        $this->assertCount(1, array_filter($queries, fn ($q) => str_starts_with(strtolower($q), 'update "match_players"')));
     }
 
     public function test_requires_authentication(): void

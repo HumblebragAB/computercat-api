@@ -20,14 +20,16 @@ class MatchModelTest extends TestCase
     {
         $game = Game::create(['slug' => 'duell', 'name' => 'Duell', 'is_active' => true]);
 
-        return GameMatch::create([
-            'game_id' => $game->id,
-            'ruleset' => 'test',
-            'options' => [],
-            'status' => GameMatch::STATUS_WAITING,
-            'state' => [],
-            'expires_at' => now()->addMinutes(15),
-        ]);
+        $match = new GameMatch;
+        $match->game_id = $game->id;
+        $match->ruleset = 'test';
+        $match->options = [];
+        $match->status = GameMatch::STATUS_WAITING;
+        $match->state = [];
+        $match->expires_at = now()->addMinutes(15);
+        $match->save();
+
+        return $match;
     }
 
     public function test_hidden_is_encrypted_at_rest(): void
@@ -39,8 +41,9 @@ class MatchModelTest extends TestCase
             'user_id' => User::factory()->create()->id,
             'seat' => 0,
             'name' => 'Spelare 1',
-            'hidden_state' => ['secret' => 42],
         ]);
+        $player->hidden_state = ['secret' => 42];
+        $player->save();
 
         $raw = DB::table('match_players')->value('hidden_state');
 
@@ -81,9 +84,20 @@ class MatchModelTest extends TestCase
     public function test_open_scope_returns_waiting_and_active_only(): void
     {
         $match = $this->makeMatch();
-        $match->replicate()->fill(['status' => GameMatch::STATUS_ACTIVE])->save();
-        $match->replicate()->fill(['status' => GameMatch::STATUS_FINISHED])->save();
+        foreach ([GameMatch::STATUS_ACTIVE, GameMatch::STATUS_FINISHED] as $status) {
+            $copy = $match->replicate();
+            $copy->status = $status;
+            $copy->save();
+        }
 
         $this->assertSame(2, GameMatch::open()->count());
+    }
+
+    public function test_server_owned_fields_are_not_mass_assignable(): void
+    {
+        foreach (['status', 'version', 'hidden_state', 'rematch_requested'] as $field) {
+            $this->assertFalse((new GameMatch)->isFillable($field), "matches.{$field}");
+            $this->assertFalse((new GameMatchPlayer)->isFillable($field), "match_players.{$field}");
+        }
     }
 }

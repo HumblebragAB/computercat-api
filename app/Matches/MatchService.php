@@ -39,7 +39,7 @@ class MatchService
         $options = $rules->validateOptions($options);
         $name = $this->name($name, 0);
 
-        $token = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+        $token = $this->newToken();
 
         $match = DB::transaction(function () use ($game, $user, $ruleset, $options, $name, $rules, $token) {
             $match = new GameMatch;
@@ -71,7 +71,7 @@ class MatchService
             if ($match === null
                 || (int) $match->game_id !== (int) $game->id
                 || $match->status !== GameMatch::STATUS_WAITING
-                || $match->expires_at->lessThanOrEqualTo(now())) {
+                || ($match->expires_at !== null && $match->expires_at->lessThanOrEqualTo(now()))) {
                 throw MatchError::inviteExpired();
             }
 
@@ -94,6 +94,31 @@ class MatchService
             $this->persist($match, $ctx, $this->playersOf($match));
 
             return $match;
+        });
+    }
+
+    /**
+     * Ny inbjudningstoken för en väntande match, t.ex. när skaparen laddat om och tappat
+     * QR-koden. Bara skaparen (säte 0) och bara i waiting. Den gamla token slutar gälla,
+     * väntetiden börjar om. Ingen händelse skrivs, men version ökar.
+     */
+    public function invite(GameMatch $match, User $user): string
+    {
+        return DB::transaction(function () use ($match, $user) {
+            $match = $this->lock($match);
+            $seat = $this->requireSeat($match, $user);
+
+            if ($seat !== 0 || $match->status !== GameMatch::STATUS_WAITING) {
+                throw MatchError::wrongPhase();
+            }
+
+            $token = $this->newToken();
+            $match->join_token_hash = hash('sha256', $token);
+            $match->expires_at = now()->addMinutes(self::WAITING_MINUTES);
+            $match->version = $match->version + 1;
+            $match->save();
+
+            return $token;
         });
     }
 
@@ -168,6 +193,7 @@ class MatchService
             $match = $this->lock($match);
 
             if (! in_array($match->status, [GameMatch::STATUS_WAITING, GameMatch::STATUS_ACTIVE], true)
+                || $match->expires_at === null
                 || ! $match->expires_at->lessThan(now())) {
                 return false;
             }
@@ -238,6 +264,12 @@ class MatchService
             : $match->players()->where('user_id', $user->id)->value('seat');
 
         return $seat === null ? null : (int) $seat;
+    }
+
+    /** 32 slumpbytes som base64url utan utfyllnad. Bara sha256 av den lagras. */
+    private function newToken(): string
+    {
+        return rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
     }
 
     private function startRematch(GameMatch $old, Collection $oldPlayers): GameMatch

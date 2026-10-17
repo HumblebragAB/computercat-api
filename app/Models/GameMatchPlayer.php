@@ -9,14 +9,13 @@ class GameMatchPlayer extends Model
 {
     protected $table = 'match_players';
 
+    // hidden_state och rematch_requested sätts bara uttryckligen av MatchService.
     protected $fillable = [
         'match_id',
         'user_id',
         'seat',
         'name',
-        'hidden_state',
         'last_seen_at',
-        'rematch_requested',
     ];
 
     protected $hidden = ['hidden_state'];

@@ -152,4 +152,23 @@ class MatchCleanupTest extends TestCase
         $this->assertSame(GameMatch::STATUS_ACTIVE, $active->fresh()->status);
         $this->assertNotNull(GameMatch::find($finished->id));
     }
+
+    public function test_null_expires_at_never_expires(): void
+    {
+        $created = $this->service->create($this->game, $this->anna, 'reveal', [], 'Anna');
+        $waiting = $created['match'];
+        $active = $this->active();
+        DB::table('matches')->whereIn('id', [$waiting->id, $active->id])->update(['expires_at' => null]);
+
+        $this->travel(2)->days();
+        $this->artisan('matches:expire')->assertExitCode(0);
+        $this->assertFalse($this->service->expire($waiting->fresh()));
+
+        $this->assertSame(GameMatch::STATUS_WAITING, $waiting->fresh()->status);
+        $this->assertSame(GameMatch::STATUS_ACTIVE, $active->fresh()->status);
+
+        // En väntande match utan utgångstid går fortfarande att gå med i.
+        $joined = $this->service->join($this->game, User::factory()->create(), $created['token'], 'Cia');
+        $this->assertSame(GameMatch::STATUS_ACTIVE, $joined->status);
+    }
 }

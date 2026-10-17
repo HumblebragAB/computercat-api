@@ -31,7 +31,8 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    // Matchpollen läser ETag (för If-None-Match) och Retry-After (vid 429) från JS.
+    'exposed_headers' => ['ETag', 'Retry-After'],
 
     'max_age' => 3600,
 

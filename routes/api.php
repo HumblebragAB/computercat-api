@@ -177,6 +177,7 @@ Route::prefix('v1')->middleware(ApiVersion::class.':1')->group(function () {
             Route::post('/{id}/actions', [MatchController::class, 'act'])->whereUlid('id')->middleware('throttle:match-action');
             Route::post('/{id}/leave', [MatchController::class, 'leave'])->whereUlid('id')->middleware('throttle:match-action');
             Route::post('/{id}/rematch', [MatchController::class, 'rematch'])->whereUlid('id')->middleware('throttle:match-action');
+            Route::post('/{id}/invite', [MatchController::class, 'invite'])->whereUlid('id')->middleware('throttle:match-action');
         });
 
     // Purchases (authenticated)

@@ -387,6 +387,7 @@ class MatchInvariantTest extends TestCase
                 'actions' => $this->postJson("{$base}/{$matchId}/actions", ['type' => 'set_secret', 'payload' => ['value' => 10], 'version' => GameMatch::find($matchId)?->version ?? 1]),
                 'leave' => $this->postJson("{$base}/{$matchId}/leave"),
                 'rematch' => $this->postJson("{$base}/{$matchId}/rematch"),
+                'invite' => $this->postJson("{$base}/{$matchId}/invite"),
             ];
         };
 

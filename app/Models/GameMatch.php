@@ -22,14 +22,13 @@ class GameMatch extends Model
 
     protected $table = 'matches';
 
+    // status och version sätts bara uttryckligen av MatchService, aldrig via fill/create.
     protected $fillable = [
         'game_id',
         'ruleset',
         'options',
-        'status',
         'join_token_hash',
         'state',
-        'version',
         'last_action_at',
         'expires_at',
         'rematch_of',

@@ -53,11 +53,10 @@ class MatchController extends Controller
         ]);
 
         return $this->guard(function () use ($request, $game, $data) {
-            $match = $this->matches->join($game, $request->user(), $data['token'], $data['name'] ?? null);
-            $match = $match->fresh();
+            $match = $this->reload($this->matches->join($game, $request->user(), $data['token'], $data['name'] ?? null), $game);
             $seat = $this->matches->memberSeat($match, $request->user());
 
-            return response()->json(MatchView::for($match, $seat, null));
+            return $this->respond($match, MatchView::for($match, $seat, null));
         });
     }
 
@@ -108,10 +107,10 @@ class MatchController extends Controller
         ]);
         [$match, $seat] = $this->resolve($request, $game, $id);
 
-        return $this->guard(function () use ($request, $match, $seat, $since, $data) {
-            $match = $this->matches->act($match, $request->user(), $data['type'], $data['payload'], (int) $data['version']);
+        return $this->guard(function () use ($request, $game, $match, $seat, $since, $data) {
+            $match = $this->reload($this->matches->act($match, $request->user(), $data['type'], $data['payload'], (int) $data['version']), $game);
 
-            return response()->json(MatchView::for($match->fresh(), $seat, $since));
+            return $this->respond($match, MatchView::for($match, $seat, $since));
         });
     }
 
@@ -119,10 +118,10 @@ class MatchController extends Controller
     {
         [$match, $seat] = $this->resolve($request, $game, $id);
 
-        return $this->guard(function () use ($request, $match, $seat) {
-            $match = $this->matches->leave($match, $request->user());
+        return $this->guard(function () use ($request, $game, $match, $seat) {
+            $match = $this->reload($this->matches->leave($match, $request->user()), $game);
 
-            return response()->json(MatchView::for($match->fresh(), $seat, null));
+            return $this->respond($match, MatchView::for($match, $seat, null));
         });
     }
 
@@ -130,10 +129,26 @@ class MatchController extends Controller
     {
         [$match, $seat] = $this->resolve($request, $game, $id);
 
-        return $this->guard(function () use ($request, $match, $seat) {
-            $match = $this->matches->rematch($match, $request->user());
+        return $this->guard(function () use ($request, $game, $match, $seat) {
+            $match = $this->reload($this->matches->rematch($match, $request->user()), $game);
 
-            return response()->json(MatchView::for($match->fresh(), $seat, null));
+            return $this->respond($match, MatchView::for($match, $seat, null));
+        });
+    }
+
+    /** Ny inbjudningstoken för skaparen av en väntande match. Den gamla slutar gälla. */
+    public function invite(Request $request, Game $game, string $id): JsonResponse
+    {
+        [$match, $seat] = $this->resolve($request, $game, $id);
+
+        return $this->guard(function () use ($request, $game, $match, $seat) {
+            $token = $this->matches->invite($match, $request->user());
+            $match = $this->reload($match, $game);
+
+            return $this->respond($match, [
+                'match' => MatchView::for($match, $seat, null),
+                'join_token' => $token,
+            ]);
         });
     }
 
@@ -145,14 +160,28 @@ class MatchController extends Controller
      */
     private function resolve(Request $request, Game $game, string $id): array
     {
-        $match = GameMatch::whereKey($id)->where('game_id', $game->id)->first();
-        $seat = $match === null ? null : $this->matches->memberSeat($match, $request->user());
+        // Spelarna laddas en gång och spelet är redan uppslaget, så vy, ETag, touch och
+        // memberSeat inte frågar databasen igen.
+        $match = GameMatch::whereKey($id)->where('game_id', $game->id)->with('players')->first();
+        $seat = $match === null ? null : $this->matches->memberSeat($match->setRelation('game', $game), $request->user());
 
         if ($seat === null) {
             abort(404);
         }
 
         return [$match, $seat];
+    }
+
+    /** Matchen efter en ändring, läst om med spelare och med det redan kända spelet. */
+    private function reload(GameMatch $match, Game $game): GameMatch
+    {
+        return $match->fresh(['players'])->setRelation('game', $game);
+    }
+
+    /** Svar med samma ETag som en poll skulle ge, så klienten kan skicka den som If-None-Match. */
+    private function respond(GameMatch $match, array $body): JsonResponse
+    {
+        return response()->json($body)->setEtag(MatchView::etag($match));
     }
 
     /** Frågesträngens since, valideras som heltal ≥ 0. */

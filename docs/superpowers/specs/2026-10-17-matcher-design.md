@@ -65,6 +65,7 @@ Alla under `/games/{game}/matches`, med `auth:sanctum`, `TrackLastSeen`, `Resolv
 | `POST /matches` `{ruleset, options, name?}` | skapar match, skaparen får säte 0 | `match-create` 10/min per användare |
 | `POST /matches/join` `{token, name?}` | går med som säte 1, startar matchen | `match-join` 10/min per användare **och** 30/min per IP |
 | `POST /matches/{id}/rematch` | begär revansch; när båda begärt skapas en ny match | `match-action` |
+| `POST /matches/{id}/invite` | ny `join_token` för skaparen (säte 0) i `waiting`, t.ex. efter omladdning; den gamla slutar gälla, väntetiden börjar om; annars 422 `wrong_phase` | `match-action` |
 | `GET /matches/{id}?since={seq}` | ögonblicksbild + händelser efter `seq` | `match-poll` 120/min per användare |
 | `POST /matches/{id}/actions` `{type, payload, version}` | ett drag | `match-action` 60/min per användare |
 | `POST /matches/{id}/leave` | lämnar; matchen blir `abandoned` | `match-action` |
