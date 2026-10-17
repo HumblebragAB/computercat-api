@@ -41,6 +41,12 @@ class MatchInvariantTest extends TestCase
 
     private int $readies = 0;
 
+    /** Förväntad state.guesses i aktuell runda, per säte. */
+    private array $expectedGuesses = [[], []];
+
+    /** Högsta seq varje säte har sett, för polls med since. */
+    private array $lastSeq = [0, 0];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -72,13 +78,73 @@ class MatchInvariantTest extends TestCase
         } catch (AssertionFailedError $e) {
             $this->fail("{$what}, seat {$seat}: ".$e->getMessage());
         }
+        if ($view['events'] !== []) {
+            $this->lastSeq[$seat] = max($this->lastSeq[$seat], ...array_column($view['events'], 'seq'));
+        }
 
         return $view;
     }
 
-    private function poll(int $seat, string $id): TestResponse
+    /** Ett felsvar till ett säte: rätt status och kod, och inget dolt i kroppen. */
+    private function checkError(TestResponse $response, int $seat, int $status, string $code, string $what): void
     {
-        return $this->as($this->users[$seat])->getJson(self::BASE."/{$id}");
+        $response->assertStatus($status);
+        $this->assertSame($code, $response->json('code'), $what);
+        try {
+            $this->assertNoLeakInError($response->json(), $this->own[1 - $seat]);
+        } catch (AssertionFailedError $e) {
+            $this->fail("{$what}, seat {$seat}: ".$e->getMessage());
+        }
+    }
+
+    private function action(string $id, int $seat, string $type, array $payload, ?int $version = null): TestResponse
+    {
+        return $this->as($this->users[$seat])->postJson(self::BASE."/{$id}/actions", [
+            'type' => $type,
+            'payload' => $payload,
+            'version' => $version ?? GameMatch::findOrFail($id)->version,
+        ]);
+    }
+
+    /**
+     * Felvägarna under gissningsfasen, från båda sätena. Inget av anropen får ändra matchen
+     * och ingen felkropp får bära motspelarens tal.
+     */
+    private function probeErrors(string $id, int $onTurn): void
+    {
+        $off = 1 - $onTurn;
+        $version = GameMatch::findOrFail($id)->version;
+        $events = GameMatchEvent::where('match_id', $id)->count();
+
+        $this->checkError($this->action($id, $off, 'guess', ['value' => 50]), $off, 422, 'not_your_turn', 'out of turn');
+        foreach ([$onTurn, $off] as $seat) {
+            $this->checkError($this->action($id, $seat, 'guess', ['value' => 50], $version - 1), $seat, 409, 'stale', 'stale');
+            $this->checkError($this->action($id, $seat, 'set_secret', ['value' => 10]), $seat, 422, 'wrong_phase', 'set_secret while guessing');
+        }
+        foreach ([0, 101] as $value) {
+            $this->checkError($this->action($id, $onTurn, 'guess', ['value' => $value]), $onTurn, 422, 'out_of_range', "guess {$value}");
+        }
+        foreach (['2', 2.5, null, []] as $value) {
+            $this->checkError($this->action($id, $onTurn, 'guess', ['value' => $value]), $onTurn, 422, 'invalid_payload', 'guess '.json_encode($value));
+        }
+
+        $this->assertSame($version, GameMatch::findOrFail($id)->version);
+        $this->assertSame($events, GameMatchEvent::where('match_id', $id)->count());
+    }
+
+    /** Nollställer testets modell inför en ny match (revansch). */
+    private function resetModel(): void
+    {
+        $this->own = [null, null];
+        $this->guessed = [];
+        $this->readies = 0;
+        $this->expectedGuesses = [[], []];
+        $this->lastSeq = [0, 0];
+    }
+
+    private function poll(int $seat, string $id, string $query = ''): TestResponse
+    {
+        return $this->as($this->users[$seat])->getJson(self::BASE."/{$id}{$query}");
     }
 
     /** Ett drag över HTTP. Kontrollerar draget hos den som gjorde det och en poll hos den andra. */
@@ -88,25 +154,38 @@ class MatchInvariantTest extends TestCase
             $this->own[$seat] = $payload['value'];
         } elseif ($type === 'guess') {
             $this->guessed[] = $payload['value'];
+            $secret = $this->own[1 - $seat];
+            $this->expectedGuesses[$seat][] = [
+                'value' => $payload['value'],
+                'result' => $secret === $payload['value'] ? 'correct' : ($secret > $payload['value'] ? 'higher' : 'lower'),
+            ];
         } elseif ($type === 'ready' && ++$this->readies === 2) {
             // Båda redo: ny runda, dolda tal nollställs.
             $this->readies = 0;
             $this->own = [null, null];
             $this->guessed = [];
+            $this->expectedGuesses = [[], []];
         }
         if ($ends) {
             // Matchen avslutas och dold state rensas.
             $this->own = [null, null];
         }
 
-        $response = $this->as($this->users[$seat])->postJson(self::BASE."/{$id}/actions", [
-            'type' => $type,
-            'payload' => $payload,
-            'version' => GameMatch::findOrFail($id)->version,
-        ]);
+        $other = 1 - $seat;
         $what = "{$type} ".json_encode($payload);
-        $view = $this->check($response, $seat, $what);
-        $this->check($this->poll(1 - $seat, $id), 1 - $seat, "poll after {$what}");
+        $view = $this->check($this->action($id, $seat, $type, $payload), $seat, $what);
+        $this->assertSame($this->expectedGuesses, $view['state']['guesses'], "guesses after {$what}");
+
+        // Motspelaren pollar först med since (bara nya händelser), sedan hela vyn.
+        $since = $this->lastSeq[$other];
+        $delta = $this->check($this->poll($other, $id, "?since={$since}"), $other, "since={$since} poll after {$what}");
+        $seqs = array_column($delta['events'], 'seq');
+        $this->assertNotEmpty($seqs, "since poll after {$what}");
+        $this->assertSame(range($since + 1, $since + count($seqs)), $seqs, "since poll after {$what}");
+        $this->assertSame($this->expectedGuesses, $delta['state']['guesses'], "since poll guesses after {$what}");
+
+        $full = $this->check($this->poll($other, $id), $other, "poll after {$what}");
+        $this->assertSame($this->expectedGuesses, $full['state']['guesses'], "poll guesses after {$what}");
 
         return $view;
     }
@@ -128,7 +207,9 @@ class MatchInvariantTest extends TestCase
         // Runda 1, säte 0 startar: båda träffar, oavgjort.
         $this->step($id, 0, 'set_secret', ['value' => 1]);
         $this->step($id, 1, 'set_secret', ['value' => 2]);
+        $this->probeErrors($id, 0);
         $this->step($id, 0, 'guess', ['value' => 50]);
+        $this->probeErrors($id, 1);
         $this->step($id, 1, 'guess', ['value' => 60]);
         $this->step($id, 0, 'guess', ['value' => 2]);
         $this->step($id, 1, 'guess', ['value' => 1]);
@@ -174,6 +255,29 @@ class MatchInvariantTest extends TestCase
         // Efter matchen: båda ser sin vy utan dold state.
         $this->check($this->poll(0, $id), 0, 'final poll');
         $this->check($this->poll(1, $id), 1, 'final poll');
+
+        // Revansch: båda svaren kontrolleras.
+        $this->check($this->as($this->users[0])->postJson(self::BASE."/{$id}/rematch"), 0, 'rematch request');
+        $both = $this->check($this->as($this->users[1])->postJson(self::BASE."/{$id}/rematch"), 1, 'rematch');
+        $newId = collect($both['events'])->firstWhere('type', 'rematch')['payload']['match_id'];
+
+        // I revanschen lämnar säte 1 mitt i en runda: varken lämnarens svar eller den
+        // kvarvarandes poll får visa motspelarens tal, och you är tomt för båda.
+        $this->resetModel();
+        $this->check($this->poll(0, $newId), 0, 'rematch poll');
+        $this->step($newId, 0, 'set_secret', ['value' => 7]);
+        $this->step($newId, 1, 'set_secret', ['value' => 8]);
+        $this->step($newId, 0, 'guess', ['value' => 1]);
+        $secrets = $this->own;
+        $this->own = [null, null];
+
+        $left = $this->as($this->users[1])->postJson(self::BASE."/{$newId}/leave")->assertOk()->json();
+        $this->assertSame(GameMatch::STATUS_ABANDONED, $left['status']);
+        $this->assertSame('left', end($left['events'])['type']);
+        $this->assertNoLeak($left, $secrets[0], null, $this->guessed);
+        $remaining = $this->poll(0, $newId)->assertOk()->json();
+        $this->assertSame(GameMatch::STATUS_ABANDONED, $remaining['status']);
+        $this->assertNoLeak($remaining, $secrets[1], null, $this->guessed);
     }
 
     public function test_leak_scanner_catches_planted_leaks(): void
@@ -207,6 +311,9 @@ class MatchInvariantTest extends TestCase
             'hidden_state' => fn (array &$v) => $v['players'][0]['hidden_state'] = null,
             'hidden' => fn (array &$v) => $v['state']['hidden'] = [],
             'motspelarens tal i you' => fn (array &$v) => $v['you']['opponent'] = 7,
+            'numerisk sträng' => fn (array &$v) => $v['players'][0]['n'] = '7',
+            'flyttal' => fn (array &$v) => $v['state']['x'] = 7.0,
+            'flyttal som gissningsvärde' => fn (array &$v) => $v['state']['guesses'][1][] = ['value' => 7.0, 'result' => 'lower'],
         ];
         foreach ($planted as $case => $plant) {
             $view = $base;
@@ -218,14 +325,33 @@ class MatchInvariantTest extends TestCase
             }
             $this->fail("scanner missed planted leak: {$case}");
         }
+
+        // Felsvar: version är strukturell, allt annat som bär talet är en läcka.
+        $error = ['message' => 'Matchen har ändrats.', 'code' => 'stale', 'version' => 7];
+        $this->assertNoLeakInError($error, 7);
+        foreach ([
+            'value' => $error + ['value' => 7],
+            'numerisk sträng' => $error + ['detail' => '7'],
+            'flyttal' => $error + ['detail' => 7.0],
+            'hidden' => $error + ['hidden' => ['secret' => 1]],
+            'you' => $error + ['you' => ['secret' => 1]],
+            'secrets' => $error + ['secrets' => [1, 2]],
+        ] as $case => $body) {
+            try {
+                $this->assertNoLeakInError($body, 7);
+            } catch (AssertionFailedError) {
+                continue;
+            }
+            $this->fail("error scanner missed planted leak: {$case}");
+        }
     }
 
     public function test_event_log_replays_to_state(): void
     {
         $id = $this->playMatch();
         // Revansch lägger grundens egna händelser i loggen; de ska hoppas över vid uppspelning.
-        $this->as($this->users[0])->postJson(self::BASE."/{$id}/rematch")->assertOk();
-        $this->as($this->users[1])->postJson(self::BASE."/{$id}/rematch")->assertOk();
+        $this->check($this->as($this->users[0])->postJson(self::BASE."/{$id}/rematch"), 0, 'rematch request');
+        $this->check($this->as($this->users[1])->postJson(self::BASE."/{$id}/rematch"), 1, 'rematch');
 
         $match = GameMatch::findOrFail($id);
         $events = GameMatchEvent::where('match_id', $id)->orderBy('seq')->get();
@@ -283,7 +409,7 @@ class MatchInvariantTest extends TestCase
         $this->assertSame($eventsBefore, GameMatchEvent::where('match_id', $id)->count());
 
         // Gallrad: medlemmen lämnar, matchen ligger orörd i 8 dagar och gallras.
-        $this->as($this->users[0])->postJson(self::BASE."/{$id}/leave")->assertOk();
+        $this->check($this->as($this->users[0])->postJson(self::BASE."/{$id}/leave"), 0, 'leave');
         $this->travel(8)->days();
         $this->artisan('matches:prune')->assertSuccessful();
         $this->assertNull(GameMatch::find($id));

@@ -13,6 +13,14 @@ namespace Tests\Concerns;
  *   state.guesses[*][*].value och payload.value i guess-händelser, och då bara om talet
  *   redan gissats i rundan. Varje annat heltal med samma värde är en läcka, utom under de
  *   uppräknade räknar- och sätesfälten (seq, version, round …), så små tal ger inte falsklarm.
+ *   Talet räknas också som läckt om det står som numerisk sträng ("7", "7.0") eller flyttal (7.0).
+ *
+ * Rundgränserna är Reveal-specifika: aktuell runda börjar vid sista round_begin och talet
+ * räknas som avslöjat vid round_end, och tillåtna platser (guesses, secrets) följer Reveals
+ * händelseformer. En annan regeluppsättning behöver en egen variant av den här kontrollen.
+ *
+ * assertNoLeakInError() gäller felsvar ({message, code, ...}): samma nyckelkontroll och en
+ * värdesökning där inga platser alls är tillåtna utöver de strukturella fälten.
  */
 trait AssertsNoMatchLeak
 {
@@ -92,6 +100,28 @@ trait AssertsNoMatchLeak
         $this->scanValues($top, '', $opponentSecret, fn () => false);
     }
 
+    /** Felsvar: inga förbjudna nycklar och motspelarens tal inte under något icke-strukturellt fält. */
+    protected function assertNoLeakInError(array $body, ?int $opponentSecret): void
+    {
+        $this->assertLeakKeysAbsent($body, '');
+        $this->assertArrayNotHasKey('secrets', $body, 'secrets in error body');
+        $this->assertArrayNotHasKey('you', $body, 'you in error body');
+        if ($opponentSecret !== null) {
+            $this->scanValues($body, '', $opponentSecret, fn () => false);
+        }
+    }
+
+    /** Heltal strikt, flyttal med samma värde och numeriska strängar med samma värde. */
+    private function carriesSecret(mixed $value, int $secret): bool
+    {
+        return match (true) {
+            is_int($value) => $value === $secret,
+            is_float($value) => $value == $secret,
+            is_string($value) => is_numeric(trim($value)) && (float) trim($value) == $secret,
+            default => false,
+        };
+    }
+
     private function assertLeakKeysAbsent(array $tree, string $at): void
     {
         foreach ($tree as $key => $value) {
@@ -104,7 +134,7 @@ trait AssertsNoMatchLeak
     }
 
     /**
-     * Går igenom alla löv. Ett löv som strikt är lika med $secret är en läcka om nyckeln inte
+     * Går igenom alla löv. Ett löv som bär $secret (se carriesSecret) är en läcka om nyckeln inte
      * är strukturell och $allowed(sökväg) inte godkänner platsen.
      *
      * @param  callable(list<string|int>): bool  $allowed
@@ -123,7 +153,7 @@ trait AssertsNoMatchLeak
 
                 continue;
             }
-            if ($value !== $secret || in_array($key, self::$structuralKeys, true) || $allowed($here)) {
+            if (! $this->carriesSecret($value, $secret) || in_array($key, self::$structuralKeys, true) || $allowed($here)) {
                 continue;
             }
             $this->fail('opponent secret leaked at '.implode('.', $here));
