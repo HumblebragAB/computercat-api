@@ -4,17 +4,17 @@ title: När du ska fråga en människa
 topic: process
 tags: [fråga, människa, erik, beslut, gissa, stanna]
 summary: Fråga en människa i stället för att gissa när serverlogik saknas, vid stora beslut som ingen artikel täcker, när byggguidens kontroller faller utan din ändring och när en lint-regel står i vägen.
-updated: "2026-10-14"
+updated: "2026-10-17"
 build_guide: [v1, v2, v3]
 ---
 
 ## Regel
 
-Gissa inte och bygg inte runt ett hinder. I lägena nedan stannar du, beskriver läget och frågar en människa innan du fortsätter. I v1 finns inte faktabanksavsnittet och lint-reglerna i `CLAUDE.md`; punkterna 2 och 4 gäller v2.
+Gissa inte och bygg inte runt ett hinder. I lägena nedan stannar du, beskriver läget och frågar en människa innan du fortsätter. I v1 finns inte faktabanksavsnittet och lint-reglerna i `CLAUDE.md`; punkterna 2 och 4 gäller v2 och v3.
 
 ## Varför
 
-I v2 säger spelets `CLAUDE.md` att en artikel går före din egen bedömning, och att ett stort beslut som ingen artikel täcker frågas till en människa innan du bygger. Byggguidens filer och Computercats server ändras i computercat-api, inte i spelet, så ett fel där kan du inte laga på rätt sätt själv.
+I v2 och v3 säger spelets `CLAUDE.md` att en artikel går före din egen bedömning, och att ett stort beslut som ingen artikel täcker frågas till en människa innan du bygger. Byggguidens filer och Computercats server ändras i computercat-api, inte i spelet, så ett fel där kan du inte laga på rätt sätt själv.
 
 ## Så gör du
 
@@ -29,6 +29,7 @@ I v2 säger spelets `CLAUDE.md` att en artikel går före din egen bedömning, o
 ## Källa
 
 - resources/byggguide/v2/files/CLAUDE.md
+- resources/byggguide/v3/files/CLAUDE.md
 - resources/byggguide/v1/files/CLAUDE.md
 - app/Mcp/Tools/CreateGameTool.php
 - app/Mcp/Tools/ArchiveGameTool.php

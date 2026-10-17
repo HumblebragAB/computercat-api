@@ -4,7 +4,7 @@ title: Sparningar i molnet (saves)
 topic: security
 tags: [sparning, sparfil, saves, molnsparning, version, merge, personuppgifter]
 summary: Vad en molnsparning är (JSON, högst 512 KB, version), hur konflikter slås ihop, att ägande och hemligheter inte hör hemma där och att personuppgifter kräver en människas beslut.
-updated: "2026-10-14"
+updated: "2026-10-17"
 build_guide: [v1, v2, v3]
 ---
 
@@ -24,7 +24,7 @@ En sparning är en JSON-blob per spelare, spel och nyckel (`main` som standard).
 
 Sparningen skickas av klienten, och nycklar hör aldrig hemma i klienten; se `security-hemligheter-i-klienten`.
 
-Skillnad mellan versionerna: bara v2:s `CLAUDE.md` säger uttryckligen att något som rör personuppgifter kräver en människas beslut. Sparningarna fungerar likadant i v1 och v2.
+Skillnad mellan versionerna: bara v2:s och v3:s `CLAUDE.md` säger uttryckligen att något som rör personuppgifter kräver en människas beslut. Sparningarna fungerar likadant i v1, v2 och v3.
 
 ## Så gör du
 

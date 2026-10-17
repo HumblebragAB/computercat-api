@@ -4,27 +4,27 @@ title: Säkerhetsspärren i bygget (cc-gate)
 topic: security
 tags: [spärr, cc-gate, bygge, coolify, säkerhetskontroll, demo, audit]
 summary: Vad scripts/cc-gate.mjs kontrollerar och i vilken ordning, varför repot inte kan stänga av den och vad den inte skyddar mot.
-updated: "2026-10-14"
+updated: "2026-10-17"
 build_guide: [v2, v3]
 ---
 
 ## Regel
 
-Varje Demo-bygge i v2 passerar `scripts/cc-gate.mjs`. Faller en kontroll deployas inget, och Demo visar förra bygget. Rätta orsaken i spelets källa; försök aldrig ta dig förbi spärren. Den fångar misstag och kända mönster, inte avsiktligt skadlig spelkod, och den ersätter inte granskningen före Live.
+Varje Demo-bygge i v2 och v3 passerar `scripts/cc-gate.mjs`. Faller en kontroll deployas inget, och Demo visar förra bygget. Rätta orsaken i spelets källa; försök aldrig ta dig förbi spärren. Den fångar misstag och kända mönster, inte avsiktligt skadlig spelkod, och den ersätter inte granskningen före Live.
 
 ## Varför
 
 Coolify bygger Demo med ett byggkommando som Computercat äger:
 
 ```
-npm run build && curl -fsS <adress till scripts/cc-gate.mjs i byggguide v2> -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs
+npm run build && curl -fsS <adress till scripts/cc-gate.mjs i byggguiden för spelets version> -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs
 ```
 
 Skriptet hämtas över https från den låsta byggguiden i Computercat, som kontrollerar filens sha256 innan den skickas. Att ta bort eller ändra skripten eller `check` i spelrepot stänger därför inte av spärren i Coolify. Ett lokalt `npm run check` med en ändrad kopia bevisar ingenting.
 
 Gränsen: `npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön. Spärren skyddar mot att en hemlighet, en source map, en dold fil eller en sida utan (eller med kringgången) Content-Security-Policy publiceras på Demo. Spelkod som avsiktligt gör något skadligt i webbläsaren fångas av granskning före Live.
 
-v1 har ingen spärr i bygget; Coolify kör den bara för v2-spel.
+v1 har ingen spärr i bygget; Coolify kör den bara för v2- och v3-spel. Ett spel som uppgraderats från v2 till v3 hämtar fortfarande `cc-gate.mjs` från v2-adressen i sitt byggkommando i Coolify. Filen är byte för byte identisk i v2 och v3 (båda manifesten pekar på samma innehåll), så spärren är densamma.
 
 ## Så gör du
 
