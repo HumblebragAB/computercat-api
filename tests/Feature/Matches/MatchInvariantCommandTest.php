@@ -58,6 +58,18 @@ class MatchInvariantCommandTest extends TestCase
         $this->artisan('matches:check-invariants')->expectsOutputToContain('1')->assertExitCode(0);
     }
 
+    public function test_echo_match_passes(): void
+    {
+        $created = $this->service->create($this->game, $this->anna, 'reveal', ['mode' => 'echo'], 'Anna');
+        $match = $this->service->join($this->game, $this->bo, $created['token'], 'Bo');
+        $this->service->act($match->fresh(), $this->anna, 'set_secret', ['value' => 73], $match->fresh()->version);
+        $this->service->act($match->fresh(), $this->bo, 'set_secret', ['value' => 41], $match->fresh()->version);
+        $this->service->act($match->fresh(), $this->anna, 'guess', ['value' => 73], $match->fresh()->version);
+        $this->assertSame('self', GameMatchEvent::where('match_id', $match->id)->where('type', 'guess')->first()->payload['echo']);
+
+        $this->artisan('matches:check-invariants')->expectsOutputToContain('1')->assertExitCode(0);
+    }
+
     public function test_seq_gap_fails(): void
     {
         $match = $this->played();

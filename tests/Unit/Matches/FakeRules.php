@@ -18,6 +18,11 @@ class FakeRules implements MatchRules
         return ['log' => []];
     }
 
+    public function upgradeState(array $state): array
+    {
+        return $state;
+    }
+
     public function apply(array $state, string $type, ?int $seat, array $payload): array
     {
         $state['log'][] = [$type, $seat];

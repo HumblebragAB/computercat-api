@@ -798,14 +798,18 @@ class IntegrationGuide
         $options = json_encode(RevealRules::DEFAULT_OPTIONS);
         [$set, $guess, $ready] = RevealRules::ACTIONS;
         $events = array_map(fn ($e) => '`'.self::code($e).'`', RevealRules::EVENTS);
+        $list = fn (array $values) => implode(', ', array_map(fn ($v) => '`'.self::code($v).'`', $values));
+        [$echoHigher, $echoLower, $echoSelf] = RevealRules::ECHOES;
 
         return [
             'Both players lock a secret number, then take turns guessing the opponent\'s number and get higher or lower back.',
             '',
             '**Rules.** Turns alternate within a round. The starter alternates per round: seat 0 starts round 1, seat 1 round 2, and so on. If the non-starter hits the opponent\'s number, they win the round at once. If the starter hits, the opponent gets one last guess: a hit makes the round a draw, a miss gives the starter the round. First to '.RevealRules::WINS_NEEDED.' round wins takes the match. After at most '.RevealRules::MAX_ROUNDS.' rounds the match ends anyway: most round wins wins, equal is a draw. The opponent\'s secret is only revealed in `round_end`.',
             '',
+            '**Mode `echo`.** Everything above applies, plus one thing: every guess is answered twice. The guesser gets `result` against the opponent\'s secret as usual, and both players also get `echo`: how the guess compares to the guesser\'s own secret (`'.self::code($echoHigher).'` means the guesser\'s own secret is greater than the guess, `'.self::code($echoLower).'` that it is smaller). If the guess equals the guesser\'s own secret, `echo` is `'.self::code($echoSelf).'`, which reveals the guesser\'s number to the opponent. `echo` is always a word, never the number, and is computed by the server from the hidden secret; the client never computes it. Turn order, last chance and scoring are the same as in mode `duel`.',
+            '',
             '#### Options',
-            'Accepted `options`: `'.self::code($options).'`. Leave `options` out, or send any subset of these exact values; anything else (other values, other keys, strings) gives 422 validation.',
+            'Accepted `options`: `'.self::code($options).'`. Leave `options` out, or send any subset. `min`, `max` and `best_of` accept only these exact values. `mode`: one of '.$list(RevealRules::MODES).' (default `'.self::code(RevealRules::DEFAULT_OPTIONS['mode']).'`). Anything else (other values, other keys, strings for numbers, non-string `mode`) gives 422 validation.',
             '',
             '#### Actions (`type` and `payload` in `POST /matches/{id}/actions`)',
             '| `type` | `payload` | When |',
@@ -835,8 +839,9 @@ class IntegrationGuide
             '- `ready`: `[bool, bool]` per seat, whether that seat has sent `'.self::code($ready).'` this round.',
             '- `score`: `[int, int]` round wins per seat.',
             '- `last_chance`: `true` while the non-starter has its last guess after the starter hit.',
-            '- `guesses`: per seat, this round\'s guesses in order, each `{value, result}`.',
+            '- `guesses`: per seat, this round\'s guesses in order, each `{value, result}`, with `echo` added only in mode `echo` (same value as in the `guess` event).',
             '- `winner`: winning seat after `match_over`, `null` for a draw or while the match is on.',
+            '- `mode`: '.$list(RevealRules::MODES).', taken from `options.mode` when the match is created; it never changes during the match. Show it to the joining player before they lock a secret.',
             '',
             '`you` is `{secret}`, where `secret` is your own number this round, `null` until you lock it.',
             '',
@@ -845,7 +850,7 @@ class IntegrationGuide
             '- `round_begin` `{round, starter}`: a new round starts in phase `choosing`.',
             '- `locked` `{}`: `seat` has locked its secret (the value is not sent).',
             '- `duel_begin` `{}`: both are locked, phase `guessing` starts with `starter`.',
-            '- `guess` `{value, result}`: `seat` guessed `value`; `result` is `higher`, `lower` or `correct`. `higher` means the secret is greater than the guess.',
+            '- `guess` `{value, result, echo}`: `seat` guessed `value`; `result` is `higher`, `lower` or `correct`. `higher` means the secret is greater than the guess. `echo` is present only in mode `echo`: '.$list(RevealRules::ECHOES).' against the guesser\'s own secret (see Mode `echo`). In mode `duel` the payload is `{value, result}`.',
             '- `last_chance` `{}`: the starter hit; `seat` (the non-starter) gets one last guess.',
             '- `round_end` `{winner, secrets, guesses}`: `winner` is a seat or `null` (draw), `secrets` is both seats\' numbers `[s0, s1]`, `guesses` is the number of guesses per seat `[n0, n1]`.',
             '- `ready` `{}`: `seat` is ready for the next round.',

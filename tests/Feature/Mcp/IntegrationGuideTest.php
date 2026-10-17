@@ -258,6 +258,28 @@ class IntegrationGuideTest extends McpTestCase
         $this->assertStringContainsString('the secret is greater than the guess', $section);
     }
 
+    // Ekoläget: options.mode, state.mode och guess-händelsens echo står i manualen, ur konstanterna.
+    public function test_manual_documents_the_echo_mode(): void
+    {
+        $game = $this->game('reveal');
+        $section = $this->rulesetSection(IntegrationGuide::manual($game, ['matches']), 'reveal');
+
+        foreach ([...RevealRules::MODES, ...RevealRules::ECHOES] as $name) {
+            $this->assertStringContainsString("`{$name}`", $section, $name);
+        }
+        foreach ([
+            '`mode`', '`echo`', '`guess` `{value, result, echo}`', 'only in mode `echo`',
+            "the guesser's own secret is greater than the guess", "reveals the guesser's number",
+            'never changes during the match', 'computed by the server',
+        ] as $needle) {
+            $this->assertStringContainsString($needle, $section, $needle);
+        }
+        $this->assertSame(1, preg_match('/`mode`: one of (.+?)\./', $section, $m), 'mode values missing');
+        foreach (RevealRules::MODES as $mode) {
+            $this->assertStringContainsString("`{$mode}`", $m[1]);
+        }
+    }
+
     public function test_documented_reveal_options_equal_the_defaults(): void
     {
         $game = $this->game('reveal');

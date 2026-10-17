@@ -11,10 +11,23 @@ use LogicException;
  * Reveal: båda låser ett hemligt tal och gissar turvis motspelarens, med svaret högre/lägre.
  * Hittar startspelaren rätt får motspelaren en sista chans (utjämning). Först till två
  * vunna rundor, tak på fem rundor. Motspelarens tal lämnar bara servern i round_end.
+ *
+ * Läget (options.mode, också i state.mode) är 'duel' eller 'echo'. I ekot bär varje gissning
+ * dessutom ett eko till motspelaren: högre, lägre eller self mot gissarens EGET tal. Ekot är
+ * alltid ett ord, aldrig talet. Lagrad state från före läget saknar mode och räknas som 'duel'.
  */
 class RevealRules implements MatchRules
 {
-    public const DEFAULT_OPTIONS = ['min' => 1, 'max' => 100, 'best_of' => 3];
+    public const DEFAULT_OPTIONS = ['min' => 1, 'max' => 100, 'best_of' => 3, 'mode' => 'duel'];
+
+    /** Spellägen. Manualen (IntegrationGuide) dokumenterar varje. */
+    public const MODES = ['duel', 'echo'];
+
+    /** Ekots värden i guess-händelsen (bara i läget echo), sett från gissarens eget tal. */
+    public const ECHOES = ['higher', 'lower', 'self'];
+
+    /** Läget för lagrad state och options som saknar mode (skapade före läget). */
+    public const LEGACY_MODE = 'duel';
 
     /** Drag en spelare kan skicka. Manualen (IntegrationGuide) dokumenterar varje. */
     public const ACTIONS = ['set_secret', 'guess', 'ready'];
@@ -30,14 +43,19 @@ class RevealRules implements MatchRules
     public function validateOptions(array $options): array
     {
         $normalized = array_replace(self::DEFAULT_OPTIONS, $options);
+        $mode = $normalized['mode'];
+        $fixed = array_diff_key(self::DEFAULT_OPTIONS, ['mode' => true]);
 
-        if ($normalized !== self::DEFAULT_OPTIONS) {
+        // Strikt: inga okända nycklar, min/max/best_of exakt standard, mode en känd sträng.
+        if (array_diff_key($normalized, self::DEFAULT_OPTIONS) !== []
+            || array_intersect_key($normalized, $fixed) !== $fixed
+            || ! is_string($mode) || ! in_array($mode, self::MODES, true)) {
             throw ValidationException::withMessages([
-                'options' => 'Reveal stöder bara min 1, max 100, best_of 3.',
+                'options' => 'Reveal stöder bara min 1, max 100, best_of 3 och mode duel eller echo.',
             ]);
         }
 
-        return self::DEFAULT_OPTIONS;
+        return array_replace(self::DEFAULT_OPTIONS, ['mode' => $mode]);
     }
 
     public function initialState(array $options): array
@@ -53,7 +71,16 @@ class RevealRules implements MatchRules
             'last_chance' => false,
             'guesses' => [[], []],
             'winner' => null,
+            'mode' => $options['mode'] ?? self::LEGACY_MODE,
         ];
+    }
+
+    /** Lagrad state från före läget saknar mode; den är ren duell. Befintligt läge rörs inte. */
+    public function upgradeState(array $state): array
+    {
+        $state['mode'] ??= self::LEGACY_MODE;
+
+        return $state;
     }
 
     public function apply(array $state, string $type, ?int $seat, array $payload): array
@@ -78,7 +105,11 @@ class RevealRules implements MatchRules
                 break;
             case 'guess':
                 $s = $this->seat($seat);
-                $state['guesses'][$s][] = ['value' => $payload['value'], 'result' => $payload['result']];
+                $entry = ['value' => $payload['value'], 'result' => $payload['result']];
+                if (array_key_exists('echo', $payload)) {
+                    $entry['echo'] = $payload['echo'];
+                }
+                $state['guesses'][$s][] = $entry;
                 $state['turn'] = 1 - $s;
                 break;
             case 'last_chance':
@@ -174,7 +205,11 @@ class RevealRules implements MatchRules
             $secret > $value => 'higher',
             default => 'lower',
         };
-        $ctx->emit('guess', $seat, ['value' => $value, 'result' => $result]);
+        $payload = ['value' => $value, 'result' => $result];
+        if (($state['mode'] ?? self::LEGACY_MODE) === 'echo') {
+            $payload['echo'] = $this->echo($ctx, $seat, $value);
+        }
+        $ctx->emit('guess', $seat, $payload);
 
         $starter = $state['starter'];
         $correct = $result === 'correct';
@@ -187,6 +222,21 @@ class RevealRules implements MatchRules
         } elseif ($correct) {
             $ctx->emit('last_chance', 1 - $seat);
         }
+    }
+
+    /** Ekot: gissningen mot gissarens eget dolda tal. Bara ordet lämnar servern. */
+    private function echo(MatchContext $ctx, int $seat, int $value): string
+    {
+        $own = $ctx->hidden($seat)['secret'] ?? null;
+        if (! is_int($own)) {
+            throw new LogicException('Guesser has no secret during guessing.');
+        }
+
+        return match (true) {
+            $own === $value => 'self',
+            $own > $value => 'higher',
+            default => 'lower',
+        };
     }
 
     private function ready(MatchContext $ctx, int $seat): void

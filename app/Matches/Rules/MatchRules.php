@@ -14,6 +14,13 @@ interface MatchRules
     /** Publik startstate innan några händelser. */
     public function initialState(array $options): array;
 
+    /**
+     * Lagrad state från äldre kod → aktuell form: fält som tillkommit sedan får sina
+     * standardvärden, inget annat ändras. Används när lagrad state visas eller jämförs
+     * med en uppspelning; den lagrade raden skrivs inte om.
+     */
+    public function upgradeState(array $state): array;
+
     /** Ren reducer: publik state + en händelse → ny publik state. Får inte läsa dold state. */
     public function apply(array $state, string $type, ?int $seat, array $payload): array;
 

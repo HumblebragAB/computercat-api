@@ -19,9 +19,9 @@ class RevealRulesTest extends TestCase
     }
 
     /** En startad match: round_begin för runda 1 är emitterad. */
-    private function started(): MatchContext
+    private function started(array $options = []): MatchContext
     {
-        $options = $this->rules->validateOptions([]);
+        $options = $this->rules->validateOptions($options);
         $ctx = new MatchContext($this->rules, $options, $this->rules->initialState($options));
         $this->rules->start($ctx);
 
@@ -102,7 +102,7 @@ class RevealRulesTest extends TestCase
             }
         }
 
-        $this->assertSame(['min' => 1, 'max' => 100, 'best_of' => 3], $this->rules->validateOptions([]));
+        $this->assertSame(['min' => 1, 'max' => 100, 'best_of' => 3, 'mode' => 'duel'], $this->rules->validateOptions([]));
     }
 
     public function test_non_integer_values_rejected(): void
@@ -346,8 +346,8 @@ class RevealRulesTest extends TestCase
         $this->assertSame([
             'round' => 0, 'phase' => 'choosing', 'starter' => 0, 'turn' => null,
             'locked' => [false, false], 'ready' => [false, false], 'score' => [0, 0],
-            'last_chance' => false, 'guesses' => [[], []], 'winner' => null,
-        ], $this->rules->initialState(['min' => 1, 'max' => 100, 'best_of' => 3]));
+            'last_chance' => false, 'guesses' => [[], []], 'winner' => null, 'mode' => 'duel',
+        ], $this->rules->initialState(['min' => 1, 'max' => 100, 'best_of' => 3, 'mode' => 'duel']));
     }
 
     // ACTIONS och EVENTS är det manualen dokumenterar; de ska vara exakt vad reglerna gör.
@@ -381,5 +381,164 @@ class RevealRulesTest extends TestCase
                 $this->assertTrue(true);
             }
         }
+    }
+
+    public function test_mode_defaults_to_duel_and_echo_is_accepted(): void
+    {
+        $this->assertSame('duel', RevealRules::DEFAULT_OPTIONS['mode']);
+        $this->assertSame(['duel', 'echo'], RevealRules::MODES);
+        $this->assertSame('duel', $this->rules->validateOptions([])['mode']);
+        $this->assertSame('duel', $this->rules->validateOptions(['mode' => 'duel'])['mode']);
+        $this->assertSame(
+            ['min' => 1, 'max' => 100, 'best_of' => 3, 'mode' => 'echo'],
+            $this->rules->validateOptions(['min' => 1, 'mode' => 'echo']),
+        );
+        $this->assertSame(['min' => 1, 'max' => 100, 'best_of' => 3, 'mode' => 'echo'], $this->rules->validateOptions(['mode' => 'echo', 'best_of' => 3]));
+    }
+
+    public function test_mode_must_be_a_known_string(): void
+    {
+        foreach ([['mode' => 'bluff'], ['mode' => 'ECHO'], ['mode' => ' echo'], ['mode' => ''], ['mode' => 1], ['mode' => true], ['mode' => null], ['mode' => ['echo']], ['mode' => 'echo', 'max' => 50]] as $options) {
+            try {
+                $this->rules->validateOptions($options);
+                $this->fail('should reject '.json_encode($options));
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
+    }
+
+    public function test_state_carries_mode_from_options(): void
+    {
+        $this->assertSame('echo', $this->started(['mode' => 'echo'])->state()['mode']);
+        $this->assertSame('duel', $this->started()->state()['mode']);
+        // Äldre options utan mode (matcher skapade före läget) ger ren duell.
+        $this->assertSame('duel', $this->rules->initialState(['min' => 1, 'max' => 100, 'best_of' => 3])['mode']);
+
+        // Läget ändras aldrig av en händelse, inte heller över rundor.
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->playRound($ctx, null);
+        $this->bothReady($ctx);
+        $this->assertSame('echo', $ctx->state()['mode']);
+    }
+
+    // Ekot: motspelaren får veta hur gissningen förhåller sig till gissarens EGET tal.
+    public function test_echo_higher_lower_self_from_both_seats(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 17, 42);
+
+        $plays = [
+            // [säte, gissning, result mot motspelarens tal, echo mot eget tal]
+            [0, 40, 'higher', 'lower'],
+            [1, 10, 'higher', 'higher'],
+            [0, 5, 'higher', 'higher'],
+            [1, 50, 'lower', 'lower'],
+            [0, 17, 'higher', 'self'],
+            [1, 42, 'lower', 'self'],
+        ];
+        $expected = [[], []];
+        foreach ($plays as [$seat, $value, $result, $echo]) {
+            $event = $this->guess($ctx, $seat, $value);
+            $this->assertSame(['value' => $value, 'result' => $result, 'echo' => $echo], $event['payload'], "seat {$seat} guesses {$value}");
+            $this->assertSame($seat, $event['seat']);
+            $expected[$seat][] = ['value' => $value, 'result' => $result, 'echo' => $echo];
+        }
+        $this->assertSame($expected, $ctx->state()['guesses']);
+
+        // Träff har också ett eko; turordning och sista chans är som i ren duell.
+        $this->assertSame(['value' => 42, 'result' => 'correct', 'echo' => 'lower'], $this->guess($ctx, 0, 42)['payload']);
+        $this->assertSame(1, $this->lastOf($ctx, 'last_chance')['seat']);
+        $this->assertSame(['value' => 17, 'result' => 'correct', 'echo' => 'higher'], $this->guess($ctx, 1, 17)['payload']);
+        $this->assertSame(['winner' => null, 'secrets' => [17, 42], 'guesses' => [4, 4]], $this->lastOf($ctx, 'round_end')['payload']);
+    }
+
+    public function test_echo_when_both_secrets_are_equal(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 30, 30);
+        $this->assertSame(['value' => 30, 'result' => 'correct', 'echo' => 'self'], $this->guess($ctx, 0, 30)['payload']);
+    }
+
+    public function test_duel_guess_has_no_echo(): void
+    {
+        foreach ([[], ['mode' => 'duel']] as $options) {
+            $ctx = $this->started($options);
+            $this->lock($ctx, 17, 42);
+            $this->assertSame(['value' => 17, 'result' => 'higher'], $this->guess($ctx, 0, 17)['payload']);
+            $this->assertSame([['value' => 17, 'result' => 'higher']], $ctx->state()['guesses'][0]);
+        }
+    }
+
+    // Ekot nämner aldrig talet: före round_end står det inga dolda tal i händelser eller state.
+    public function test_echo_never_carries_a_number(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        $this->lock($ctx, 63, 77);
+        foreach ([[0, 50], [1, 60], [0, 30], [1, 63]] as [$seat, $value]) {
+            $event = $this->guess($ctx, $seat, $value);
+            $this->assertContains($event['payload']['echo'], RevealRules::ECHOES);
+        }
+        // Säte 1:s 77 gissas aldrig och säte 0:s 63 bara av säte 1 (som value), aldrig i ett eko.
+        foreach ($ctx->emitted() as $event) {
+            if ($event['type'] === 'round_end') {
+                continue;
+            }
+            $this->assertStringNotContainsString('77', json_encode($event['payload']), $event['type']);
+            if (isset($event['payload']['echo'])) {
+                $this->assertIsString($event['payload']['echo']);
+                $this->assertFalse(is_numeric($event['payload']['echo']));
+            }
+        }
+        $this->assertStringNotContainsString('77', json_encode($ctx->state()));
+    }
+
+    public function test_replay_equals_state_in_echo_mode(): void
+    {
+        $ctx = $this->started(['mode' => 'echo']);
+        foreach (['starter', null, 'other', 'starter'] as $i => $outcome) {
+            if ($i > 0) {
+                $this->bothReady($ctx);
+            }
+            $this->playRound($ctx, $outcome);
+        }
+        $this->assertTrue($ctx->isFinished());
+        $this->assertNotEmpty(array_filter($ctx->emitted(), fn ($e) => $e['type'] === 'guess' && isset($e['payload']['echo'])));
+
+        $state = $this->rules->initialState($ctx->options());
+        foreach ($ctx->emitted() as $event) {
+            $state = $this->rules->apply($state, $event['type'], $event['seat'], $event['payload']);
+        }
+        $this->assertSame($ctx->state(), $state);
+        $this->assertSame('echo', $state['mode']);
+    }
+
+    // Lagrad state från före läget saknar mode. Den spelar upp som ren duell och vyn kompletterar den.
+    public function test_legacy_state_without_mode(): void
+    {
+        $legacyOptions = ['min' => 1, 'max' => 100, 'best_of' => 3];
+        $state = $this->rules->initialState($legacyOptions);
+        unset($state['mode']);
+        $ctx = new MatchContext($this->rules, $legacyOptions, $state);
+        $this->rules->start($ctx);
+        $this->lock($ctx, 17, 42);
+        $this->assertSame(['value' => 17, 'result' => 'higher'], $this->guess($ctx, 0, 17)['payload']);
+        $this->assertArrayNotHasKey('mode', $ctx->state());
+
+        $upgraded = $this->rules->upgradeState($ctx->state());
+        $this->assertSame('duel', $upgraded['mode']);
+        $this->assertSame($ctx->state(), array_diff_key($upgraded, ['mode' => true]));
+        // Uppspelat från options utan mode blir det samma som den kompletterade lagrade staten.
+        $replayed = $this->rules->initialState($legacyOptions);
+        foreach ($ctx->emitted() as $event) {
+            $replayed = $this->rules->apply($replayed, $event['type'], $event['seat'], $event['payload']);
+        }
+        ksort($upgraded);
+        ksort($replayed);
+        $this->assertSame($upgraded, $replayed);
+        $this->assertSame('duel', $replayed['mode']);
+
+        // Befintligt läge skrivs aldrig över.
+        $this->assertSame('echo', $this->rules->upgradeState(['mode' => 'echo'])['mode']);
     }
 }

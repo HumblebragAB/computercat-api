@@ -41,7 +41,7 @@ class MatchView
                 'name' => $p->name,
                 'connected' => self::connected($p),
             ])->values()->all(),
-            'state' => $match->state,
+            'state' => is_array($match->state) ? $rules->upgradeState($match->state) : $match->state,
             'you' => self::asObject($rules->view($own?->hidden_state)),
             'events' => $events->map(fn (GameMatchEvent $e) => [
                 'seq' => $e->seq,

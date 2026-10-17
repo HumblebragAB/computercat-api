@@ -14,7 +14,8 @@ use Throwable;
 /**
  * Invarianterna för matcher, för matcher som ändrats senaste dygnet (status spelar ingen roll):
  *  1. händelseloggens seq är exakt 1..n utan hål,
- *  2. händelserna uppspelade genom regelklassen från initialState(options) ger den lagrade state,
+ *  2. händelserna uppspelade genom regelklassen från initialState(options) ger den lagrade state
+ *     (efter rules->upgradeState, så att state från före ett nytt fält, t.ex. Reveals mode, håller),
  *  3. ingen avslutad eller övergiven match har kvar hidden_state hos någon spelare.
  *
  * Reglerna slås upp direkt ur config('matches.rulesets.<ruleset>.class') utan spelspärren:
@@ -80,7 +81,9 @@ class CheckMatchInvariants extends Command
                     }
                     $state = $rules->apply($state, $event->type, $event->seat, $event->payload ?? []);
                 }
-                if (self::canonical($state) !== self::canonical($match->state)) {
+                // Lagrad state från äldre kod kan sakna fält som tillkommit; reglerna fyller i dem.
+                $stored = is_array($match->state) ? $rules->upgradeState($match->state) : $match->state;
+                if (self::canonical($state) !== self::canonical($stored)) {
                     $broken[] = 'state_mismatch';
                 }
             } catch (Throwable) {
