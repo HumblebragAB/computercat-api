@@ -16,6 +16,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\AssertionFailedError;
 use Tests\TestCase;
 
 class MatchServiceTest extends TestCase
@@ -241,14 +242,9 @@ class MatchServiceTest extends TestCase
         $this->assertSame('left', $last->type);
         $this->assertSame(1, $last->seat);
 
-        foreach ([0, 1] as $seat) {
-            $json = json_encode(MatchView::for($left->fresh(), $seat, null));
-            $this->assertStringNotContainsString('77', $json);
-            $this->assertStringNotContainsString('42', $json);
-        }
-        foreach (GameMatchEvent::where('match_id', $match->id)->get() as $event) {
-            $this->assertStringNotContainsString('77', json_encode($event->payload));
-        }
+        // Dolt nollställt: ingen av dem ser längre något i you, och ingen ser motspelarens tal.
+        $this->assertNoLeak(MatchView::for($left->fresh(), 0, null), 77, null);
+        $this->assertNoLeak(MatchView::for($left->fresh(), 1, null), 42, null);
 
         // Idempotent: andra anropet ändrar inget.
         $again = $this->service->leave($left->fresh(), $this->anna);
@@ -445,7 +441,9 @@ class MatchServiceTest extends TestCase
         $this->assertSame([], MatchView::for($match->fresh(), 0, 2)['events']);
         $this->assertSame(['secret' => 33], MatchView::for($match->fresh(), 0, null)['you']);
         $this->assertSame(['secret' => null], MatchView::for($match->fresh(), 1, null)['you']);
-        $this->assertStringNotContainsString('33', json_encode(MatchView::for($match->fresh(), 1, null)));
+        // Säte 1 har inget tal än, så bara nycklar och you kontrolleras för säte 0.
+        $this->assertNoLeak(MatchView::for($match->fresh(), 0, null), null, 33);
+        $this->assertNoLeak(MatchView::for($match->fresh(), 1, null), 33, null);
     }
 
     public function test_view_caps_events_at_200(): void
@@ -460,6 +458,124 @@ class MatchServiceTest extends TestCase
 
         $since = array_column(MatchView::for($match->fresh(), 0, 0)['events'], 'seq');
         $this->assertSame(range(1, 200), $since);
+    }
+
+    /**
+     * Strukturell läckkontroll av en vy: you.secret är bara det egna talet, ingen annan nyckel
+     * heter hidden_state/hidden/secret, och motspelarens tal finns inte som värde i state eller
+     * i någon händelse före round_end. Undantag: en korrekt gissnings egen value.
+     */
+    private function assertNoLeak(array $view, ?int $opponentSecret, ?int $ownSecret): void
+    {
+        $this->assertSame(['secret' => $ownSecret], $view['you']);
+
+        $rest = $view;
+        unset($rest['you']);
+        $this->assertForbiddenKeysAbsent($rest);
+
+        if ($opponentSecret === null) {
+            return;
+        }
+
+        $state = $view['state'];
+        foreach ($state['guesses'] ?? [] as $i => $byseat) {
+            $state['guesses'][$i] = array_values(array_filter($byseat, fn ($g) => ($g['result'] ?? null) !== 'correct'));
+        }
+        $this->assertNotContains($opponentSecret, $this->leaves($state), 'opponent secret in state');
+
+        foreach ($view['events'] as $event) {
+            if ($event['type'] === 'round_end') {
+                break;
+            }
+            $payload = $event['payload'];
+            if ($event['type'] === 'guess' && ($payload['result'] ?? null) === 'correct') {
+                unset($payload['value']);
+            }
+            $this->assertNotContains($opponentSecret, $this->leaves($payload), "opponent secret in {$event['type']}");
+        }
+    }
+
+    private function assertForbiddenKeysAbsent(array $tree): void
+    {
+        foreach ($tree as $key => $value) {
+            $this->assertNotContains($key, ['hidden_state', 'hidden', 'secret'], "forbidden key {$key}");
+            if (is_array($value)) {
+                $this->assertForbiddenKeysAbsent($value);
+            }
+        }
+    }
+
+    /** @return list<mixed> */
+    private function leaves(array $tree): array
+    {
+        $out = [];
+        array_walk_recursive($tree, function ($v) use (&$out) {
+            $out[] = $v;
+        });
+
+        return $out;
+    }
+
+    public function test_leak_scanner_detects_planted_secret(): void
+    {
+        $base = ['you' => ['secret' => null], 'state' => ['guesses' => [[], []]], 'events' => []];
+        $planted = [
+            array_replace($base, ['state' => ['guesses' => [[], []], 'x' => 77]]),
+            array_replace($base, ['events' => [['type' => 'locked', 'payload' => ['n' => 77]]]]),
+            array_replace($base, ['events' => [['type' => 'guess', 'payload' => ['value' => 77, 'result' => 'lower']]]]),
+            array_replace($base, ['players' => [['hidden_state' => null]]]),
+            array_replace($base, ['you' => ['secret' => 77]]),
+        ];
+        foreach ($planted as $i => $view) {
+            try {
+                $this->assertNoLeak($view, 77, null);
+            } catch (AssertionFailedError) {
+                continue;
+            }
+            $this->fail("scanner missed planted leak {$i}");
+        }
+
+        // Tillåtet: korrekt gissning och round_end.secrets.
+        $this->assertNoLeak(array_replace($base, ['events' => [
+            ['type' => 'guess', 'payload' => ['value' => 77, 'result' => 'correct']],
+            ['type' => 'round_end', 'payload' => ['secrets' => [1, 77]]],
+        ]]), 77, null);
+    }
+
+    public function test_expire(): void
+    {
+        ['match' => $waiting] = $this->create();
+        $active = $this->started();
+        $this->act($active, 0, 'set_secret', ['value' => 42]);
+
+        // Inte gått ut än: ingenting händer.
+        $before = $this->snapshot($active);
+        $this->assertFalse($this->service->expire($active->fresh()));
+        $this->assertFalse($this->service->expire($waiting->fresh()));
+        $this->assertSame($before, $this->snapshot($active));
+        $this->assertSame(1, $waiting->fresh()->version);
+        $this->assertSame(0, GameMatchEvent::where('match_id', $waiting->id)->count());
+
+        $this->travel(16)->minutes();
+        $this->assertTrue($this->service->expire($waiting->fresh()));
+        $w = $waiting->fresh();
+        $this->assertSame(GameMatch::STATUS_ABANDONED, $w->status);
+        $this->assertSame(2, $w->version);
+        $this->assertNull($w->join_token_hash);
+        $event = GameMatchEvent::where('match_id', $waiting->id)->sole();
+        $this->assertSame(['expired', null, [], 1], [$event->type, $event->seat, $event->payload, $event->seq]);
+        // Andra anropet: redan avslutad.
+        $this->assertFalse($this->service->expire($w));
+        $this->assertSame(2, $w->fresh()->version);
+
+        $this->travel(15)->minutes();
+        $versionBefore = $active->fresh()->version;
+        $this->assertTrue($this->service->expire($active->fresh()));
+        $a = $active->fresh();
+        $this->assertSame(GameMatch::STATUS_ABANDONED, $a->status);
+        $this->assertSame($versionBefore + 1, $a->version);
+        $this->assertSame('expired', GameMatchEvent::where('match_id', $active->id)->orderByDesc('seq')->value('type'));
+        $this->assertSame([null, null], GameMatchPlayer::where('match_id', $active->id)->orderBy('seat')->pluck('hidden_state')->all());
     }
 
     public function test_member_seat(): void

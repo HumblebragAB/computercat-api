@@ -158,6 +158,31 @@ class MatchService
         });
     }
 
+    /**
+     * Överger en öppen match vars tid gått ut. Läser om och kontrollerar under lås, så
+     * ett drag som hann flytta expires_at vinner. Returnerar om matchen gick ut.
+     */
+    public function expire(GameMatch $match): bool
+    {
+        return DB::transaction(function () use ($match) {
+            $match = $this->lock($match);
+
+            if (! in_array($match->status, [GameMatch::STATUS_WAITING, GameMatch::STATUS_ACTIVE], true)
+                || ! $match->expires_at->lessThan(now())) {
+                return false;
+            }
+
+            $match->status = GameMatch::STATUS_ABANDONED;
+            $match->join_token_hash = null;
+            $this->logBaseEvent($match, 'expired', null, []);
+            $match->save();
+
+            $this->clearHidden($this->playersOf($match));
+
+            return true;
+        });
+    }
+
     /** Returnerar den gamla matchen. När båda begärt pekar dess rematch-händelse ut den nya. */
     public function rematch(GameMatch $match, User $user): GameMatch
     {
@@ -180,6 +205,8 @@ class MatchService
             $this->logBaseEvent($match, 'rematch_requested', $seat, []);
 
             if ($players->count() === 2 && $players->every(fn (GameMatchPlayer $p) => $p->rematch_requested)) {
+                // Medvetet ingen kontroll mot taket på fem: båda har sagt ja, och taket är ett
+                // skydd mot skräpmatcher. Den gamla matchen är finished och räknas inte längre.
                 $new = $this->startRematch($match, $players);
                 $this->logBaseEvent($match, 'rematch', null, ['match_id' => $new->id]);
             }
