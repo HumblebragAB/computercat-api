@@ -17,10 +17,12 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\AssertionFailedError;
+use Tests\Concerns\AssertsNoMatchLeak;
 use Tests\TestCase;
 
 class MatchServiceTest extends TestCase
 {
+    use AssertsNoMatchLeak;
     use RefreshDatabase;
 
     private MatchService $service;
@@ -458,62 +460,6 @@ class MatchServiceTest extends TestCase
 
         $since = array_column(MatchView::for($match->fresh(), 0, 0)['events'], 'seq');
         $this->assertSame(range(1, 200), $since);
-    }
-
-    /**
-     * Strukturell läckkontroll av en vy: you.secret är bara det egna talet, ingen annan nyckel
-     * heter hidden_state/hidden/secret, och motspelarens tal finns inte som värde i state eller
-     * i någon händelse före round_end. Undantag: en korrekt gissnings egen value.
-     */
-    private function assertNoLeak(array $view, ?int $opponentSecret, ?int $ownSecret): void
-    {
-        $this->assertSame(['secret' => $ownSecret], $view['you']);
-
-        $rest = $view;
-        unset($rest['you']);
-        $this->assertForbiddenKeysAbsent($rest);
-
-        if ($opponentSecret === null) {
-            return;
-        }
-
-        $state = $view['state'];
-        foreach ($state['guesses'] ?? [] as $i => $byseat) {
-            $state['guesses'][$i] = array_values(array_filter($byseat, fn ($g) => ($g['result'] ?? null) !== 'correct'));
-        }
-        $this->assertNotContains($opponentSecret, $this->leaves($state), 'opponent secret in state');
-
-        foreach ($view['events'] as $event) {
-            if ($event['type'] === 'round_end') {
-                break;
-            }
-            $payload = $event['payload'];
-            if ($event['type'] === 'guess' && ($payload['result'] ?? null) === 'correct') {
-                unset($payload['value']);
-            }
-            $this->assertNotContains($opponentSecret, $this->leaves($payload), "opponent secret in {$event['type']}");
-        }
-    }
-
-    private function assertForbiddenKeysAbsent(array $tree): void
-    {
-        foreach ($tree as $key => $value) {
-            $this->assertNotContains($key, ['hidden_state', 'hidden', 'secret'], "forbidden key {$key}");
-            if (is_array($value)) {
-                $this->assertForbiddenKeysAbsent($value);
-            }
-        }
-    }
-
-    /** @return list<mixed> */
-    private function leaves(array $tree): array
-    {
-        $out = [];
-        array_walk_recursive($tree, function ($v) use (&$out) {
-            $out[] = $v;
-        });
-
-        return $out;
     }
 
     public function test_leak_scanner_detects_planted_secret(): void
