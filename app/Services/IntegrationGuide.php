@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Filament\Resources\GameResource;
+use App\Matches\Rules\RevealRules;
 use App\Matches\RulesetRegistry;
 use App\Models\Game;
 
@@ -29,6 +30,9 @@ class IntegrationGuide
         'purchases' => 'Purchases & Ownership',
         'matches' => 'Turn-based Matches',
     ];
+
+    /** Ruleset → metod som skriver dess avsnitt i manualen. Ett test kräver en post per ruleset i config/matches.php. */
+    public const RULESET_DOCS = ['reveal' => 'revealRulesetLines'];
 
     private const RELATIONS = ['leaderboardTypes', 'achievementDefinitions', 'dailyContentPools', 'remoteConfigs', 'gameEvents'];
 
@@ -741,6 +745,19 @@ class IntegrationGuide
             $lines[] = '- Show a visible state when the connection is lost: the opponent\'s `connected` is false ("waiting for Anna, connection lost"), and when polling fails or `onError` fires. Never stand silently still.';
             $lines[] = '- Handle `abandoned` and 404 on poll by returning the player to the menu with a message.';
             $lines[] = '';
+
+            foreach ($rulesets as $ruleset) {
+                $lines[] = '### Ruleset `'.self::code($ruleset).'`';
+                $lines[] = '';
+                $method = self::RULESET_DOCS[$ruleset] ?? null;
+                if ($method === null) {
+                    $lines[] = 'This ruleset has no move reference yet. Do not guess its moves; ask Computercat (the platform team).';
+                    $lines[] = '';
+
+                    continue;
+                }
+                array_push($lines, ...self::$method());
+            }
         }
 
         $lines[] = '## Error Handling';
@@ -762,6 +779,68 @@ class IntegrationGuide
         $lines[] = '- Score submit: 30/min';
 
         return implode("\n", $lines);
+    }
+
+    /** @return list<string> Reveal: drag, state och händelser, ur RevealRules. */
+    private static function revealRulesetLines(): array
+    {
+        $options = json_encode(RevealRules::DEFAULT_OPTIONS);
+        [$set, $guess, $ready] = RevealRules::ACTIONS;
+        $events = array_map(fn ($e) => '`'.self::code($e).'`', RevealRules::EVENTS);
+
+        return [
+            'Both players lock a secret number, then take turns guessing the opponent\'s number and get higher or lower back.',
+            '',
+            '**Rules.** Turns alternate within a round. The starter alternates per round: seat 0 starts round 1, seat 1 round 2, and so on. If the non-starter hits the opponent\'s number, they win the round at once. If the starter hits, the opponent gets one last guess: a hit makes the round a draw, a miss gives the starter the round. First to '.RevealRules::WINS_NEEDED.' round wins takes the match. After at most '.RevealRules::MAX_ROUNDS.' rounds the match ends anyway: most round wins wins, equal is a draw. The opponent\'s secret is only revealed in `round_end`.',
+            '',
+            '#### Options',
+            'Accepted `options`: `'.self::code($options).'`. Leave `options` out, or send any subset of these exact values; anything else (other values, other keys, strings) gives 422 validation.',
+            '',
+            '#### Actions (`type` and `payload` in `POST /matches/{id}/actions`)',
+            '| `type` | `payload` | When |',
+            '|--------|-----------|------|',
+            '| `'.self::code($set).'` | `{value}` | Phase `choosing`, once per round. Locks your secret |',
+            '| `'.self::code($guess).'` | `{value}` | Phase `guessing`, only when `turn` is your seat |',
+            '| `'.self::code($ready).'` | `{}` | Phase `round_over`, once. The next round starts when both are ready |',
+            '',
+            '`value` must be a JSON integer within [`min`, `max`] ('.RevealRules::DEFAULT_OPTIONS['min'].'-'.RevealRules::DEFAULT_OPTIONS['max'].').',
+            '',
+            '| `code` (422) | Cause |',
+            '|------|-------|',
+            '| `wrong_phase` | The action is not allowed in the current `phase` (also after `match_over`) |',
+            '| `already_locked` | `'.self::code($set).'` when your secret is already locked this round |',
+            '| `not_your_turn` | `'.self::code($guess).'` when `turn` is not your seat |',
+            '| `already_ready` | `'.self::code($ready).'` when you are already ready |',
+            '| `invalid_payload` | `value` missing or not a JSON integer |',
+            '| `out_of_range` | `value` outside [`min`, `max`] |',
+            '| `unknown_action` | Any other `type` |',
+            '',
+            '#### `state` (public)',
+            '- `round`: current round, 1 and up (0 before the first `round_begin`).',
+            '- `phase`: `choosing` (both lock a secret), `guessing` (turn-based guesses), `round_over` (waiting for both `ready`), `match_over`.',
+            '- `starter`: the seat that guesses first this round.',
+            '- `turn`: the seat whose turn it is to guess, or `null` outside `guessing`.',
+            '- `locked`: `[bool, bool]` per seat, whether that seat has locked its secret this round.',
+            '- `ready`: `[bool, bool]` per seat, whether that seat has sent `'.self::code($ready).'` this round.',
+            '- `score`: `[int, int]` round wins per seat.',
+            '- `last_chance`: `true` while the non-starter has its last guess after the starter hit.',
+            '- `guesses`: per seat, this round\'s guesses in order, each `{value, result}`.',
+            '- `winner`: winning seat after `match_over`, `null` for a draw or while the match is on.',
+            '',
+            '`you` is `{secret}`, where `secret` is your own number this round, `null` until you lock it.',
+            '',
+            '#### Events',
+            'Ruleset events: '.implode(', ', $events).'. The `seat` field is the seat the event concerns, or `null` for events that concern both.',
+            '- `round_begin` `{round, starter}`: a new round starts in phase `choosing`.',
+            '- `locked` `{}`: `seat` has locked its secret (the value is not sent).',
+            '- `duel_begin` `{}`: both are locked, phase `guessing` starts with `starter`.',
+            '- `guess` `{value, result}`: `seat` guessed `value`; `result` is `higher`, `lower` or `correct`. `higher` means the secret is greater than the guess.',
+            '- `last_chance` `{}`: the starter hit; `seat` (the non-starter) gets one last guess.',
+            '- `round_end` `{winner, secrets, guesses}`: `winner` is a seat or `null` (draw), `secrets` is both seats\' numbers `[s0, s1]`, `guesses` is the number of guesses per seat `[n0, n1]`.',
+            '- `ready` `{}`: `seat` is ready for the next round.',
+            '- `match_end` `{winner}`: winning seat or `null` (draw). The match is `finished`.',
+            '',
+        ];
     }
 
     // Användarstyrda värden (namn, beskrivningar, etiketter) läses av andra

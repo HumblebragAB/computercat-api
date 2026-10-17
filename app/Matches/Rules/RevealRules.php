@@ -16,10 +16,16 @@ class RevealRules implements MatchRules
 {
     public const DEFAULT_OPTIONS = ['min' => 1, 'max' => 100, 'best_of' => 3];
 
-    /** Rundor att vinna för att ta matchen (best_of 3). */
-    private const WINS_NEEDED = 2;
+    /** Drag en spelare kan skicka. Manualen (IntegrationGuide) dokumenterar varje. */
+    public const ACTIONS = ['set_secret', 'guess', 'ready'];
 
-    private const MAX_ROUNDS = 5;
+    /** Händelser reglerna emitterar. Manualen (IntegrationGuide) dokumenterar varje. */
+    public const EVENTS = ['round_begin', 'locked', 'duel_begin', 'guess', 'last_chance', 'round_end', 'ready', 'match_end'];
+
+    /** Rundor att vinna för att ta matchen (best_of 3). */
+    public const WINS_NEEDED = 2;
+
+    public const MAX_ROUNDS = 5;
 
     public function validateOptions(array $options): array
     {
@@ -110,6 +116,10 @@ class RevealRules implements MatchRules
     public function act(MatchContext $ctx, int $seat, string $type, array $payload): void
     {
         $this->seat($seat);
+
+        if (! in_array($type, self::ACTIONS, true)) {
+            throw new IllegalMove('unknown_action');
+        }
 
         match ($type) {
             'set_secret' => $this->setSecret($ctx, $seat, $payload),

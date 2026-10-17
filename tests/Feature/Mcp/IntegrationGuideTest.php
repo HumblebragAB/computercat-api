@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mcp;
 
+use App\Matches\Rules\RevealRules;
 use App\Services\IntegrationGuide;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -219,5 +220,61 @@ class IntegrationGuideTest extends McpTestCase
         $manual = IntegrationGuide::manual($game, IntegrationGuide::defaultFeatures($game));
 
         $this->assertStringNotContainsString('Turn-based Matches', $manual);
+    }
+
+    /** Avsnittet för ett ruleset: från dess rubrik till nästa rubrik på nivå 2 eller 3. */
+    private function rulesetSection(string $manual, string $ruleset): string
+    {
+        $start = strpos($manual, "### Ruleset `{$ruleset}`");
+        $this->assertNotFalse($start, "no section for {$ruleset}");
+        $rest = substr($manual, $start + 1);
+        preg_match('/\n#{2,3} /', $rest, $m, PREG_OFFSET_CAPTURE);
+
+        return substr($rest, 0, $m[0][1] ?? strlen($rest));
+    }
+
+    // Manualen är bunden till koden: varje drag, händelse, felkod och statefält i
+    // RevealRules ska stå i avsnittet, så att den inte kan glida isär från reglerna.
+    public function test_manual_documents_every_reveal_action_event_and_state_field(): void
+    {
+        $game = $this->game('reveal');
+        $section = $this->rulesetSection(IntegrationGuide::manual($game, ['matches']), 'reveal');
+
+        $rules = new RevealRules;
+        $stateFields = array_keys($rules->initialState(RevealRules::DEFAULT_OPTIONS));
+        $youFields = array_keys($rules->view(null));
+        $codes = ['wrong_phase', 'already_locked', 'not_your_turn', 'already_ready', 'out_of_range', 'invalid_payload', 'unknown_action'];
+
+        foreach ([...RevealRules::ACTIONS, ...RevealRules::EVENTS, ...$stateFields, ...$youFields, ...$codes] as $name) {
+            $this->assertStringContainsString("`{$name}`", $section, $name);
+        }
+        foreach (['choosing', 'guessing', 'round_over', 'match_over', 'higher', 'lower', 'correct', 'secrets'] as $needle) {
+            $this->assertStringContainsString($needle, $section, $needle);
+        }
+        $this->assertStringContainsString('the secret is greater than the guess', $section);
+    }
+
+    public function test_documented_reveal_options_equal_the_defaults(): void
+    {
+        $game = $this->game('reveal');
+        $section = $this->rulesetSection(IntegrationGuide::manual($game, ['matches']), 'reveal');
+
+        $this->assertSame(1, preg_match('/Accepted `options`: `(\{[^`]*\})`/', $section, $m), 'options line missing');
+        $this->assertSame(RevealRules::DEFAULT_OPTIONS, json_decode($m[1], true));
+    }
+
+    public function test_every_configured_ruleset_has_a_manual_section(): void
+    {
+        $this->assertEqualsCanonicalizing(
+            array_keys(config('matches.rulesets')),
+            array_keys(IntegrationGuide::RULESET_DOCS),
+        );
+    }
+
+    public function test_ruleset_sections_only_for_rulesets_the_game_has(): void
+    {
+        $manual = IntegrationGuide::manual($this->game('tocco'), ['matches']);
+
+        $this->assertStringNotContainsString('### Ruleset', $manual);
     }
 }

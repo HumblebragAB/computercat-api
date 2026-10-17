@@ -349,4 +349,37 @@ class RevealRulesTest extends TestCase
             'last_chance' => false, 'guesses' => [[], []], 'winner' => null,
         ], $this->rules->initialState(['min' => 1, 'max' => 100, 'best_of' => 3]));
     }
+
+    // ACTIONS och EVENTS är det manualen dokumenterar; de ska vara exakt vad reglerna gör.
+    public function test_action_and_event_constants_match_the_rules(): void
+    {
+        $ctx = $this->playMatch(['starter', null, 'other', 'starter']);
+        $emitted = array_values(array_unique(array_column($ctx->emitted(), 'type')));
+        $this->assertEqualsCanonicalizing(RevealRules::EVENTS, $emitted);
+
+        $ctx = $this->started();
+        foreach (RevealRules::ACTIONS as $action) {
+            try {
+                $this->rules->act($ctx, 1, $action, []);
+            } catch (IllegalMove $e) {
+                $this->assertNotSame('unknown_action', $e->errorCode, $action);
+            }
+        }
+        $this->illegal($ctx, 0, 'resign', [], 'unknown_action');
+    }
+
+    public function test_partial_default_options_accepted(): void
+    {
+        foreach ([['min' => 1], ['max' => 100, 'best_of' => 3], ['min' => 1, 'max' => 100, 'best_of' => 3]] as $options) {
+            $this->assertSame(RevealRules::DEFAULT_OPTIONS, $this->rules->validateOptions($options));
+        }
+        foreach ([['min' => '1'], ['rounds' => 5]] as $options) {
+            try {
+                $this->rules->validateOptions($options);
+                $this->fail('should reject '.json_encode($options));
+            } catch (ValidationException) {
+                $this->assertTrue(true);
+            }
+        }
+    }
 }
