@@ -244,4 +244,17 @@ describe('requestJsonMeta', () => {
     const f = fakeFetch({ 'GET /m/1': ['network-error'] });
     await expect(requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', {})).rejects.toBeInstanceOf(NetworkError);
   });
+
+  it('Retry-After i sekunder hamnar i ApiError.retryAfter; saknad eller HTTP-datum ger null', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const limited = (retryAfter?: string) =>
+      new Response(JSON.stringify({ message: 'För många anrop.', code: 'rate_limited' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', ...(retryAfter === undefined ? {} : { 'Retry-After': retryAfter }) },
+      });
+    const f = fakeFetch({ 'GET /m/1': [limited('3'), limited(), limited('Wed, 21 Oct 2026 07:28:00 GMT')] });
+    const errs: unknown[] = [];
+    for (let i = 0; i < 3; i++) errs.push(await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', {}).catch((e: unknown) => e));
+    expect(errs.map((e) => (e as ApiError).retryAfter)).toEqual([3, null, null]);
+  });
 });

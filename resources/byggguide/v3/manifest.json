@@ -285,14 +285,14 @@
         {
             "path": "src/lib/computercat/http.test.ts",
             "source": "files/src/lib/computercat/http.test.ts",
-            "sha256": "07f5df442222f5379ff8f0fc313d789f011b3edaf682a550b586195b282ef646",
-            "bytes": 12439
+            "sha256": "c31ec01a7de79059622609dad68bd7d863bcfa2db508174a0b2b85900cb9f427",
+            "bytes": 13259
         },
         {
             "path": "src/lib/computercat/http.ts",
             "source": "files/src/lib/computercat/http.ts",
-            "sha256": "a3856f7a5a44cd6425c417e8cf4fa6eff241d7384c26cc76067f2b77169b20a7",
-            "bytes": 6708
+            "sha256": "521329a097144d647a8b53ed37e70f0a0fa72e7a064ca30d0edf79148f250929",
+            "bytes": 7169
         },
         {
             "path": "src/lib/computercat/index.test.ts",
@@ -321,14 +321,14 @@
         {
             "path": "src/lib/computercat/matches.test.ts",
             "source": "files/src/lib/computercat/matches.test.ts",
-            "sha256": "7c3149d322bbfa251e982003436e36f7346d890e73ed1eff61dbcc1ebb6f7d91",
-            "bytes": 14552
+            "sha256": "1d34e772dffaa8171010e3939cbd9ffb200c662ebbc9edf5f93e67df1de4b828",
+            "bytes": 29427
         },
         {
             "path": "src/lib/computercat/matches.ts",
             "source": "files/src/lib/computercat/matches.ts",
-            "sha256": "2be49196591abbabe1a0da160bfb9d97280c10de12394000b52ed0078df3a6b4",
-            "bytes": 10335
+            "sha256": "ed59ba69553b6366b0d377d88e5c6ab3cc34f1c35cb5b1a181fd99ce9a6ecb94",
+            "bytes": 19537
         },
         {
             "path": "src/lib/computercat/proof.test.ts",

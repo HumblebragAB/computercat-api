@@ -1,5 +1,5 @@
 import type { Authed, AuthedMeta } from './auth';
-import { ApiError, isRecord, type HttpMethod, type MetaResult } from './http';
+import { ApiError, NetworkError, isRecord, type HttpMethod, type MetaResult } from './http';
 
 /**
  * Turbaserade tvåspelarmatcher (MatchController). Servern äger reglerna och det dolda
@@ -135,14 +135,65 @@ export function toMatchError(e: unknown): unknown {
   return code === null ? e : new MatchError(code, e.status, e.message, body);
 }
 
+class ShapeError extends Error {}
+
 function unexpected(method: HttpMethod, path: string): Error {
-  return new Error(`Oväntat svar från ${method} ${path}`);
+  return new ShapeError(`Oväntat svar från ${method} ${path}`);
+}
+
+/** Pollintervall när matchen pågår eller väntar. */
+export const POLL_INTERVAL_MS = 1500;
+/** Väntan efter nätfel och 5xx (och 429 utan Retry-After). */
+export const POLL_BACKOFF_MS = 5000;
+/** Pollintervall för en avslutad match (revansch kan komma) så att gränsen 120/min räcker. */
+export const FINISHED_INTERVAL_MS = 5000;
+/** onError för samma felserie (nät, 5xx, fel form) högst så här ofta. */
+export const ERROR_REPORT_MS = 10_000;
+
+/**
+ * Orsaken som går till watch.onError. `gone` (404/410 eller abandoned) är alltid terminal.
+ * `auth` finns inte: authedMeta byter spelare vid 401, och den nya spelaren får 404 = `gone`.
+ */
+export type WatchError = { kind: 'network' | 'server' | 'rate_limited' | 'gone' | 'shape'; error: unknown; terminal: boolean };
+export type WatchHandlers = { onChange(s: MatchSnapshot): void; onError(e: WatchError): void };
+export type WatchOptions = {
+  intervalMs?: number;
+  backoffMs?: number;
+  doc?: Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventListener'>;
+  /** pageshow och online lyssnas på här. Standard: window (läses vid anrop). */
+  win?: Pick<Window, 'addEventListener' | 'removeEventListener'>;
+};
+
+/** Händelser ihop, unika på seq (den senaste vinner), sorterade. */
+function mergeEvents(a: MatchEvent[], b: MatchEvent[]): MatchEvent[] {
+  const bySeq = new Map<number, MatchEvent>();
+  for (const e of a) bySeq.set(e.seq, e);
+  for (const e of b) bySeq.set(e.seq, e);
+  return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
+}
+
+function maxSeq(events: MatchEvent[]): number | null {
+  return events.length === 0 ? null : events[events.length - 1].seq;
 }
 
 export type MatchesDeps = { authed: Authed; authedMeta: AuthedMeta };
 
 export function createMatches(game: string, deps: MatchesDeps) {
   const base = `/games/${seg(game)}/matches`;
+  /**
+   * Senast kända ögonblicksbild per match, med alla händelser vi sett. Fylls av varje svar
+   * (poll, act, join, create, invite, leave, rematch), så att watch skickar rätt If-None-Match
+   * och since och kastar svar med lägre version än vi redan sett.
+   */
+  const known = new Map<string, MatchSnapshot>();
+
+  /** Spara svaret. Lägre version än känd ignoreras och ger false. */
+  function remember(s: MatchSnapshot): boolean {
+    const prev = known.get(s.id);
+    if (prev && s.version < prev.version) return false;
+    known.set(s.id, { ...s, events: prev ? mergeEvents(prev.events, s.events) : mergeEvents([], s.events) });
+    return true;
+  }
 
   async function call(method: HttpMethod, path: string, body?: unknown, noStore = false): Promise<MetaResult<unknown>> {
     try {
@@ -157,6 +208,7 @@ export function createMatches(game: string, deps: MatchesDeps) {
     const res = await call(method, path, body, method === 'GET');
     const snap = parseSnapshot(res.body, res.etag);
     if (!snap) throw unexpected(method, path);
+    remember(snap);
     return snap;
   }
 
@@ -166,6 +218,7 @@ export function createMatches(game: string, deps: MatchesDeps) {
     const b = res.body;
     const match = isRecord(b) ? parseSnapshot(b.match, res.etag) : null;
     if (!match || !isRecord(b) || typeof b.join_token !== 'string' || b.join_token === '') throw unexpected(method, path);
+    remember(match);
     return { match, joinToken: b.join_token };
   }
 
@@ -175,6 +228,189 @@ export function createMatches(game: string, deps: MatchesDeps) {
     }
     const query = since === undefined ? '' : `?since=${since}`;
     return snapshotCall('GET', `${base}/${seg(id)}${query}`);
+  }
+
+  /**
+   * Bevaka en match: första pollen direkt, sedan var 1,5 s (5 s när den är finished), paus när
+   * fliken är dold. onChange får hela den kända ögonblicksbilden med alla händelser hittills.
+   * Stannar aldrig tyst: varje fel går till onError, och terminala fel avslutar bevakningen.
+   * Vid händelsen `rematch` kommer ett sista onChange; byt sedan till watch(payload.match_id).
+   */
+  function watch(id: string, handlers: WatchHandlers, opts: WatchOptions = {}): { stop(): void; pollNow(): void } {
+    const intervalMs = opts.intervalMs ?? POLL_INTERVAL_MS;
+    const backoffMs = opts.backoffMs ?? POLL_BACKOFF_MS;
+    // Webbläsarglobalerna läses här, vid anrop, aldrig vid import (statisk export, testmiljön node).
+    const doc = opts.doc ?? (typeof document !== 'undefined' ? document : undefined);
+    const win = opts.win ?? (typeof window !== 'undefined' ? window : undefined);
+    const path = `${base}/${seg(id)}`;
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight: AbortController | null = null;
+    /** Sant efter ett icke-terminalt fel tills en poll lyckas (då kommer onChange även vid 304). */
+    let failing = false;
+    let lastReport = -Infinity;
+
+    const hidden = () => doc?.visibilityState === 'hidden';
+
+    function safely(name: 'onChange' | 'onError', fn: () => void): void {
+      try {
+        fn();
+      } catch (e) {
+        console.error(`[computercat] watch.${name} kastade`, e);
+      }
+    }
+    function change(s: MatchSnapshot): void {
+      if (!stopped) safely('onChange', () => handlers.onChange(s));
+    }
+    function fail(e: WatchError): void {
+      if (!stopped) safely('onError', () => handlers.onError(e));
+    }
+
+    function clearTimer(): void {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    }
+    function schedule(ms: number): void {
+      clearTimer();
+      if (stopped || hidden()) return;
+      timer = setTimeout(() => {
+        timer = null;
+        void poll();
+      }, ms);
+    }
+
+    function stop(): void {
+      if (stopped) return;
+      stopped = true;
+      clearTimer();
+      inFlight?.abort();
+      inFlight = null;
+      doc?.removeEventListener('visibilitychange', onVisibility);
+      win?.removeEventListener('pageshow', pollNow);
+      win?.removeEventListener('online', pollNow);
+    }
+
+    /** Status och händelser i den kända ögonblicksbilden avgör nästa steg. */
+    function settle(current: MatchSnapshot | undefined, emitted: boolean): void {
+      if (current && current.events.some((e) => e.type === 'rematch')) {
+        if (!emitted) change(current);
+        stop();
+        return;
+      }
+      if (current?.status === 'abandoned') {
+        if (!emitted) change(current);
+        fail({ kind: 'gone', error: new Error('Matchen avbröts (abandoned).'), terminal: true });
+        stop();
+        return;
+      }
+      schedule(current?.status === 'finished' ? FINISHED_INTERVAL_MS : intervalMs);
+    }
+
+    /** Nät, 5xx och fel form: rapportera första felet i serien, sedan högst var 10:e sekund. */
+    function seriesError(kind: 'network' | 'server' | 'shape', error: unknown): void {
+      const now = Date.now();
+      if (!failing || now - lastReport >= ERROR_REPORT_MS) {
+        lastReport = now;
+        fail({ kind, error, terminal: false });
+      }
+      failing = true;
+      schedule(backoffMs);
+    }
+
+    function handleError(raw: unknown): void {
+      const e = toMatchError(raw);
+      const status = e instanceof MatchError || e instanceof ApiError ? e.status : null;
+      if (status === 404 || status === 410) {
+        fail({ kind: 'gone', error: e, terminal: true });
+        stop();
+      } else if (status === 429 && !(e instanceof MatchError && e.code === 'too_many_active')) {
+        const retryAfter = raw instanceof ApiError ? raw.retryAfter : null;
+        fail({ kind: 'rate_limited', error: e, terminal: false });
+        failing = true;
+        schedule(retryAfter !== null ? retryAfter * 1000 : backoffMs);
+      } else if (e instanceof NetworkError) {
+        seriesError('network', e);
+      } else if (e instanceof ShapeError) {
+        seriesError('shape', e);
+      } else if (status !== null && status >= 500) {
+        seriesError('server', e);
+      } else {
+        // Övriga 4xx (t.ex. 401 två gånger, 422): samma anrop lyckas inte igen. Avsluta högt.
+        fail({ kind: 'server', error: e, terminal: true });
+        stop();
+      }
+    }
+
+    async function poll(): Promise<void> {
+      if (stopped || inFlight || hidden()) return;
+      clearTimer();
+      const ctrl = new AbortController();
+      inFlight = ctrl;
+      const before = known.get(id);
+      const since = before ? maxSeq(before.events) : null;
+      const url = since === null ? path : `${path}?since=${since}`;
+      const headers: Record<string, string> = before?.etag ? { 'If-None-Match': before.etag } : {};
+      let res: MetaResult<unknown> | null = null;
+      let error: unknown = null;
+      try {
+        res = await deps.authedMeta<unknown>('GET', url, { headers, noStore: true, signal: ctrl.signal });
+      } catch (e) {
+        error = e;
+      }
+      if (inFlight === ctrl) inFlight = null;
+      // Avbruten av oss (dold flik eller stop): inget fel att rapportera, och svaret gäller inte.
+      if (ctrl.signal.aborted || stopped) return;
+      if (error !== null || res === null) {
+        handleError(error);
+        return;
+      }
+
+      let emitted = false;
+      if (res.status !== 304) {
+        const snap = parseSnapshot(res.body, res.etag);
+        if (!snap || snap.id !== id) {
+          handleError(unexpected('GET', url));
+          return;
+        }
+        // remember kastar ett svar med lägre version än känd (från en tidigare poll eller act).
+        if (remember(snap)) {
+          change(known.get(id)!);
+          emitted = true;
+        }
+      }
+      const current = known.get(id);
+      if (failing && !emitted && current) {
+        // Pollen lyckas igen: onChange även utan ändring, så att spelet kan släcka sin banner.
+        change(current);
+        emitted = true;
+      }
+      failing = false;
+      settle(current, emitted);
+    }
+
+    function pollNow(): void {
+      void poll();
+    }
+
+    function onVisibility(): void {
+      if (stopped) return;
+      if (hidden()) {
+        // Pausa och avbryt en hängande fetch (iOS Safari släpper den annars inte).
+        clearTimer();
+        inFlight?.abort();
+        inFlight = null;
+      } else {
+        pollNow();
+      }
+    }
+
+    doc?.addEventListener('visibilitychange', onVisibility);
+    win?.addEventListener('pageshow', pollNow);
+    win?.addEventListener('online', pollNow);
+    pollNow();
+
+    return { stop, pollNow };
   }
 
   return {
@@ -191,6 +427,7 @@ export function createMatches(game: string, deps: MatchesDeps) {
     },
 
     get,
+    watch,
 
     /**
      * Ett drag på den snapshot spelaren såg (`version` skickas med). Vid `stale` hämtas matchen

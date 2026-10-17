@@ -9,14 +9,17 @@ export class ApiError extends Error {
   readonly body: unknown;
   readonly method: HttpMethod;
   readonly path: string;
+  /** Retry-After i sekunder (bara från requestJsonMeta, och bara i sekundform); annars null. */
+  readonly retryAfter: number | null;
 
-  constructor(status: number, message: string, body: unknown, method: HttpMethod, path: string) {
+  constructor(status: number, message: string, body: unknown, method: HttpMethod, path: string, retryAfter: number | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
     this.method = method;
     this.path = path;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -180,5 +183,8 @@ export async function requestJsonMeta<T>(
   // 401 och 409 är väntade vägar (ny spelare, versionskonflikt); övriga fel är fel.
   const log = res.status === 401 || res.status === 409 ? console.warn : console.error;
   log(`[computercat] ${method} ${path} → ${res.status}`, { request: preview(opts.body), response: preview(body) });
-  throw new ApiError(res.status, message, body, method, path);
+  // Retry-After i sekundform (Laravels throttle skickar så); HTTP-datum tolkas inte och ger null.
+  const retryHeader = res.headers.get('Retry-After')?.trim() ?? '';
+  const retryAfter = /^\d+$/.test(retryHeader) ? Number(retryHeader) : null;
+  throw new ApiError(res.status, message, body, method, path, retryAfter);
 }

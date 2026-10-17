@@ -339,3 +339,387 @@ describe('assertName', () => {
     expect(f.calls[0].body).toEqual({ token: TOKEN });
   });
 });
+
+// ── watch ─────────────────────────────────────────────────────────────────────
+
+type Listener = () => void;
+
+/** Falsk document (miljön är node): visibilityState och lyssnare som testet kan avfyra. */
+function fakeDoc(visibilityState: 'visible' | 'hidden' = 'visible') {
+  const listeners = new Map<string, Set<Listener>>();
+  const doc = {
+    visibilityState: visibilityState as DocumentVisibilityState,
+    addEventListener(type: string, cb: Listener) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(cb);
+    },
+    removeEventListener(type: string, cb: Listener) {
+      listeners.get(type)?.delete(cb);
+    },
+  };
+  return {
+    doc: doc as unknown as Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventListener'>,
+    win: doc as unknown as Pick<Window, 'addEventListener' | 'removeEventListener'>,
+    set(state: 'visible' | 'hidden') {
+      doc.visibilityState = state;
+    },
+    fire(type: string) {
+      for (const cb of [...(listeners.get(type) ?? [])]) cb();
+    },
+    count: () => [...listeners.values()].reduce((n, s) => n + s.size, 0),
+  };
+}
+
+/**
+ * fakeFetch plus en "hängande" variant: medan hang är satt svarar fetch aldrig förrän signalen
+ * avbryts. Fångar också init (cache) per anrop.
+ */
+function watchSetup(routes: Parameters<typeof fakeFetch>[0]) {
+  const f = fakeFetch(routes);
+  const inits: RequestInit[] = [];
+  const state = { hang: false, aborted: 0 };
+  const fetch: typeof f.fetch = (input, init) => {
+    inits.push(init);
+    if (state.hang) {
+      return new Promise((_, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          state.aborted++;
+          reject(init.signal?.reason);
+        });
+      });
+    }
+    return f.fetch(input, init);
+  };
+  const auth = createAuth({ fetch, baseUrl: BASE, game: GAME, storage: storedSession(GAME) });
+  const m = createMatches(GAME, { authed: auth.authed, authedMeta: auth.authedMeta });
+  const d = fakeDoc();
+  const changes: MatchSnapshot[] = [];
+  const errors: { kind: string; terminal: boolean; error: unknown }[] = [];
+  const handlers = { onChange: (s: MatchSnapshot) => void changes.push(s), onError: (e: (typeof errors)[number]) => void errors.push(e) };
+  const watchOpts = { doc: d.doc, win: d.win };
+  return { f, m, d, inits, state, changes, errors, handlers, watchOpts };
+}
+
+const POLL = `GET ${M}/${ID}`;
+const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+
+describe('watch', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('första pollen direkt, sedan var 1500 ms, med cache no-store', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.f.calls).toHaveLength(1);
+    expect(t.changes).toHaveLength(1);
+    expect(t.inits[0].cache).toBe('no-store');
+    await tick(1499);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    w.stop();
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('304 ger inget onChange; ETag och since skickas', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(1500);
+    expect(t.f.calls[1].headers['If-None-Match']).toBe('"7-10"');
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('ETag från act används i nästa poll', async () => {
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view(), '"7-10"')],
+      [`POST ${M}/${ID}/actions`]: [withEtag(200, view({ version: 8, events: [{ seq: 13, type: 'guess', seat: 0, payload: {}, at: null }] }), '"8-11"')],
+      [`${POLL}?since=13`]: [new Response(null, { status: 304 })],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await t.m.act(t.changes[0], 'guess', { value: 1 });
+    await tick(1500);
+    const poll = t.f.calls[2];
+    expect(poll.path).toBe(`${M}/${ID}?since=13`);
+    expect(poll.headers['If-None-Match']).toBe('"8-11"');
+    w.stop();
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('en poll med lägre version än act gav kastas (inget onChange)', async () => {
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view(), '"7-10"')],
+      [`POST ${M}/${ID}/actions`]: [withEtag(200, view({ version: 8, events: [] }), '"8-11"')],
+      // Ett mellanlager har ett gammalt svar: version 7 trots If-None-Match.
+      [`${POLL}?since=12`]: [withEtag(200, view({ version: 7, events: [] }), '"7-11"')],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await t.m.act(t.changes[0], 'guess', { value: 1 });
+    await tick(1500);
+    expect(t.f.calls).toHaveLength(3);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('händelser slås ihop utan dubbletter, sorterade på seq', async () => {
+    const ev = (seq: number) => ({ seq, type: 'guess', seat: 0, payload: { n: seq }, at: null });
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view({ events: [ev(11), ev(12)] }), '"7-10"')],
+      [`${POLL}?since=12`]: [withEtag(200, view({ version: 9, events: [ev(12), ev(14), ev(13)] }), '"9-10"')],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(1500);
+    expect(t.changes[1].events.map((e) => e.seq)).toEqual([11, 12, 13, 14]);
+    w.stop();
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('429 med Retry-After: 3 väntar 3000 ms och rapporteras som rate_limited', async () => {
+    const limited = new Response(JSON.stringify({ message: 'För många anrop.', code: 'rate_limited' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': '3' },
+    });
+    const t = watchSetup({ [POLL]: [limited, withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors).toEqual([{ kind: 'rate_limited', terminal: false, error: expect.any(MatchError) }]);
+    await tick(2999);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+  });
+
+  it('nätfel: onError en gång, backoff 5000 ms, sedan onChange när det fungerar igen', async () => {
+    const t = watchSetup({
+      [POLL]: ['network-error', 'network-error', withEtag(200, view(), '"7-10"')],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors).toHaveLength(1);
+    expect(t.errors[0]).toMatchObject({ kind: 'network', terminal: false });
+    await tick(4999);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    expect(t.errors).toHaveLength(1); // andra felet i serien inom 10 s rapporteras inte
+    await tick(5000);
+    expect(t.f.calls).toHaveLength(3);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+  });
+
+  it('en lång felserie rapporteras högst var 10:e sekund', async () => {
+    const t = watchSetup({ [POLL]: ['network-error'] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(5000);
+    await tick(5000);
+    expect(t.f.calls).toHaveLength(3);
+    expect(t.errors).toHaveLength(2); // t=0 och t=10000
+    w.stop();
+  });
+
+  it('5xx ger server, icke-terminal', async () => {
+    const t = watchSetup({ [POLL]: [json(503, { message: 'Down' })] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors[0]).toMatchObject({ kind: 'server', terminal: false });
+    w.stop();
+  });
+
+  it('återhämtning efter fel ger onChange även på 304', async () => {
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view(), '"7-10"')],
+      [`${POLL}?since=12`]: ['network-error', new Response(null, { status: 304 })],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(1500);
+    expect(t.errors).toHaveLength(1);
+    await tick(5000);
+    expect(t.changes).toHaveLength(2);
+    expect(t.changes[1].version).toBe(7);
+    w.stop();
+  });
+
+  it('fel form ger shape, icke-terminal', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, { nope: true }, '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors[0]).toMatchObject({ kind: 'shape', terminal: false });
+    w.stop();
+  });
+
+  it('404 ger gone, terminal, och inga fler anrop', async () => {
+    const t = watchSetup({ [POLL]: [json(404, { message: 'Not found.' })] });
+    t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors).toEqual([{ kind: 'gone', terminal: true, error: expect.any(MatchError) }]);
+    await tick(60_000);
+    expect(t.f.calls).toHaveLength(1);
+    expect(t.d.count()).toBe(0);
+  });
+
+  it('abandoned ger onChange och sedan gone, terminal', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view({ status: 'abandoned' }), '"7-00"')] });
+    t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.changes.map((s) => s.status)).toEqual(['abandoned']);
+    expect(t.errors).toMatchObject([{ kind: 'gone', terminal: true }]);
+    await tick(60_000);
+    expect(t.f.calls).toHaveLength(1);
+  });
+
+  it('finished pollas var 5000 ms', async () => {
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view({ status: 'finished' }), '"7-11"')],
+      [`${POLL}?since=12`]: [new Response(null, { status: 304 })],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(4999);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    await tick(5000);
+    expect(t.f.calls).toHaveLength(3);
+    w.stop();
+  });
+
+  it('rematch-händelse ger onChange och sedan stopp', async () => {
+    const NEW = '01JB8Z3Q4WXYZ0123456789ABD';
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view({ status: 'finished' }), '"7-11"')],
+      [`${POLL}?since=12`]: [
+        withEtag(200, view({ status: 'finished', version: 9, events: [{ seq: 13, type: 'rematch', seat: null, payload: { match_id: NEW }, at: null }] }), '"9-11"'),
+      ],
+    });
+    t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await tick(5000);
+    expect(t.changes).toHaveLength(2);
+    expect(t.changes[1].events.at(-1)).toMatchObject({ type: 'rematch', payload: { match_id: NEW } });
+    expect(t.errors).toEqual([]);
+    await tick(60_000);
+    expect(t.f.calls).toHaveLength(2);
+    expect(t.d.count()).toBe(0);
+  });
+
+  it('rematch som spelarens eget anrop gav (pollen svarar 304) ger ändå onChange och stopp', async () => {
+    const NEW = '01JB8Z3Q4WXYZ0123456789ABD';
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view({ status: 'finished' }), '"7-11"')],
+      [`POST ${M}/${ID}/rematch`]: [
+        withEtag(200, view({ status: 'finished', version: 9, events: [{ seq: 13, type: 'rematch', seat: null, payload: { match_id: NEW }, at: null }] }), '"9-11"'),
+      ],
+      [`${POLL}?since=13`]: [new Response(null, { status: 304 })],
+    });
+    t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    await t.m.rematch(ID);
+    await tick(5000);
+    expect(t.changes).toHaveLength(2);
+    expect(t.changes[1].events.at(-1)?.type).toBe('rematch');
+    await tick(60_000);
+    expect(t.f.calls).toHaveLength(3);
+    expect(t.f.unmatched).toEqual([]);
+  });
+
+  it('dold flik avbryter pågående poll utan onError; ingen poll medan dold; synlig pollar direkt', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')] });
+    t.state.hang = true;
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.inits).toHaveLength(1);
+    t.d.set('hidden');
+    t.d.fire('visibilitychange');
+    await tick();
+    expect(t.state.aborted).toBe(1);
+    expect(t.errors).toEqual([]);
+    await tick(60_000);
+    expect(t.inits).toHaveLength(1);
+    t.state.hang = false;
+    t.d.set('visible');
+    t.d.fire('visibilitychange');
+    await tick();
+    expect(t.inits).toHaveLength(2);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+  });
+
+  it('dold vid start ger inga anrop; pageshow och online pollar direkt när synlig', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
+    t.d.set('hidden');
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick(10_000);
+    expect(t.f.calls).toHaveLength(0);
+    t.d.set('visible');
+    t.d.fire('pageshow');
+    await tick();
+    expect(t.f.calls).toHaveLength(1);
+    t.d.fire('online');
+    await tick();
+    expect(t.f.calls).toHaveLength(2);
+    w.stop();
+  });
+
+  it('två pollNow samtidigt ger ett anrop', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    w.pollNow();
+    w.pollNow();
+    await tick();
+    expect(t.f.calls).toHaveLength(1);
+    w.stop();
+  });
+
+  it('stop stoppar allt: lyssnare, timer och pågående poll, och inga handtag efteråt', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')] });
+    t.state.hang = true;
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    w.stop();
+    await tick();
+    expect(t.state.aborted).toBe(1);
+    expect(t.d.count()).toBe(0);
+    w.pollNow();
+    t.d.fire('online');
+    await tick(60_000);
+    expect(t.inits).toHaveLength(1);
+    expect(t.changes).toEqual([]);
+    expect(t.errors).toEqual([]);
+  });
+
+  it('stop medan ett svar är på väg ger inget onChange', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    w.stop();
+    await tick(60_000);
+    expect(t.changes).toEqual([]);
+    expect(t.errors).toEqual([]);
+  });
+
+  it('ett onChange som kastar stoppar inte bevakningen', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [withEtag(200, view({ version: 8, events: [] }), '"8-10"')] });
+    let n = 0;
+    const w = t.m.watch(ID, { onChange: () => { n++; throw new Error('spelet'); }, onError: t.handlers.onError }, t.watchOpts);
+    await tick();
+    await tick(1500);
+    expect(n).toBe(2);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('onChange'), expect.any(Error));
+    w.stop();
+  });
+});
