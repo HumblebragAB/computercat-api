@@ -87,8 +87,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "5af0e86fbeac84851c41c802a0c1a746fa406a0e8670dc31fa2afefa68edaedd",
-            "bytes": 23198
+            "sha256": "19f71787b85de0cfe79280f9b7b034a9a1cbdb50be55dc09a7eb74f0e8aea9d5",
+            "bytes": 24769
         },
         {
             "path": "eslint.config.mjs",
@@ -321,14 +321,14 @@
         {
             "path": "src/lib/computercat/matches.test.ts",
             "source": "files/src/lib/computercat/matches.test.ts",
-            "sha256": "78247b76740114cdfc6d97dd7983d314141cf102a326a365b454a4054d249b69",
-            "bytes": 40481
+            "sha256": "7ba84399c88928a14e7c7f4f139162c9f7a83e71337105aa03f77f617e1c922f",
+            "bytes": 41528
         },
         {
             "path": "src/lib/computercat/matches.ts",
             "source": "files/src/lib/computercat/matches.ts",
-            "sha256": "d56c4496cde4b26965d140c1a71a22989176eb265f62e9314b3fce661e4e90a2",
-            "bytes": 24673
+            "sha256": "14a44ec34c7184dc7571c96a23472a5e9e6489a1a7e6124c43c95a40aae9e085",
+            "bytes": 24984
         },
         {
             "path": "src/lib/computercat/proof.test.ts",

@@ -175,13 +175,18 @@ function mergeEvents(a: MatchEvent[], b: MatchEvent[]): MatchEvent[] {
 /** Retry-After begränsas till 1–60 s, så att ett orimligt värde inte fryser bevakningen. */
 export const RETRY_AFTER_MAX_S = 60;
 
+/** Djup kopia av ren JSON (ögonblicksbilderna kommer från parseSnapshot). */
+function jsonCopy<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 /**
  * Djupfryst kopia till spelet: det kan inte ändra bevakningens interna sammanslagning.
  * Ögonblicksbilden är ren JSON (parseSnapshot), så en JSON-kopia räcker. Kastar kopieringen
  * fångas det i poll och går till onError som `shape`.
  */
 function frozenCopy<T>(value: T): T {
-  const copy = JSON.parse(JSON.stringify(value)) as T;
+  const copy = jsonCopy(value);
   const freeze = (v: unknown): void => {
     if (typeof v !== 'object' || v === null || Object.isFrozen(v)) return;
     Object.freeze(v);
@@ -206,11 +211,14 @@ export function createMatches(game: string, deps: MatchesDeps) {
    */
   const known = new Map<string, MatchSnapshot>();
 
-  /** Spara svaret. Lägre version än känd ignoreras och ger false. */
+  /**
+   * Spara svaret. Lägre version än känd ignoreras och ger false. En egen kopia sparas: spelet får
+   * samma objekt som svar från act, join, get, create och invite och kan ändra dem utan att `known` påverkas.
+   */
   function remember(s: MatchSnapshot): boolean {
     const prev = known.get(s.id);
     if (prev && s.version < prev.version) return false;
-    known.set(s.id, { ...s, events: prev ? mergeEvents(prev.events, s.events) : mergeEvents([], s.events) });
+    known.set(s.id, jsonCopy({ ...s, events: prev ? mergeEvents(prev.events, s.events) : mergeEvents([], s.events) }));
     return true;
   }
 

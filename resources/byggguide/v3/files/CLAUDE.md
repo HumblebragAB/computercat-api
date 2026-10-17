@@ -111,36 +111,56 @@ if (cc.ok) {
 
 ## Matcher
 
-För spel där två spelare möts i en turbaserad match över nätet (servern äger reglerna och det dolda läget). `get_integration_guide` visar vilka regelverk (`ruleset`) spelet har; ett annat ger `ruleset_not_allowed`. Anropa aldrig matchvägarna direkt med `fetch`: gå alltid via `client.matches`, som sköter ETag, `version`, paus, backoff och fel.
+För spel där två spelare möts i en turbaserad match över nätet (servern äger reglerna och det dolda läget). `get_integration_guide` visar regelverken och deras drag (actions, payload, state och händelser); ett annat regelverk ger `ruleset_not_allowed`. Saknar manualen avsnittet "Turn-based Matches" för spelet: fråga en människa. Anropa aldrig matchvägarna direkt med `fetch`: gå alltid via `client.matches`, som sköter ETag, `version`, paus, backoff och fel.
 
 1. Skapa: `matches.create(ruleset, options?, namn?)` ger `{ match, joinToken }`. Visa `inviteUrl(joinToken, origin?)` som QR-kod och länk. I iOS-appen måste `origin` vara spelets publika webbadress (`https://…`); `capacitor://localhost` kastar.
 2. Gå med: läs `readJoinToken()` vid start (bara på webben; den tar bort token ur adressen) och anropa `matches.join(token, namn?)` om den gav en token.
-3. Rita alltid från `watch(id, { onChange, onError })`. `onChange` får varje ny version, oavsett vilket anrop som hämtade den; den kan upprepa en version som spelet redan fick från `act`, vilket är ofarligt. Spara `stop` och anropa den när spelaren lämnar matchen.
-4. Drag: `matches.act(snapshot, typ, payload?)` på den snapshot spelaren såg. `MatchError` med `code` `stale` betyder att matchen hann ändras: visa det nya läget (`e.snapshot`, eller nästa `onChange`) och låt spelaren göra om draget. Andra koder (`not_your_turn`, `out_of_range` …) visas för spelaren.
-5. `onError` ger `{ kind, error, terminal }`. Visa ett synligt läge vid varje `onError` (en banner om `terminal` är falskt, tillbaka till menyn om det är sant). Styr på `terminal`, inte på `kind`. `gone` (matchen finns inte, eller `abandoned`) är alltid terminal och ska ge ett meddelande. Det finns ingen `auth`: en utgången spelartoken ger en ny anonym spelare, och den gamla matchen svarar då `gone`.
-6. Efter omladdning: `matches.active()` ger spelarens öppna matcher. Väntar en match du skapade (`status` `waiting`, `yourSeat` 0): `matches.invite(id)` ger en ny `joinToken` för en ny QR-kod (den gamla länken slutar gälla). Bevaka sedan matchen med `watch`.
-7. Revansch: `matches.rematch(id)` när matchen är `finished`. Händelsen `rematch` ger ett sista `onChange` och stoppar bevakningen; byt till `watch(payload.match_id)`. `matches.leave(id)` lämnar matchen.
+3. Rita alltid från `watch(id, { onChange, onError })`. `onChange` får varje ny version, oavsett vilket anrop som hämtade den; den kan upprepa en version som spelet redan fick från `act`, vilket är ofarligt. Spara handtaget och anropa `stop()` när spelaren lämnar matchen eller vyn försvinner.
+4. Drag: `matches.act(snapshot, typ, payload?)` på den senaste snapshot spelaren såg; spara svaret som det nya läget. `MatchError` med `code` `stale` betyder att matchen hann ändras: rita `e.snapshot` (finns den inte kommer nästa `onChange`) och erbjud draget igen bara om det fortfarande är tillåtet i det nya läget (vid en dubbeltryckning har det första draget redan gått igenom).
+5. Visa aldrig en felkod som den är för spelaren. Styr på `e.code` (`not_your_turn`, `out_of_range`, `invite_expired`, `own_match`, `too_many_active` …) och visa spelets egen svenska text; `describeError` duger för nät- och serverfel men inte för `MatchError`.
+6. `onError` ger `{ kind, error, terminal }`. Visa ett synligt läge vid varje `onError` (en banner om `terminal` är falskt, tillbaka till menyn om det är sant). Styr på `terminal`, inte på `kind`. `gone` (matchen finns inte, eller `abandoned`) är alltid terminal och ska ge ett meddelande. Det finns ingen `auth`: en utgången spelartoken ger en ny anonym spelare, och den gamla matchen svarar då `gone`.
+7. Efter omladdning: `matches.active()` ger spelarens öppna matcher. Väntar en match du skapade (`status` `waiting`, `yourSeat` 0): `matches.invite(id)` ger en ny `joinToken` för en ny QR-kod (den gamla länken slutar gälla). Bevaka sedan matchen med `watch`.
+8. Revansch: `matches.rematch(id)` när matchen är `finished`. Händelsen `rematch` (i `events`, med `payload.match_id`) ger ett sista `onChange` och stoppar bevakningen; starta då en ny `watch` på `payload.match_id`. `matches.leave(id)` lämnar matchen.
 
 ```ts
 import { MatchError, describeError, getComputercat, inviteUrl, readJoinToken, type MatchSnapshot } from '@/lib/computercat';
+
+/** Spelets egna texter. Visa aldrig en felkod som den är. */
+function matchText(e: unknown): string {
+  if (!(e instanceof MatchError)) return describeError(e);
+  switch (e.code) {
+    case 'not_your_turn': return 'Vänta, det är inte din tur.';
+    case 'invite_expired': return 'Inbjudan gäller inte längre. Be om en ny.';
+    case 'own_match': return 'Det här är din egen match. Skicka länken till en vän.';
+    case 'too_many_active': return 'Du har redan fem öppna matcher. Avsluta en först.';
+    case 'not_found': return 'Matchen finns inte längre.';
+    default: return 'Det draget går inte just nu.';
+  }
+}
 
 const cc = getComputercat();
 if (cc.ok) {
   const matches = cc.client.matches;
   let current: MatchSnapshot | null = null;
-  const follow = (id: string) =>
-    matches.watch(id, {
+  let w: { stop(): void; pollNow(): void } | null = null;
+
+  function follow(id: string) {
+    w?.stop();
+    w = matches.watch(id, {
       onChange: (s) => {
         current = s;
         hideBanner();
         render(s);
+        const rematch = s.events.find((e) => e.type === 'rematch');
+        if (rematch && typeof rematch.payload.match_id === 'string') follow(rematch.payload.match_id);
       },
-      onError: (e) => (e.terminal ? backToMenu(e.kind === 'gone' ? 'Matchen finns inte längre.' : describeError(e.error)) : showBanner(describeError(e.error))),
+      onError: (e) => (e.terminal ? backToMenu(e.kind === 'gone' ? 'Matchen finns inte längre.' : matchText(e.error)) : showBanner(matchText(e.error))),
     });
+  }
 
   const token = readJoinToken();
   if (token) {
-    matches.join(token).then((s) => follow(s.id), (e: unknown) => show(describeError(e)));
+    matches.join(token).then((s) => follow(s.id), (e: unknown) => show(matchText(e)));
   }
 
   async function invite() {
@@ -149,22 +169,31 @@ if (cc.ok) {
       showQr(inviteUrl(joinToken));
       follow(match.id);
     } catch (e) {
-      show(describeError(e));
+      show(matchText(e));
     }
   }
 
   async function move(payload: Record<string, unknown>) {
     if (!current) return;
     try {
-      render(await matches.act(current, 'guess', payload));
+      current = await matches.act(current, 'guess', payload);
+      render(current);
     } catch (e) {
       if (e instanceof MatchError && e.code === 'stale') {
-        if (e.snapshot) render(e.snapshot);
-        show('Matchen hann ändras. Gör om draget.');
+        if (e.snapshot) {
+          current = e.snapshot;
+          render(current);
+        }
+        // Erbjud draget igen bara om det fortfarande är tillåtet i current.
       } else {
-        show(describeError(e));
+        show(matchText(e));
       }
     }
+  }
+
+  function leaveView() {
+    w?.stop();
+    w = null;
   }
 }
 ```

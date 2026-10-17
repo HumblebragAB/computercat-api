@@ -809,11 +809,11 @@ describe('watch', () => {
   it('kan ögonblicksbilden inte kopieras går felet till onError (shape), och bevakningen fortsätter', async () => {
     const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
     const real = JSON.stringify;
-    let broken = 1;
+    // Första kopian av ögonblicksbilden är remember (known), den andra frozenCopy i onChange: den kastar.
+    let seen = 0;
     vi.spyOn(JSON, 'stringify').mockImplementation(function (this: unknown, ...args: Parameters<typeof JSON.stringify>) {
       const v = args[0] as Record<string, unknown> | null;
-      if (broken > 0 && typeof v === 'object' && v !== null && 'ruleset' in v && 'yourSeat' in v) {
-        broken--;
+      if (typeof v === 'object' && v !== null && 'ruleset' in v && 'yourSeat' in v && ++seen === 2) {
         throw new TypeError('kan inte kopieras');
       }
       return real.apply(JSON, args);
@@ -824,6 +824,7 @@ describe('watch', () => {
     expect(t.errors).toEqual([{ kind: 'shape', terminal: false, error: expect.any(TypeError) }]);
     await tick(5000);
     expect(t.f.calls).toHaveLength(2);
+    expect(t.f.calls[1].path).toBe(`${M}/${ID}?since=12`);
     expect(t.changes.map((c) => c.version)).toEqual([7]);
     expect(t.errors).toHaveLength(1);
     w.stop();
@@ -876,6 +877,26 @@ describe('watch', () => {
     }).toThrow(TypeError);
     await tick(1500);
     expect(t.changes[1].events).toEqual([ev(11), ev(12), ev(13)]);
+    expect(t.changes[1].players).toHaveLength(2);
+    w.stop();
+  });
+
+  it('ett spel som ändrar act:s svar påverkar inte nästa onChange', async () => {
+    const t = watchSetup({
+      [POLL]: [withEtag(200, view(), '"7-10"')],
+      [`POST ${M}/${ID}/actions`]: [withEtag(200, view({ version: 8, state: { turn: 1 }, events: [] }), '"8-11"')],
+      [`${POLL}?since=12`]: [new Response(null, { status: 304 })],
+    });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    const after = await t.m.act(t.changes[0], 'guess', { value: 1 });
+    (after.state as Record<string, unknown>).turn = 99;
+    (after.you as Record<string, unknown>).secret = 0;
+    after.players.length = 0;
+    await tick(1500);
+    expect(t.changes.map((c) => c.version)).toEqual([7, 8]);
+    expect(t.changes[1].state).toEqual({ turn: 1 });
+    expect(t.changes[1].you).toEqual({ secret: 42 });
     expect(t.changes[1].players).toHaveLength(2);
     w.stop();
   });
