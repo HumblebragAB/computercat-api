@@ -76,7 +76,7 @@ Coolify bygger med Computercats eget byggkommando: `npm run build`, sedan spärr
 
 ## iOS och TestFlight
 
-Spelet kan byggas som iOS-app med Capacitor 8.5.3 (Swift Package Manager). iOS-projektet skapas en gång med `node scripts/ios-setup.mjs <bundle-id> "<namn>"` (bundle-id från Computercat-verktyget `get_release_status`), och `npm run check` kontrollerar det med `scripts/check-ios.mjs`. Appen byggs, signeras och laddas upp av Computercat, aldrig från repot, och bara när `version` i `package.json` har höjts. Hur det går till står under "Skicka till TestFlight" i `CLAUDE.md`.
+Spelet kan byggas som iOS-app med Capacitor 8.5.3 (Swift Package Manager). iOS-projektet skapas en gång med `node scripts/ios-setup.mjs <bundle-id> "<namn>"` (bundle-id från Computercat-verktyget `get_release_status`), och `npm run check` kontrollerar det med `scripts/check-ios.mjs`. Appen byggs, signeras och laddas upp av Computercat, aldrig från repot, och bara när `promote_release` anropas efter att `version` i `package.json` har höjts. Hur det går till står under "Skicka till TestFlight" i `CLAUDE.md`.
 
 ## Idé-markörerna
 

@@ -311,5 +311,6 @@ describe('setupIos', () => {
     const root = freshRepo();
     mkdirSync(join(root, 'ios'));
     expect(() => setupIos({ root, appId: ID, appName: 'Kattsvep', addIos: fakeCapAdd })).toThrow('ta bort ios/ och capacitor.config.ts');
+    expect(() => setupIos({ root, appId: ID, appName: 'Kattsvep', addIos: fakeCapAdd })).toThrow('Ta aldrig bort ett committat ios/');
   });
 });

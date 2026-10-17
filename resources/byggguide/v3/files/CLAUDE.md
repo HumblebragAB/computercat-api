@@ -69,12 +69,12 @@ Lint förbjuder `dangerouslySetInnerHTML`, `eval`, `new Function`, `setTimeout`/
 - Achievements: `achievements.report(slugs)`, `achievements.list()`, `achievements.mine()` (se "Achievements").
 - Sparningar: `saves.sync(nyckel, lokalt, merge)` hämtar, slår ihop och skickar med version.
 - Anti-cheat: `createProof(...)` i `metadata.proof` om spelet kräver bevis.
-- Bakgrunden: `BackgroundSync` (monterad i `src/app/layout.tsx`) anropar `flushAll()` vid start, vid "online" och varje minut; den tömmer resultatkön och achievementkön. Vill spelet visa vad bakgrunden skickade: `onFlushed(cb)` ger `{ scores, achievements }` efter varje tömning och returnerar en funktion som avslutar prenumerationen.
+- Bakgrunden: `BackgroundSync` (monterad i `src/app/layout.tsx`) anropar `flushAll()` vid start, vid "online" och varje minut; den tömmer resultatkön och achievementkön. Vill spelet visa vad bakgrunden skickade: `onFlushed(cb)` ger `{ scores, achievements }` efter varje `flushAll()` (inte efter `report()`s egen tömning) och returnerar en funktion som avslutar prenumerationen.
 
 ## Achievements
 
-1. Skapa definitionerna med `upsert_achievement` (slug högst 50 tecken, `name`, `description`, `icon` högst 20 tecken). Använd inga siffror i en slug som inte är en tröskel i spelets `settings.achievement_thresholds`.
-2. Villkoren utvärderas i spelet. Servern kontrollerar mot spelarens molnsparning, så spara framstegen dit först med `saves.sync('main', ...)` (sparningen `main`, med listan `progress.results`, ett element per avklarat resultat). Rapportera sedan: `achievements.report(['forsta-rundan'])`. Finns tröskeln i `settings.achievement_thresholds` och listan har färre element avvisas sluggen (`rejected`); saknas sparningen eller listan görs ingen kontroll.
+1. Skapa definitionerna med `upsert_achievement` (slug högst 50 tecken, `name`, `description`, `icon` högst 20 tecken). Siffror i en slug betyder ingenting för servern: `forsta-12x12` och `losa-100` är bara namn.
+2. Villkoren utvärderas i spelet. Spara framstegen i molnsparningen först med `saves.sync('main', …)` och rapportera sedan: `achievements.report(['forsta-rundan'])`. Computercat kan ha en tröskel för en slug (minsta antal resultat). Den sätts av en människa i Computercat, syns inte i `get_game` och sätts inte med något verktyg. Finns en tröskel räknar servern elementen i listan `progress.results` i sparningen `main`, och färre än tröskeln ger `rejected`. Saknas sparningen, eller är listan tom eller inte en lista, görs ingen kontroll. Behöver en achievement en tröskel: fråga en människa, och spara ett element per avklarat resultat i `progress.results` (sparningen får vara högst 512 KB).
 3. Rapportera hela listan med spelarens upplåsningar vid varje start. Det är ofarligt (servern låser upp en gång) och tar med det som avvisades tidigare.
 4. `report` kastar `RangeError` direkt för en ogiltig slug (samma regler som `upsert_achievement`: högst 50 tecken, gemener, siffror, `-`, `_` och `.`, först en bokstav eller siffra) och `Error` när kön inte kan sparas lokalt. Fånga det och visa det.
 5. `report` ger `{ queued, flushed }`. `flushed` blir `{ sent, unlocked, unknown, rejected, dropped, remaining }`:
@@ -87,6 +87,8 @@ Lint förbjuder `dangerouslySetInnerHTML`, `eval`, `new Function`, `setTimeout`/
 7. `achievements.list()` ger definitionerna (`is_secret` sann och `description` `???` för hemliga), `achievements.mine()` spelarens upplåsta.
 
 ```ts
+import { describeError, getComputercat } from '@/lib/computercat';
+
 const cc = getComputercat();
 if (cc.ok) {
   try {
@@ -110,7 +112,7 @@ if (cc.ok) {
 
 Spelet kan byggas som iOS-app med Capacitor 8.5.3 (Swift Package Manager). Gör det här en gång, och bara när spelet ska till TestFlight:
 
-1. Anropa `get_release_status` för spelet. `targets.app_store.ios.bundle_id` är spelets bundle-id (`se.computercat.<slug utan bindestreck>`). Saknas `app_store` i `release_targets`, eller är värdet `null`: stanna och be Erik sätta målet med `set_release_targets`. Hitta aldrig på ett bundle-id.
+1. Anropa `get_release_status` för spelet. `targets.app_store.ios.bundle_id` är spelets bundle-id (`se.computercat.<slug utan bindestreck>`). Saknas `app_store` i `release_targets`, eller är `bundle_id` `null`: stanna och be Erik sätta målet med `set_release_targets`. Hitta aldrig på ett bundle-id.
 2. Anropa `get_game` och ta spelets `name`. Det blir appens namn på hemskärmen (1–50 tecken, utan `<`, `>` och `&`).
 3. Kör `npm ci --ignore-scripts` och `npm run build`.
 4. Kör `node scripts/ios-setup.mjs <bundle_id> "<name>"`. Skriptet skriver `capacitor.config.ts` (`appId` = bundle-id, `webDir: 'out'`), kör Capacitors `cap add ios --packagemanager SPM` ur `node_modules` och lägger in `ITSAppUsesNonExemptEncryption` = `false` i `ios/App/App/Info.plist`. Det körs en gång; finns `ios/` redan vägrar det.
@@ -122,12 +124,14 @@ Regler för `ios/` och `capacitor.config.ts`:
 - De tillhör spelet men ändras inte för hand. `scripts/check-ios.mjs` och Computercats bygge kontrollerar `appId`, `PRODUCT_BUNDLE_IDENTIFIER` och `Info.plist`.
 - Version och byggnummer sätts aldrig i `ios/`: `CFBundleShortVersionString` och `CFBundleVersion` står kvar som `$(MARKETING_VERSION)` och `$(CURRENT_PROJECT_VERSION)`. Versionen kommer från `package.json`, byggnumret från Computercat.
 - Inga certifikat, nycklar, profiler, `ExportOptions.plist` eller byggflöden (`.github/workflows`, fastlane) i repot. Computercat bygger, signerar och laddar upp.
-- Faller `ios-setup.mjs` halvvägs: ta bort `ios/` och `capacitor.config.ts` och kör `ios-setup` igen (inget raderas automatiskt). Gäller felet `CFBundleDisplayName`: fråga en människa om namnet.
+- Faller `ios-setup.mjs` halvvägs, innan `ios/` och `capacitor.config.ts` är committade: ta bort dem och kör `ios-setup` igen (inget raderas automatiskt). Ta aldrig bort ett `ios/` som redan är committat; fråga en människa. Gäller felet `CFBundleDisplayName`: fråga en människa om namnet.
 - Nya Capacitor-plugin eller annan inbyggd kod: fråga faktabanken och en människa först.
 
 ## Skicka till TestFlight
 
 Skicka till TestFlight (kräver byggguide v3 eller senare i spelet, den med iOS-stöd). En push utan höjd version bygger aldrig appen; bara promote_release efter en versionshöjning gör det. 1. Höj version i package.json (MAJOR.MINOR.PATCH): högre än den senast släppta till TestFlight och inte använd förut. 2. Kör npm run check, committa och pusha till main. 3. Vänta tills Demo-bygget för commiten är grönt (get_provisioning_status visar demo.state live). 4. Anropa promote_release(target: app_store, stage: testflight, commit_sha: <commiten>). 5. Följ get_release_status tills släppet är klart. Computercat sätter taggen v<version>, väljer byggnummer, bygger appen och lägger den i TestFlight-gruppen ComputerCat intern.
+
+`promote_release` tar också `game` (spelets slug), och `commit_sha` är hela SHA:n från `git rev-parse HEAD` (40 tecken, gemener). Kontrollera i punkt 3 att `demo.commit_sha` i `get_release_status` är just den commiten, eftersom `demo.state` `live` kan gälla förra bygget.
 
 Svarar `promote_release` att versionen är för låg eller att taggen redan finns: höj `version` i `package.json` som svaret säger och börja om från punkt 1. Följ alltid `next` i `get_release_status`. iOS-projektet måste finnas (se "iOS (Capacitor)") innan första släppet.
 
@@ -138,7 +142,7 @@ Gäller bara spel vars `CLAUDE.md` har `Byggguide: **v2**`. Ett v1-spel: fråga 
 1. Hämta manifestet för spelets nuvarande version och för v3 med `get_build_guide`.
 2. För varje fil i v3:s manifest: finns den inte i spelet, eller har spelets fil samma `sha256` som i den gamla versionens manifest (en oförändrad guidefil), skriv v3:s fil exakt och kontrollera `sha256`.
 3. En fil som spelet har ändrat (till exempel exemplets filer, `src/app/page.tsx` och `src/app/layout.tsx`) behålls. Står den i listan nedan: för in v3:s ändring för hand, och fråga en människa om det är oklart.
-4. `package.json`: behåll spelets `name` och de beroenden spelet har lagt till, sätt varje paket i v3:s `stack` till exakt den versionen, lägg `node scripts/check-ios.mjs` sist i `check` som i v3:s fil, och kör `npm install --package-lock-only --ignore-scripts`. Ta v3:s `package-lock.json` bara om spelet inte har egna beroenden.
+4. `package.json`: behåll spelets `name` och de beroenden spelet har lagt till. Lägg till de paket i v3:s `stack` som saknas, i samma sektion som i v3:s `package.json` (`@capacitor/core` och `@capacitor/ios` under `dependencies`, `@capacitor/cli` under `devDependencies`). Sätt varje paket i `stack` till exakt den versionen, också de som går ned (som `jsdom`). Lägg `node scripts/check-ios.mjs` sist i `check` som i v3:s fil, och kör `npm install --package-lock-only --ignore-scripts`. Ta v3:s `package-lock.json` bara om spelet inte har egna beroenden.
 5. Kör `npm ci --ignore-scripts`, `npm run check` och `npm audit --omit=dev --audit-level=high`. Alla ska gå igenom.
 6. Committa med meddelandet `Byggguide v3` och pusha till `main`. Fortsätt med "iOS (Capacitor)" när spelet ska till TestFlight.
 

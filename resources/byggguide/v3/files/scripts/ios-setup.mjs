@@ -16,13 +16,13 @@ function capAddIos(root) {
   if (r.status !== 0) throw new Error(`cap add ios misslyckades (exitkod ${r.status}${r.signal ? `, signal ${r.signal}` : ''}${r.error ? `, ${r.error.message}` : ''})`);
 }
 
-const RERUN = 'ta bort ios/ och capacitor.config.ts och kör ios-setup igen (inget raderas automatiskt)';
+const RERUN = 'ta bort ios/ och capacitor.config.ts om de inte är committade, och kör ios-setup igen (inget raderas automatiskt)';
 
 export function setupIos({ root, appId, appName, addIos = capAddIos }) {
   // Indata först: ett ogiltigt id eller namn ska aldrig lämna något efter sig.
   const config = capacitorConfigSource(appId, appName);
   if (existsSync(join(root, 'ios'))) {
-    throw new Error(`ios/ finns redan. ios-setup körs bara en gång; kontrollera projektet med node scripts/check-ios.mjs. Efter ett avbrutet försök: ${RERUN}`);
+    throw new Error(`ios/ finns redan. ios-setup körs bara en gång; kontrollera projektet med node scripts/check-ios.mjs. Ta aldrig bort ett committat ios/; fråga en människa. Efter ett avbrutet försök: ${RERUN}`);
   }
   const configPath = join(root, 'capacitor.config.ts');
   if (existsSync(configPath) && readFileSync(configPath, 'utf8') !== config) {

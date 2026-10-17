@@ -160,4 +160,18 @@ class BuildGuideV3Test extends TestCase
             $this->assertStringContainsString($text, $docs);
         }
     }
+
+    // Texten om rimlighetskontrollen och servern får inte glida isär.
+    public function test_claude_md_achievement_save_contract_matches_the_server(): void
+    {
+        $md = BuildGuide::claudeMd('v3');
+        $server = (string) file_get_contents(app_path('Http/Controllers/Api/V1/AchievementController.php'));
+
+        foreach (["saves.sync('main'", 'progress.results', 'inte med något verktyg', 'Siffror i en slug betyder ingenting för servern'] as $text) {
+            $this->assertStringContainsString($text, $md);
+        }
+        $this->assertStringContainsString("->where('save_key', 'main')", $server);
+        $this->assertStringContainsString("['progress']['results']", $server);
+        $this->assertStringNotContainsString('Använd inga siffror i en slug', $md);
+    }
 }
