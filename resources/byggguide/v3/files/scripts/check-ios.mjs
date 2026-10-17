@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 export const BUNDLE_ID = /^se\.computercat\.[a-z][a-z0-9]{1,39}$/;
 const VERSION = /^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$/;
 const SECRET_FILE = /\.(p8|p12|cer|crt|der|pem|key|mobileprovision|provisionprofile|keychain|p7b)$/i;
-// Guidens Capacitor; samma som manifestets ios.capacitor (BuildGuideV3Test jämför).
+// Guidens Capacitor; samma som @capacitor/core, ios och cli i manifestets stack (BuildGuideV3Test jämför).
 export const CAPACITOR = '8.5.3';
 const CAPACITOR_PACKAGES = [['@capacitor/core', 'dependencies'], ['@capacitor/ios', 'dependencies'], ['@capacitor/cli', 'devDependencies']];
 const stripXml = (s) => s.replace(/<!--[\s\S]*?-->/g, '');

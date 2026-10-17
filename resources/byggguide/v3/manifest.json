@@ -135,8 +135,8 @@
         {
             "path": "scripts/check-ios.mjs",
             "source": "files/scripts/check-ios.mjs",
-            "sha256": "76b45d72d3052d4d438ab7780c5c393c603cd3558312bcf2dd180774d2ad8a0a",
-            "bytes": 10632
+            "sha256": "177bf542ccccfc0f44d7d262c558b1450339f08c7a6d32a5cc8465838b816e9c",
+            "bytes": 10655
         },
         {
             "path": "scripts/ios-setup.mjs",
