@@ -94,10 +94,10 @@ class ReleaseFactbankSyncTest extends TestCase
         $this->assertMatchesRegularExpression($line, (string) file_get_contents(resource_path('faktabank/process/process-slappflode.md')));
         $this->assertStringContainsString($flow, ReleaseNext::for('ready_for_testflight', ['commit' => 'x', 'last_version' => 'ingen']));
 
-        // Låsta och olåsta versioner: v3-planen ska få fel innan låsningen, inte efter.
-        // Loopen nedan är avsiktligt tom tills v3 (första med ios-block) låses; manifestlistan får aldrig vara tom.
+        // Låsta och olåsta versioner med ios-block (v3 och senare): en ny version får fel innan låsningen, inte efter.
         $manifests = glob(resource_path('byggguide/v*/manifest.json')) ?: [];
         $this->assertNotEmpty($manifests, 'Inga byggguide-manifest hittades; globben är fel.');
+        $checked = 0;
         foreach ($manifests as $manifest) {
             if (! isset(json_decode((string) file_get_contents($manifest), true)['ios'])) {
                 continue;
@@ -105,7 +105,9 @@ class ReleaseFactbankSyncTest extends TestCase
             $claude = dirname($manifest).'/files/CLAUDE.md';
             $this->assertFileExists($claude);
             $this->assertMatchesRegularExpression($line, (string) file_get_contents($claude), basename(dirname($manifest)).': CLAUDE.md saknar flödestexten ordagrant.');
+            $checked++;
         }
+        $this->assertGreaterThan(0, $checked, 'Ingen byggguideversion har ios-block; v3 ska ha det.');
     }
 
     public function test_articles_name_the_version_rule_and_the_tag(): void

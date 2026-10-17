@@ -67,8 +67,8 @@
     "server_templates": {
         "readme": {
             "source": "templates/README.md",
-            "sha256": "fa061fb21f43e49c00974f7daaeaa0bedff2da49c259ee8ccd8faed62fa6ee44",
-            "bytes": 4789
+            "sha256": "5d104912dc670b7d099ba21ab5b3d4a9eb494f88b8b4a623a6f0132f34a5fe38",
+            "bytes": 5377
         }
     },
     "files": [
@@ -87,8 +87,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "0da47702a6eba2d0b11c7f1151cda28e928db77d6a8e29b59ea8923db6d74acc",
-            "bytes": 9071
+            "sha256": "47781770290abda97ebfbc79af326b803d615a140e67dd702030a133d6eb1a13",
+            "bytes": 18312
         },
         {
             "path": "eslint.config.mjs",
@@ -381,8 +381,8 @@
         {
             "path": "test/docs.test.ts",
             "source": "files/test/docs.test.ts",
-            "sha256": "d87dabd0d2d4366e94e74cf55aa30647e68aa35876c6d339e14f3175d49b3356",
-            "bytes": 2093
+            "sha256": "baf44f6252cc6891a4f41e1a8e9a8a972e5045bfd986e356c81d1c5da68ddc3f",
+            "bytes": 2246
         },
         {
             "path": "test/eslintRules.test.ts",
@@ -426,5 +426,11 @@
             "sha256": "232a9e8d5914a93c9cf2ae00f9a9c41053dff96cbff833d603a45a1e03eda6d2",
             "bytes": 294
         }
-    ]
+    ],
+    "ios": {
+        "capacitor": "8.5.3",
+        "package_manager": "spm",
+        "project": "ios/App/App.xcodeproj",
+        "scheme": "App"
+    }
 }

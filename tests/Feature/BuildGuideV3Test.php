@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Releases\ReleaseNext;
 use App\Services\BuildGuide;
 use Tests\TestCase;
 
@@ -82,6 +83,81 @@ class BuildGuideV3Test extends TestCase
         $paths = array_column(BuildGuide::manifest('v3')['files'], 'path');
         foreach (['scripts/check-ios.mjs', 'scripts/ios-setup.mjs', 'test/iosSetup.test.ts', 'src/lib/computercat/achievements.ts', 'src/lib/computercat/achievements.test.ts'] as $path) {
             $this->assertContains($path, $paths);
+        }
+    }
+
+    // En hänvisning till v2 som version (adresser som /api/v1 är inte versionen). Avsnittet om
+    // uppgradering från v2 räknas inte.
+    private const V2_REFERENCE = '/byggguide v2|\*\*v2\*\*|"v2"/i';
+
+    private function withoutUpgradeSection(string $md): string
+    {
+        return (string) preg_replace('/^## Uppgradera ett v2-spel till v3$.*?(?=^## )/ms', '', $md);
+    }
+
+    public function test_claude_md_is_v3_and_has_achievements_ios_and_the_testflight_flow(): void
+    {
+        $md = BuildGuide::claudeMd('v3');
+
+        foreach (['Byggguide: **v3**', '{"version": "v3"}', '`Grundkod från byggguide v3`', '"build_guide": "v3"', '## Achievements', '`achievements.report', '`upsert_achievement`', 'hela listan', '`unknown`', '`rejected`', '`dropped`', '## iOS (Capacitor)', '`node scripts/ios-setup.mjs <bundle_id> "<name>"`', '`targets.app_store.ios.bundle_id`', '`check-ios: OK`', '## Skicka till TestFlight', '## Uppgradera ett v2-spel till v3', '`npm run build` ska klara sig utan nätverk', '`const { env } = process`', 'inte avsiktligt skadlig spelkod'] as $text) {
+            $this->assertStringContainsString($text, $md);
+        }
+        $this->assertMatchesRegularExpression('/^'.preg_quote(ReleaseNext::TESTFLIGHT_FLOW, '/').'$/m', $md);
+        $this->assertSame('v3', BuildGuide::versionFromClaudeMd($md));
+        $this->assertStringNotContainsString('(bygget ska klara sig utan nätverk)', $md);
+        $this->assertDoesNotMatchRegularExpression(self::V2_REFERENCE, $this->withoutUpgradeSection($md));
+        $this->assertStringContainsString('## Exemplets topplista', $this->withoutUpgradeSection($md));
+    }
+
+    // R10: listan i CLAUDE.md är exakt de filer som är nya eller ändrade jämfört med v2, och v3 tar inte bort någon.
+    public function test_the_upgrade_list_is_exactly_the_files_v3_adds_or_changes(): void
+    {
+        $v2 = array_column(BuildGuide::manifest('v2')['files'], 'sha256', 'path');
+        $v3 = BuildGuide::manifest('v3')['files'];
+        $changed = [];
+        foreach ($v3 as $f) {
+            if (($v2[$f['path']] ?? null) !== $f['sha256']) {
+                $changed[] = $f['path'];
+            }
+        }
+        preg_match('/^Filer som är nya eller ändrade i v3 jämfört med v2:\n\n((?:- `[^`]+`\n)+)/m', BuildGuide::claudeMd('v3'), $m);
+        $this->assertNotEmpty($m[1] ?? null, 'Listan saknas i CLAUDE.md.');
+        preg_match_all('/^- `([^`]+)`$/m', $m[1], $listed);
+        $l = $listed[1];
+        sort($changed);
+        sort($l);
+        $this->assertSame($changed, $l);
+        $this->assertSame([], array_values(array_diff(array_keys($v2), array_column($v3, 'path'))));
+    }
+
+    public function test_readme_template_names_v3_achievements_and_ios(): void
+    {
+        $readme = BuildGuide::readme('v3', 'Spel');
+
+        foreach (['enligt Computercats byggguide v3', '`achievements.report/list/mine`', '## iOS och TestFlight', '`node scripts/ios-setup.mjs', 'och iOS-kontrollen', 'inte avsiktligt skadlig spelkod'] as $text) {
+            $this->assertStringContainsString($text, $readme);
+        }
+        $this->assertDoesNotMatchRegularExpression(self::V2_REFERENCE, $readme);
+    }
+
+    // TestFlight-planen Task 4 punkt 1: kontraktet, och Capacitor i stacken i samma version.
+    public function test_manifest_has_the_ios_contract(): void
+    {
+        $m = BuildGuide::manifest('v3');
+
+        $this->assertSame(['capacitor' => '8.5.3', 'package_manager' => 'spm', 'project' => 'ios/App/App.xcodeproj', 'scheme' => 'App'], $m['ios']);
+        $this->assertTrue(BuildGuide::iosBlockIsValid($m['ios']));
+        foreach (['@capacitor/core', '@capacitor/ios', '@capacitor/cli'] as $package) {
+            $this->assertSame($m['ios']['capacitor'], $m['stack'][$package], $package);
+        }
+    }
+
+    public function test_docs_test_guards_the_new_texts(): void
+    {
+        $docs = BuildGuide::file('v3', 'test/docs.test.ts')['content'];
+
+        foreach (["'\"build_guide\": \"v3\"'", "'achievements.report'", "'scripts/ios-setup.mjs'", "'scripts/check-ios.mjs'", "'promote_release(target: app_store, stage: testflight'"] as $text) {
+            $this->assertStringContainsString($text, $docs);
         }
     }
 }

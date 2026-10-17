@@ -42,7 +42,11 @@ describe('README och CLAUDE.md', () => {
       'search_facts',
       'get_fact',
       'list_facts',
-      '"build_guide": "v2"',
+      '"build_guide": "v3"',
+      'achievements.report',
+      'scripts/ios-setup.mjs',
+      'scripts/check-ios.mjs',
+      'promote_release(target: app_store, stage: testflight',
       'scripts/cc-gate.mjs',
     ]) {
       expect(md, s).toContain(s);

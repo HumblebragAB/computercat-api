@@ -1,6 +1,6 @@
 # {{name}}
 
-Ett Computercat-spel byggt med Next.js (statisk export), React, Tailwind, Zustand och framer-motion, enligt Computercats byggguide v2.
+Ett Computercat-spel byggt med Next.js (statisk export), React, Tailwind, Zustand och framer-motion, enligt Computercats byggguide v3.
 
 ## Idé
 
@@ -24,7 +24,7 @@ Utan `NEXT_PUBLIC_COMPUTERCAT_GAME` går spelet att spela, men en gul banner sä
 
 ```bash
 npm test        # enhetstester (vitest), inget nätverk
-npm run check   # typkontroll, lint, test, bygge, kontroll av out/ och säkerhetskontrollen
+npm run check   # typkontroll, lint, test, bygge, kontroll av out/, säkerhetskontrollen och iOS-kontrollen
 ```
 
 `npm run check` ska vara grön, och `npm audit --omit=dev --audit-level=high` får inte ge något (high eller critical i produktionsberoenden), innan något pushas.
@@ -34,8 +34,8 @@ npm run check   # typkontroll, lint, test, bygge, kontroll av out/ och säkerhet
 Backend är Computercat (`https://api.computercat.co/api/v1`). Spelet har ingen egen server, databas eller API-route. Allt som pratar med Computercat ligger i `src/lib/computercat/`:
 
 - anonym spelare skapas automatiskt; token sparas i `localStorage` (giltig 90 dagar) och förnyas vid start via `POST /auth/refresh` när den är äldre än 24 h (saknas endpointen, eller är nätet nere, behålls token); vid 401 skapas en ny anonym spelare,
-- resultat köas lokalt först och skickas i bakgrunden (vid start, när nätet kommer tillbaka och varje minut),
-- topplistor (`leaderboards.get/me/submit`), sparningar med version (`saves.get/put/sync`) och anti-cheat-bevis (`createProof`).
+- resultat och achievements köas lokalt först och skickas i bakgrunden (vid start, när nätet kommer tillbaka och varje minut),
+- topplistor (`leaderboards.get/me/submit`), achievements (`achievements.report/list/mine`), sparningar med version (`saves.get/put/sync`) och anti-cheat-bevis (`createProof`).
 
 Topplistor, achievements, innehållspooler med mera konfigureras i Computercat, inte i koden. Den som har Computercat-connectorn i Claude gör det med verktygen `get_game` och `upsert_*`; integrationsmanualen fås med `get_integration_guide`.
 
@@ -73,6 +73,10 @@ Värdena bakas in i den publika koden vid bygget. Lägg aldrig hemligheter i `NE
 Push till `main` bygger och deployar Demo automatiskt (Coolify, nixpacks, statiska filer från `out/` via nginx, Node 22 enligt `engines`). Första pushen, grundkoden, startar första bygget. Demo-adressen är `https://<slug>.apps.humblebrag.se` bakom basic auth. Status följs med Computercat-verktyget `get_provisioning_status`.
 
 Coolify bygger med Computercats eget byggkommando: `npm run build`, sedan spärren `scripts/cc-gate.mjs`: säkerhetskontrollen (hemligheter, source maps, dolda filer och Content-Security-Policy i varje HTML-sida) och `npm audit` för produktionsberoenden. Skriptet hämtas över https från den låsta byggguiden i Computercat. Faller en kontroll deployas inget och Demo visar förra bygget. Att ta bort eller ändra skripten eller `check` stänger inte av spärren; spärren fångar misstag och kända mönster, inte avsiktligt skadlig spelkod (`npm run build` kör repots egen kod före kontrollerna och kan i princip påverka byggmiljön).
+
+## iOS och TestFlight
+
+Spelet kan byggas som iOS-app med Capacitor 8.5.3 (Swift Package Manager). iOS-projektet skapas en gång med `node scripts/ios-setup.mjs <bundle-id> "<namn>"` (bundle-id från Computercat-verktyget `get_release_status`), och `npm run check` kontrollerar det med `scripts/check-ios.mjs`. Appen byggs, signeras och laddas upp av Computercat, aldrig från repot, och bara när `version` i `package.json` har höjts. Hur det går till står under "Skicka till TestFlight" i `CLAUDE.md`.
 
 ## Idé-markörerna
 
