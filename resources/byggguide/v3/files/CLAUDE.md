@@ -163,6 +163,8 @@ Filer som är nya eller ändrade i v3 jämfört med v2:
 - `src/lib/computercat/http.ts`
 - `src/lib/computercat/index.test.ts`
 - `src/lib/computercat/index.ts`
+- `src/lib/computercat/matches.test.ts`
+- `src/lib/computercat/matches.ts`
 - `src/lib/computercat/queue.ts`
 - `test/docs.test.ts`
 - `test/eslintRules.test.ts`
