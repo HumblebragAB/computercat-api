@@ -38,3 +38,7 @@ Schedule::command('computercat:advance-releases')->everyFiveMinutes()->withoutOv
 
 // Släppflödet etapp 2: "Computercat ser själv när appen finns" och kör de automatiska App Store-stegen.
 Schedule::command('computercat:queue-app-store-setup')->everyTenMinutes()->withoutOverlapping(10);
+
+// Matcher: övergiv matcher vars tid gått ut (waiting 15 min, active 30 min utan drag) och gallra avslutade efter 7 dagar.
+Schedule::command('matches:expire')->everyFiveMinutes()->withoutOverlapping(5);
+Schedule::command('matches:prune --days=7')->dailyAt('05:00');
