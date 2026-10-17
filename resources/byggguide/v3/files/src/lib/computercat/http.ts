@@ -100,20 +100,30 @@ export async function requestJson<T>(
 
 export type MetaResult<T> = { status: number; body: T | null; etag: string | null };
 
-/** Timeouten plus anroparens egen signal: den som avbryter först vinner. */
-function withTimeout(signal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(TIMEOUT_MS);
-  if (!signal) return timeout;
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeout]);
-  const ctrl = new AbortController();
-  for (const s of [signal, timeout]) {
-    if (s.aborted) {
-      ctrl.abort(s.reason);
-      break;
-    }
-    s.addEventListener('abort', () => ctrl.abort(s.reason), { once: true });
+/**
+ * Timeouten plus anroparens egen signal: den som avbryter först vinner. `dispose` tar bort lyssnare
+ * och timer, så att en långlivad signal (bevakningens stopp) inte samlar på sig en lyssnare per anrop.
+ */
+function withTimeout(signal: AbortSignal | undefined): { signal: AbortSignal; dispose: () => void } {
+  if (!signal) return { signal: AbortSignal.timeout(TIMEOUT_MS), dispose: () => {} };
+  if (typeof AbortSignal.any === 'function') {
+    return { signal: AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]), dispose: () => {} };
   }
-  return ctrl.signal;
+  // Reserv utan AbortSignal.any (Safari före 17.4): egen controller och egen timer.
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort(signal.reason);
+  const timer = setTimeout(() => ctrl.abort(new DOMException('Tidsgränsen nåddes', 'TimeoutError')), TIMEOUT_MS);
+  const dispose = () => {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', onAbort);
+  };
+  if (signal.aborted) {
+    ctrl.abort(signal.reason);
+    clearTimeout(timer);
+  } else {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+  return { signal: ctrl.signal, dispose };
 }
 
 /**
@@ -127,25 +137,29 @@ export async function requestJsonMeta<T>(
   path: string,
   opts: { token?: string | null; body?: unknown; headers?: Record<string, string>; noStore?: boolean; signal?: AbortSignal } = {},
 ): Promise<MetaResult<T>> {
-  const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
+  // En egen Authorization-header (oavsett skiftläge) tas bort: bara token får styra den.
+  const custom = Object.entries(opts.headers ?? {}).filter(([k]) => !/^authorization$/i.test(k));
+  const headers: Record<string, string> = { Accept: 'application/json', ...Object.fromEntries(custom) };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-  // Token sätts sist så att en egen header aldrig kan ersätta den.
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
 
   let res: Response;
   let text: string;
+  const abort = withTimeout(opts.signal);
   try {
     const init: RequestInit = {
       method,
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-      signal: withTimeout(opts.signal),
+      signal: abort.signal,
     };
     if (opts.noStore) init.cache = 'no-store';
     res = await fetchImpl(`${baseUrl}${path}`, init);
     text = await res.text();
   } catch (e) {
     throw new NetworkError(method, path, e);
+  } finally {
+    abort.dispose();
   }
 
   const etag = res.headers.get('ETag');

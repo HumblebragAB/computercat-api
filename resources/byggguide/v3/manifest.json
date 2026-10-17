@@ -285,14 +285,14 @@
         {
             "path": "src/lib/computercat/http.test.ts",
             "source": "files/src/lib/computercat/http.test.ts",
-            "sha256": "746a5ba425e61902a3cafe96da7591148718cb2744ae5f0a89feb1b5497ee167",
-            "bytes": 9487
+            "sha256": "07f5df442222f5379ff8f0fc313d789f011b3edaf682a550b586195b282ef646",
+            "bytes": 12439
         },
         {
             "path": "src/lib/computercat/http.ts",
             "source": "files/src/lib/computercat/http.ts",
-            "sha256": "07a90dca1e0189a4bb95153a973089e8e9d065b2cc3f592ee8b97a5703f051f7",
-            "bytes": 5919
+            "sha256": "a3856f7a5a44cd6425c417e8cf4fa6eff241d7384c26cc76067f2b77169b20a7",
+            "bytes": 6708
         },
         {
             "path": "src/lib/computercat/index.test.ts",

@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BASE, fakeFetch, json } from '../../../test/fakeFetch';
-import { ApiError, NetworkError, preview, requestJson, requestJsonMeta, type FetchLike } from './http';
+import { ApiError, NetworkError, TIMEOUT_MS, preview, requestJson, requestJsonMeta, type FetchLike } from './http';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -118,6 +118,63 @@ describe('requestJsonMeta', () => {
     const c = capturing(f.fetch);
     await requestJsonMeta(c.fetch, BASE, 'GET', '/m/1', {});
     expect(c.inits[0].cache).toBeUndefined();
+  });
+
+  it('egen authorization-header i gemener tas bort, även utan token', async () => {
+    const f = fakeFetch({ 'GET /m/1': [json(200, {})] });
+    await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { token: 't1', headers: { authorization: 'Bearer annan', 'If-None-Match': '"1-1"' } });
+    expect(f.calls[0].headers).toEqual({ Accept: 'application/json', 'If-None-Match': '"1-1"', Authorization: 'Bearer t1' });
+    await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { headers: { AUTHORIZATION: 'Bearer annan' } });
+    expect(f.calls[1].headers).toEqual({ Accept: 'application/json' });
+  });
+
+  describe('utan AbortSignal.any', () => {
+    let original: PropertyDescriptor | undefined;
+    beforeEach(() => {
+      original = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+      Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true, writable: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      if (original) Object.defineProperty(AbortSignal, 'any', original);
+    });
+
+    it('lyssnare på anroparens signal tas bort efter varje anrop', async () => {
+      const f = fakeFetch({ 'GET /m/1': [json(200, {})] });
+      const ctrl = new AbortController();
+      const add = vi.spyOn(ctrl.signal, 'addEventListener');
+      const remove = vi.spyOn(ctrl.signal, 'removeEventListener');
+      for (let i = 0; i < 5; i++) await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal });
+      expect(add).toHaveBeenCalledTimes(5);
+      expect(remove).toHaveBeenCalledTimes(5);
+      for (let i = 0; i < 5; i++) expect(remove.mock.calls[i][1]).toBe(add.mock.calls[i][1]);
+    });
+
+    it('lyssnaren tas bort även när anropet misslyckas', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const f = fakeFetch({ 'GET /m/1': [json(500, {}), 'network-error'] });
+      const ctrl = new AbortController();
+      const add = vi.spyOn(ctrl.signal, 'addEventListener');
+      const remove = vi.spyOn(ctrl.signal, 'removeEventListener');
+      await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal }).catch(() => {});
+      await requestJsonMeta(f.fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal }).catch(() => {});
+      expect(add).toHaveBeenCalledTimes(2);
+      expect(remove).toHaveBeenCalledTimes(2);
+    });
+
+    it('timeouten avbryter fortfarande', async () => {
+      vi.useFakeTimers();
+      const ctrl = new AbortController();
+      const fetch: FetchLike = (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        });
+      const p = requestJsonMeta(fetch, BASE, 'GET', '/m/1', { signal: ctrl.signal });
+      const done = expect(p).rejects.toBeInstanceOf(NetworkError);
+      await vi.advanceTimersByTimeAsync(TIMEOUT_MS);
+      await done;
+      expect(ctrl.signal.aborted).toBe(false);
+    });
   });
 
   it('egen header kan inte ersätta Authorization', async () => {
