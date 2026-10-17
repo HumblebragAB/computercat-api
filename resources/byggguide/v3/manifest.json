@@ -87,8 +87,8 @@
         {
             "path": "CLAUDE.md",
             "source": "files/CLAUDE.md",
-            "sha256": "19f71787b85de0cfe79280f9b7b034a9a1cbdb50be55dc09a7eb74f0e8aea9d5",
-            "bytes": 24769
+            "sha256": "cff0efb40314e8de9a496a85760a321272c1ca99f6344981331e3ba3707b9dec",
+            "bytes": 25117
         },
         {
             "path": "eslint.config.mjs",
