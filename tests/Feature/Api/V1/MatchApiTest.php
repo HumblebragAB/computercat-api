@@ -394,10 +394,10 @@ class MatchApiTest extends TestCase
         $queries = array_column(DB::getQueryLog(), 'query');
         DB::disableQueryLog();
 
-        $selects = fn (string $table) => count(array_filter($queries, fn ($q) => preg_match('/^select .* from "'.$table.'"/i', $q) === 1));
+        $selects = fn (string $table) => count(array_filter($queries, fn ($q) => preg_match('/^select .* from [`"]?'.$table.'[`"]?(\s|$)/i', $q) === 1));
         $this->assertSame(1, $selects('games'), implode("\n", $queries));
         $this->assertSame(1, $selects('match_players'), implode("\n", $queries));
-        $this->assertCount(1, array_filter($queries, fn ($q) => str_starts_with(strtolower($q), 'update "match_players"')));
+        $this->assertCount(1, array_filter($queries, fn ($q) => preg_match('/^update [`"]?match_players[`"]?\s/i', $q) === 1));
     }
 
     public function test_requires_authentication(): void

@@ -367,7 +367,21 @@ class MatchInvariantTest extends TestCase
             $state = $rules->apply($state, $event->type, $event->seat, $event->payload ?? []);
         }
 
-        $this->assertSame($match->state, $state);
+        $this->assertSame($this->canonical($match->state), $this->canonical($state));
+    }
+
+    /** MySQL:s JSON-kolumn ordnar om objektnycklar; listor behåller ordningen. */
+    private function canonical(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        $value = array_map(fn ($v) => $this->canonical($v), $value);
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return $value;
     }
 
     public function test_access(): void

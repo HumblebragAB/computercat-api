@@ -42,3 +42,6 @@ Schedule::command('computercat:queue-app-store-setup')->everyTenMinutes()->witho
 // Matcher: övergiv matcher vars tid gått ut (waiting 15 min, active 30 min utan drag) och gallra avslutade efter 7 dagar.
 Schedule::command('matches:expire')->everyFiveMinutes()->withoutOverlapping(5);
 Schedule::command('matches:prune --days=7')->dailyAt('05:00');
+
+// Matcher: invarianter över senaste dygnets matcher (seq utan hål, uppspelning = lagrad state, ingen dold state kvar efter slut). Larmar i loggen och med exit 1.
+Schedule::command('matches:check-invariants')->hourly()->withoutOverlapping(30);

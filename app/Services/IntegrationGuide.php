@@ -665,7 +665,7 @@ class IntegrationGuide
             $lines[] = '';
             $lines[] = 'Rulesets available to this game: '.($rulesets === [] ? 'none' : implode(', ', array_map(fn ($r) => '`'.self::code($r).'`', $rulesets))).'. Any other ruleset gets 403 `ruleset_not_allowed`.';
             $lines[] = '';
-            $lines[] = '**Games built from the build guide use the client module `matches` (build guide v3) and never call these routes directly.** The module polls, handles ETag, `version`, backoff and errors. The routes below are for reference.';
+            $lines[] = '**Games built from the build guide use its `matches` client module when their build guide version has one (planned for v3). Until then, do not call these routes directly; ask Computercat (the platform team) instead.** The module will poll and handle ETag, `version`, backoff and errors. The routes below are for reference.';
             $lines[] = '';
             $lines[] = 'All routes need `Authorization: Bearer <token>`.';
             $lines[] = '';
@@ -692,7 +692,7 @@ class IntegrationGuide
             $lines[] = '- Base events: `left` (a player left), `expired` (the match timed out), `rematch_requested` and `rematch` with `{match_id}` in the payload. The seat the event concerns is in the event\'s `seat` field. Rulesets add their own events.';
             $lines[] = '';
             $lines[] = '### Polling';
-            $lines[] = '- Poll `GET /matches/{id}` every 1.5 s and pause while the tab is hidden (`visibilitychange`). The client module also backs off to 5 s on network errors.';
+            $lines[] = '- Poll `GET /matches/{id}` every 1.5 s and pause while the tab is hidden (`visibilitychange`). The client module (when available) also backs off to 5 s on network errors.';
             $lines[] = '- The response has an `ETag` (`{version}-{c0}{c1}`: the version plus whether seat 0 and 1 are connected). Send it back as `If-None-Match`; unchanged gives `304` with no body. The responses from join, actions, leave, rematch and invite carry the same `ETag` as a poll would.';
             $lines[] = "- With `fetch`, send `If-None-Match` yourself and use `cache: 'no-store'`, so the browser cache neither answers for the server nor turns a 304 into a cached 200. `ETag` and `Retry-After` are exposed via CORS, so the game can read them.";
             $lines[] = '- Connection status is part of the ETag, so you also learn when the opponent drops without any move being made.';
