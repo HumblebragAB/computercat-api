@@ -5,7 +5,7 @@ topic: security
 tags: [spärr, cc-gate, bygge, coolify, säkerhetskontroll, demo, audit]
 summary: Vad scripts/cc-gate.mjs kontrollerar och i vilken ordning, varför repot inte kan stänga av den och vad den inte skyddar mot.
 updated: "2026-10-14"
-build_guide: [v2]
+build_guide: [v2, v3]
 ---
 
 ## Regel

@@ -4,8 +4,8 @@ title: Säkerhetsreglerna i lint
 topic: security
 tags: [lint, eslint, dangerouslySetInnerHTML, eval, process.env, regel]
 summary: Lint förbjuder dangerouslySetInnerHTML, eval, new Function, timers med sträng och process.env utöver tre namn. Stäng aldrig av en regel.
-updated: "2026-10-14"
-build_guide: [v2]
+updated: "2026-10-16"
+build_guide: [v2, v3]
 ---
 
 ## Regel
@@ -30,6 +30,8 @@ I `src/**/*.{ts,tsx}` fäller dessutom varje åtkomst till `process.env` som int
 - Tillåtet: `process.env.NODE_ENV`, `process.env.NEXT_PUBLIC_COMPUTERCAT_GAME`, `process.env.NEXT_PUBLIC_COMPUTERCAT_URL`.
 - Fäller: hakparentes (`process.env['NEXT_PUBLIC_COMPUTERCAT_GAME']`), destrukturering (`const { X } = process.env`), alias (`const env = process.env`) och spridning (`{ ...process.env }`).
 
+I byggguide v3 gäller dessutom, i `src/**/*.{ts,tsx}` utom testfiler: identifieraren `process` får bara stå som `process.env`, och ingen egenskap eller destrukturering får heta `process`. Det fäller `const { env } = process`, `const p = process`, `self['process'].env`, `globalThis.process.env` (även `NODE_ENV`) och `const { process: p } = globalThis`. Testfiler får läsa `process.cwd()`. `ios/` ignoreras av lint (Capacitor kopierar exporten dit). Meddelandena säger `(byggguide v3)` i ett v3-spel.
+
 `test/eslintRules.test.ts` lintar varje fall ovan med projektets riktiga konfiguration och visar att det fäller. Felmeddelandena säger vad som gäller, till exempel `Läs bara process.env.NODE_ENV, process.env.NEXT_PUBLIC_COMPUTERCAT_GAME och process.env.NEXT_PUBLIC_COMPUTERCAT_URL, direkt med punkt (byggguide v2). Inga alias, destrukturering, spridning eller hakparentes.`
 
 Behöver spelet en ny publik variabel eller HTML från en källa: det rör säkerhet, så fråga en människa innan du bygger.
@@ -37,6 +39,7 @@ Behöver spelet en ny publik variabel eller HTML från en källa: det rör säke
 ## Källa
 
 - resources/byggguide/v2/files/eslint.config.mjs
+- resources/byggguide/v3/files/eslint.config.mjs
 - test/eslintRules.test.ts
 - resources/byggguide/v2/files/CLAUDE.md
 - resources/byggguide/v2/files/package.json

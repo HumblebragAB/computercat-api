@@ -5,7 +5,7 @@ topic: security
 tags: [bygget föll, fel, cc-gate, check-security, cc-audit, deploy_failed, spärr]
 summary: Varje felrad från scripts/cc-gate.mjs och hur den rättas. Rätta alltid källan, aldrig out/, och tysta aldrig ett fynd.
 updated: "2026-10-14"
-build_guide: [v2]
+build_guide: [v2, v3]
 ---
 
 ## Regel

@@ -4,7 +4,7 @@ title: Resultat köas lokalt och skickas i bakgrunden
 topic: practice
 tags: [offline, kö, recordScore, flushed, resultat, topplista, bakgrund]
 summary: recordScore köar resultatet lokalt och skickar det i bakgrunden. Visa flushed-resultatet, dölj aldrig fel, visa aldrig påhittad topplistedata och fånga att recordScore kan kasta.
-updated: "2026-10-14"
+updated: "2026-10-16"
 ---
 
 ## Regel
@@ -23,7 +23,7 @@ Resultatet sparas först i en kö i webbläsarens lagring (`computercat:<spel>:s
    - `remaining` över 0: resultatet ligger kvar i kön och skickas när nätet är tillbaka. Säg det till spelaren.
    - annars: resultatet är skickat. Hämta topplistan igen.
    - Avvisas löftet: visa felet med `describeError(e)`.
-3. Kön töms av `BackgroundSync`, som `src/app/layout.tsx` monterar: vid start, vid händelsen `online` och varje minut. Du behöver inte bygga någon egen omsändning.
+3. Kön töms av `BackgroundSync`, som `src/app/layout.tsx` monterar: vid start, vid händelsen `online` och varje minut. Du behöver inte bygga någon egen omsändning. I byggguide v3 tömmer `BackgroundSync` både resultatkön och achievementkön med `flushAll()` (se `practice-achievements`).
 4. Vad som händer med en post i kön:
    - nätverksfel, 5xx, 401, 408 och 429 är tillfälliga: posten ligger kvar och kön försöker igen senare, i samma ordning
    - andra 4xx och oväntade fel: posten tas bort och hamnar i `dropped` med skälet

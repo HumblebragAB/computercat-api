@@ -5,7 +5,7 @@ topic: security
 tags: [csp, typsnitt, font, extern, cdn, bild, stilmall, policy]
 summary: Byggguidens CSP tillåter bara samma ursprung (och Computercats API för anrop). Externa skript, stilmallar, bilder och typsnitt fäller bygget.
 updated: "2026-10-14"
-build_guide: [v2]
+build_guide: [v2, v3]
 ---
 
 ## Regel

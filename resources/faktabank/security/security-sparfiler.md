@@ -5,7 +5,7 @@ topic: security
 tags: [sparning, sparfil, saves, molnsparning, version, merge, personuppgifter]
 summary: Vad en molnsparning är (JSON, högst 512 KB, version), hur konflikter slås ihop, att ägande och hemligheter inte hör hemma där och att personuppgifter kräver en människas beslut.
 updated: "2026-10-14"
-build_guide: [v1, v2]
+build_guide: [v1, v2, v3]
 ---
 
 ## Regel

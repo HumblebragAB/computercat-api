@@ -4,8 +4,8 @@ title: npm run check före varje push
 topic: testing
 tags: [check, push, typkontroll, lint, bygge, kontroll]
 summary: npm run check kör typkontroll, lint, test, bygge, kontrollen av out/ och säkerhetsspärren. Den ska vara grön före varje push, och byggguidens testfiler ändras inte.
-updated: "2026-10-14"
-build_guide: [v2]
+updated: "2026-10-16"
+build_guide: [v2, v3]
 ---
 
 ## Regel
@@ -27,12 +27,14 @@ Testfilerna i `test/` och `src/lib/computercat/` är byggguidens filer. Varje fi
    4. `npm run build` med `NEXT_TELEMETRY_DISABLED=1`
    5. `node scripts/check-export.mjs`: `out/index.html` finns, och är `NEXT_PUBLIC_COMPUTERCAT_GAME` satt finns slugen i en JS-fil under `out/_next`
    6. `node scripts/cc-gate.mjs`: säkerhetsspärren (hemligheter, source maps, dolda filer, CSP, externa resurser, sedan `npm audit`)
+   7. i byggguide v3: `node scripts/check-ios.mjs`: kontrollerar spelets iOS-projekt (bundle-id, exportdeklaration, version och byggnummer från bygget, Swift Package Manager, inga certifikat eller nycklar); utan `ios/` finns inget att kontrollera
 2. Kör sedan `npm audit --omit=dev --audit-level=high`. Vid high eller critical: `npm audit fix` eller uppdatera paketet. Tysta aldrig.
 3. Testerna som följer med byggguiden ändras inte och tas inte bort, bland annat:
    - `test/security.test.ts` (säkerhetsdelen i `cc-gate.mjs`)
    - `test/ccAudit.test.ts` (audit-delen i `cc-gate.mjs`)
    - `test/eslintRules.test.ts` (säkerhetsreglerna i eslint)
    - `test/docs.test.ts` (idé-markörerna i `README.md` och reglerna i `CLAUDE.md`)
+   - `test/iosSetup.test.ts` (iOS-skripten, byggguide v3)
    - testerna bredvid klientkoden i `src/lib/computercat/`
 4. Undantaget är exemplets test `src/game/exampleDocs.test.ts`, som tas bort tillsammans med exemplet (se `stack-samma-upplagg`).
 5. Blir en kontroll röd utan att du ändrat något: stanna och beskriv felet. Felet hör hemma i computercat-api. Faller bygget i Coolify: se `security-ratta-sparrfel`.
@@ -47,3 +49,5 @@ Testfilerna i `test/` och `src/lib/computercat/` är byggguidens filer. Varje fi
 - test/ccAudit.test.ts
 - test/eslintRules.test.ts
 - test/docs.test.ts
+- resources/byggguide/v3/files/scripts/check-ios.mjs
+- resources/byggguide/v3/files/test/iosSetup.test.ts

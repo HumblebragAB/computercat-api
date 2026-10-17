@@ -5,7 +5,7 @@ topic: process
 tags: [fråga, människa, erik, beslut, gissa, stanna]
 summary: Fråga en människa i stället för att gissa när serverlogik saknas, vid stora beslut som ingen artikel täcker, när byggguidens kontroller faller utan din ändring och när en lint-regel står i vägen.
 updated: "2026-10-14"
-build_guide: [v1, v2]
+build_guide: [v1, v2, v3]
 ---
 
 ## Regel

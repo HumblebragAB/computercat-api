@@ -49,10 +49,29 @@ class FactBankContentTest extends TestCase
             'offline kö' => 'practice-offline-kon', 'fråga en människa' => 'process-fraga-manniska',
             'skicka till testflight' => 'process-slappflode', 'höja version package.json' => 'process-slappflode',
             'bundle-id app store' => 'process-slapp-engangssteg',
+            'rapportera achievements' => 'practice-achievements', 'unknown rejected upplåsning' => 'practice-achievements',
+            'ios-projekt capacitor' => 'process-ios-capacitor', 'ios-setup' => 'process-ios-capacitor',
+            'tvåspelarmatch' => 'practice-matcher', 'matcher stale' => 'practice-matcher',
         ] as $query => $id) {
             $this->assertSame($id, $bank->search($query)[0]['id'] ?? null, $query);
         }
         $this->assertSame('security-hemligheter-i-klienten', $bank->search('api-nyckel hemlighet')[0]['id']);
         $this->assertSame('process-ide-till-live', $bank->search('request_live')[0]['id']);
+    }
+
+    // Byggguide v3: artiklarna som gällde v2 gäller också v3, och de nya gäller bara v3.
+    public function test_v2_articles_also_apply_to_v3(): void
+    {
+        $bank = new FactBank;
+        foreach ($bank->all() as $fact) {
+            if (is_array($fact['build_guide']) && in_array('v2', $fact['build_guide'], true)) {
+                $this->assertContains('v3', $fact['build_guide'], $fact['id']);
+            }
+        }
+        $ids = array_column($bank->all(null, 'v3'), 'id');
+        $this->assertContains('practice-achievements', $ids);
+        $this->assertContains('process-ios-capacitor', $ids);
+        $this->assertContains('practice-matcher', $ids);
+        $this->assertNotContains('practice-achievements', array_column($bank->all(null, 'v2'), 'id'));
     }
 }

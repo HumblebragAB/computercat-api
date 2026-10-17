@@ -4,8 +4,8 @@ title: Samma upplägg i varje spel
 topic: stack
 tags: [upplägg, struktur, underhåll, byggguide, exempel, mappar, grundkod]
 summary: Byggguidens filer i src/lib/computercat/ och scripts/ ändras aldrig i spelet, exemplet byts ut enligt CLAUDE.md och serverlogik som saknas blir en PR mot computercat-api.
-updated: "2026-10-14"
-build_guide: [v2]
+updated: "2026-10-16"
+build_guide: [v2, v3]
 ---
 
 ## Regel
@@ -28,6 +28,7 @@ Grundkoden (Computercat-klienten, konfiguration, tester, säkerhetskontroller oc
    - byt `name` i `package.json` och kör sedan `npm install --package-lock-only`
    - byt lagringsnyckeln `spelmall-click` (prefixet i `src/game/clickStore.ts`) till spelets namn
 5. Låt de två raderna `computercat:idea` i `README.md` vara kvar. `test/docs.test.ts` kontrollerar att det finns exakt en start- och en slutmarkör, i rätt ordning och på egna rader.
+6. I byggguide v3 har spelet två egna filer som inte står i manifestet: `capacitor.config.ts` och `ios/`. De skapas en gång med `node scripts/ios-setup.mjs` och ändras inte för hand (se `process-ios-capacitor`).
 
 ## Källa
 
