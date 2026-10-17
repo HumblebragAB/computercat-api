@@ -175,9 +175,13 @@ function mergeEvents(a: MatchEvent[], b: MatchEvent[]): MatchEvent[] {
 /** Retry-After begränsas till 1–60 s, så att ett orimligt värde inte fryser bevakningen. */
 export const RETRY_AFTER_MAX_S = 60;
 
-/** Djupfryst kopia till spelet: det kan inte ändra bevakningens interna sammanslagning. */
+/**
+ * Djupfryst kopia till spelet: det kan inte ändra bevakningens interna sammanslagning.
+ * Ögonblicksbilden är ren JSON (parseSnapshot), så en JSON-kopia räcker. Kastar kopieringen
+ * fångas det i poll och går till onError som `shape`.
+ */
 function frozenCopy<T>(value: T): T {
-  const copy = structuredClone(value);
+  const copy = JSON.parse(JSON.stringify(value)) as T;
   const freeze = (v: unknown): void => {
     if (typeof v !== 'object' || v === null || Object.isFrozen(v)) return;
     Object.freeze(v);
@@ -279,10 +283,11 @@ export function createMatches(game: string, deps: MatchesDeps) {
         console.error(`[computercat] watch.${name} kastade`, e);
       }
     }
+    /** Kastar om kopian inte går att bygga; lastEmitted sätts först efteråt, så nästa poll försöker igen. */
     function change(s: MatchSnapshot): void {
       if (stopped) return;
-      lastEmitted = { version: s.version, etag: s.etag };
       const frozen = frozenCopy(s);
+      lastEmitted = { version: s.version, etag: s.etag };
       safely('onChange', () => handlers.onChange(frozen));
     }
     function fail(e: WatchError): void {
@@ -350,7 +355,8 @@ export function createMatches(game: string, deps: MatchesDeps) {
         fail({ kind: 'gone', error: e, terminal: true });
         stop();
       } else if (status === 429 && !(e instanceof MatchError && e.code === 'too_many_active')) {
-        const retryAfter = raw instanceof ApiError ? raw.retryAfter : null;
+        // Ett Retry-After som inte är ett ändligt tal (NaN, Infinity) räknas som saknat.
+        const retryAfter = raw instanceof ApiError && Number.isFinite(raw.retryAfter) ? (raw.retryAfter as number) : null;
         fail({ kind: 'rate_limited', error: e, terminal: false });
         failing = true;
         backoff(retryAfter === null ? backoffMs : Math.min(Math.max(retryAfter, 1), RETRY_AFTER_MAX_S) * 1000);
@@ -386,11 +392,18 @@ export function createMatches(game: string, deps: MatchesDeps) {
       if (inFlight === ctrl) inFlight = null;
       // Avbruten av oss (dold flik eller stop): inget fel att rapportera, och svaret gäller inte.
       if (ctrl.signal.aborted || stopped) return;
-      if (error !== null || res === null) {
-        handleError(error);
-        return;
+      // poll körs som `void poll()`: ett fel här får aldrig bli ett ohanterat avvisat löfte som
+      // tyst stoppar bevakningen. Det går till onError och nästa poll schemaläggs (backoff).
+      try {
+        if (error !== null || res === null) handleError(error);
+        else afterResponse(res, url);
+      } catch (e) {
+        if (!stopped) seriesError('shape', e);
       }
+    }
 
+    /** Tolka ett lyckat svar (200 eller 304), skicka onChange vid behov och schemalägg nästa poll. */
+    function afterResponse(res: MetaResult<unknown>, url: string): void {
       if (res.status !== 304) {
         const snap = parseSnapshot(res.body, res.etag);
         if (!snap || snap.id !== id) {

@@ -371,13 +371,13 @@ function fakeDoc(visibilityState: 'visible' | 'hidden' = 'visible') {
   };
 }
 
+/** Varje watchSetup i testet; afterEach kräver att inget anrop saknade svar. */
+const watchFakes: ReturnType<typeof fakeFetch>[] = [];
+
 /**
  * fakeFetch plus en "hängande" variant: medan hang är satt svarar fetch aldrig förrän signalen
  * avbryts. Fångar också init (cache) per anrop.
  */
-/** Varje watchSetup i testet; afterEach kräver att inget anrop saknade svar. */
-const watchFakes: ReturnType<typeof fakeFetch>[] = [];
-
 function watchSetup(routes: Parameters<typeof fakeFetch>[0]) {
   const f = fakeFetch(routes);
   watchFakes.push(f);
@@ -759,6 +759,73 @@ describe('watch', () => {
     expect(t.f.calls).toHaveLength(2);
     await tick(1);
     expect(t.f.calls).toHaveLength(3);
+    w.stop();
+  });
+
+  it('Retry-After som inte är ett tal (abc) eller är orimligt stort ger vanlig backoff, 5000 ms', async () => {
+    const limited = (retryAfter: string) =>
+      new Response(JSON.stringify({ message: 'För många anrop.', code: 'rate_limited' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': retryAfter },
+      });
+    const t = watchSetup({ [POLL]: [limited('abc'), limited('9'.repeat(400)), withEtag(200, view(), '"7-10"')] });
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.errors).toEqual([{ kind: 'rate_limited', terminal: false, error: expect.any(MatchError) }]);
+    await tick(4999);
+    expect(t.f.calls).toHaveLength(1);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(2);
+    await tick(4999);
+    expect(t.f.calls).toHaveLength(2);
+    await tick(1);
+    expect(t.f.calls).toHaveLength(3);
+    expect(t.changes).toHaveLength(1);
+    w.stop();
+  });
+
+  it('ett icke-ändligt ApiError.retryAfter (NaN, Infinity) ger vanlig backoff', async () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      let n = 0;
+      const authedMeta = (async () => {
+        n++;
+        throw new ApiError(429, 'För många anrop.', { message: 'x' }, 'GET', `${M}/${ID}`, bad);
+      }) as unknown as Parameters<typeof createMatches>[1]['authedMeta'];
+      const m = createMatches(GAME, { authed: (async () => ({})) as unknown as Parameters<typeof createMatches>[1]['authed'], authedMeta });
+      const errors: string[] = [];
+      const d = fakeDoc();
+      const w = m.watch(ID, { onChange: () => {}, onError: (e) => void errors.push(e.kind) }, { doc: d.doc, win: d.win });
+      await tick();
+      expect(n).toBe(1);
+      await tick(4999);
+      expect(n).toBe(1);
+      await tick(1);
+      expect(n).toBe(2);
+      expect(errors[0]).toBe('rate_limited');
+      w.stop();
+    }
+  });
+
+  it('kan ögonblicksbilden inte kopieras går felet till onError (shape), och bevakningen fortsätter', async () => {
+    const t = watchSetup({ [POLL]: [withEtag(200, view(), '"7-10"')], [`${POLL}?since=12`]: [new Response(null, { status: 304 })] });
+    const real = JSON.stringify;
+    let broken = 1;
+    vi.spyOn(JSON, 'stringify').mockImplementation(function (this: unknown, ...args: Parameters<typeof JSON.stringify>) {
+      const v = args[0] as Record<string, unknown> | null;
+      if (broken > 0 && typeof v === 'object' && v !== null && 'ruleset' in v && 'yourSeat' in v) {
+        broken--;
+        throw new TypeError('kan inte kopieras');
+      }
+      return real.apply(JSON, args);
+    } as typeof JSON.stringify);
+    const w = t.m.watch(ID, t.handlers, t.watchOpts);
+    await tick();
+    expect(t.changes).toEqual([]);
+    expect(t.errors).toEqual([{ kind: 'shape', terminal: false, error: expect.any(TypeError) }]);
+    await tick(5000);
+    expect(t.f.calls).toHaveLength(2);
+    expect(t.changes.map((c) => c.version)).toEqual([7]);
+    expect(t.errors).toHaveLength(1);
     w.stop();
   });
 
