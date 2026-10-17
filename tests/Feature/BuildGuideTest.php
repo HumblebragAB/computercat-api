@@ -20,6 +20,7 @@ class BuildGuideTest extends TestCase
     private const EXPECTED = [
         'v1' => ['overrides' => ['vite' => '7.3.7']],
         'v2' => ['overrides' => ['vite' => '7.3.7']],
+        'v3' => ['overrides' => ['vite' => '7.3.7']],
     ];
 
     private ?string $tempRoot = null;
@@ -424,6 +425,19 @@ class BuildGuideTest extends TestCase
         $this->assertFalse(BuildGuide::supportsIos('v2'));
         $this->assertFalse(BuildGuide::supportsIos('v99'));
         $this->assertFalse(BuildGuide::supportsIos('../v2'));
+    }
+
+    // TestFlight-planen Task 4: v3 är den första låsta versionen som kan byggas för iOS, och den kör spärren i Coolify.
+    public function test_v3_supports_ios_and_runs_the_gate_in_the_build(): void
+    {
+        $this->assertTrue(BuildGuide::supportsIos('v3'));
+        $this->assertTrue(BuildGuide::runsSecurityChecksInBuild('v3'));
+        $this->assertSame('v3', BuildGuide::versionFromClaudeMd(BuildGuide::claudeMd('v3')));
+        config(['app.url' => 'https://api.computercat.co']);
+        $this->assertSame(
+            'npm run build && curl -fsS https://api.computercat.co/api/v1/build-guide/v3/files/scripts/cc-gate.mjs -o /tmp/cc-gate.mjs && node /tmp/cc-gate.mjs',
+            BuildGuide::coolifyBuildCommand('v3'),
+        );
     }
 
     public function test_the_ios_block_must_match_the_contract(): void
