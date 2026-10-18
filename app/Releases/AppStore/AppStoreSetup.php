@@ -251,51 +251,88 @@ final class AppStoreSetup
             if (array_key_exists($userId, $failed)) {
                 continue;
             }
+
+            return $this->tester($game, $userId, $appId, $groupId, $added, $conflict, $failed);
+        }
+
+        // Alla prövade. De som föll (och fortfarande står i konfigen) prövas igen vid nästa körning (backoff).
+        $this->remember($game, ['tester_failed' => []]);
+        throw new AppStoreSetupFailed(implode(' ', array_intersect_key($failed, array_flip($pending))));
+    }
+
+    // Ett fel som gäller just den här testaren (4xx på användaren, visibleApps eller skapandet, eller
+    // AppStoreSetupFailed) stoppar inte de andra: det sparas med användar-id och status, aldrig e-post.
+    // Anslutningsfel, 5xx, 401 och rate limit gäller alla anrop och kastas vidare (backoff för steget).
+    private function testerFailed(Game $game, string $userId, array $failed, AppStoreSetupFailed|ExternalApiException $e): string
+    {
+        if ($e instanceof ExternalApiException) {
+            if ($e->status < 400 || $e->status >= 500 || in_array($e->status, [401, 429], true) || $e->rateLimited) {
+                throw $e;
+            }
+            $reason = "App Store Connect svarade {$e->status} för användaren {$userId}; kontrollera hen i App Store Connect eller ta bort hen ur releases.app_store.tester_user_ids.";
+        } else {
+            $reason = $e->getMessage();
+        }
+        $failed[$userId] = $reason;
+        $this->remember($game, ['tester_failed' => $failed]);
+        Log::warning('TestFlight-testare kunde inte läggas till', ['game' => $game->slug, 'user_id' => $userId, 'status' => $e instanceof ExternalApiException ? $e->status : null]);
+
+        return 'more';
+    }
+
+    /** En enhet för en testare (högst fyra anrop). @return string 'more' */
+    private function tester(Game $game, string $userId, string $appId, string $groupId, array $added, array $conflict, array $failed): string
+    {
+        try {
             $user = $this->asc->user($userId); // e-posten registreras hos Redactor (R18)
-            $withoutConflict = array_values(array_diff($conflict, [$userId]));
+        } catch (ExternalApiException $e) {
+            return $this->testerFailed($game, $userId, $failed, $e);
+        }
+        $withoutConflict = array_values(array_diff($conflict, [$userId]));
 
-            if ($this->asc->betaGroupHasTester($groupId, $user['email'])) {
-                $this->remember($game, ['testers_added' => [...$added, $userId], 'tester_conflict' => $withoutConflict]);
-                Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
-
-                return 'more';
-            }
-
-            if (in_array($userId, $conflict, true)) {
-                $failed[$userId] = "App Store Connect vägrar lägga användaren {$userId} i TestFlight-gruppen (409) och hen finns inte i gruppen; kontrollera att hen har tillgång till appen och en roll som får testa internt, eller ta bort hen ur releases.app_store.tester_user_ids.";
-                $this->remember($game, ['tester_conflict' => $withoutConflict, 'tester_failed' => $failed]);
-
-                return 'more';
-            }
-
-            if (! $user['all_apps_visible'] && ! $this->asc->userCanSeeApp($userId, $appId)) {
-                $failed[$userId] = "Användaren {$userId} har inte tillgång till appen i App Store Connect; ge åtkomst eller ta bort hen ur releases.app_store.tester_user_ids.";
-                $this->remember($game, ['tester_failed' => $failed]);
-
-                return 'more';
-            }
-
-            try {
-                $this->asc->createBetaTester($user['email'], $groupId);
-            } catch (ExternalApiException $e) {
-                if ($e->status !== 409) {
-                    throw $e;
-                }
-                // Apple dokumenterar inte vad 409 betyder här; medlemslistan avgör i nästa enhet.
-                $this->remember($game, ['tester_conflict' => [...$withoutConflict, $userId]]);
-                Log::warning('TestFlight-testare: 409, läses tillbaka', ['game' => $game->slug, 'user_id' => $userId]);
-
-                return 'more';
-            }
+        // Gruppens medlemslista gäller alla testare: ett fel här kastas vidare.
+        if ($this->asc->betaGroupHasTester($groupId, $user['email'])) {
             $this->remember($game, ['testers_added' => [...$added, $userId], 'tester_conflict' => $withoutConflict]);
             Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
 
             return 'more';
         }
 
-        // Alla prövade. De som föll prövas igen vid nästa körning (efter backoff).
-        $this->remember($game, ['tester_failed' => []]);
-        throw new AppStoreSetupFailed(implode(' ', $failed));
+        if (in_array($userId, $conflict, true)) {
+            $failed[$userId] = "App Store Connect vägrar lägga användaren {$userId} i TestFlight-gruppen (409) och hen finns inte i gruppen; kontrollera att hen har tillgång till appen och en roll som får testa internt, eller ta bort hen ur releases.app_store.tester_user_ids.";
+            $this->remember($game, ['tester_conflict' => $withoutConflict, 'tester_failed' => $failed]);
+
+            return 'more';
+        }
+
+        try {
+            $sees = $user['all_apps_visible'] || $this->asc->userCanSeeApp($userId, $appId);
+        } catch (AppStoreSetupFailed|ExternalApiException $e) {
+            return $this->testerFailed($game, $userId, $failed, $e);
+        }
+        if (! $sees) {
+            $failed[$userId] = "Användaren {$userId} har inte tillgång till appen i App Store Connect; ge åtkomst eller ta bort hen ur releases.app_store.tester_user_ids.";
+            $this->remember($game, ['tester_failed' => $failed]);
+
+            return 'more';
+        }
+
+        try {
+            $this->asc->createBetaTester($user['email'], $groupId);
+        } catch (ExternalApiException $e) {
+            if ($e->status !== 409) {
+                return $this->testerFailed($game, $userId, $failed, $e);
+            }
+            // Apple dokumenterar inte vad 409 betyder här; medlemslistan avgör i nästa enhet.
+            $this->remember($game, ['tester_conflict' => [...$withoutConflict, $userId]]);
+            Log::warning('TestFlight-testare: 409, läses tillbaka', ['game' => $game->slug, 'user_id' => $userId]);
+
+            return 'more';
+        }
+        $this->remember($game, ['testers_added' => [...$added, $userId], 'tester_conflict' => $withoutConflict]);
+        Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
+
+        return 'more';
     }
 
     private function remember(Game $game, array $ids): void

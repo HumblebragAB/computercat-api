@@ -388,7 +388,7 @@ class TestFlightBuilderTest extends TestCase
         $this->processing();
         $this->fake([
             A::API.'/v1/builds?*' => Http::response(A::many(A::build('build-uuid-1', 5, 'VALID'))),
-            A::API.'/v1/users/*' => Http::response(A::error(403, 'FORBIDDEN_ERROR', 'not allowed'), 403),
+            A::API.'/v1/users/*' => Http::response(A::error(500, 'UNEXPECTED_ERROR', 'down'), 500),
         ]);
 
         $this->assertNull($this->advance()); // kön är sync i testerna: testarjobbet körs här och faller
@@ -397,7 +397,7 @@ class TestFlightBuilderTest extends TestCase
         $this->assertNull($this->fresh()->last_error);
         $step = ReleaseSetupStep::where('game_id', $this->game->id)->where('key', 'appstore_testflight_testers')->first();
         $this->assertSame('open', $step->status);
-        $this->assertStringContainsString('403', $step->last_error);
+        $this->assertStringContainsString('500', $step->last_error);
         $this->assertNotNull($step->retry_at);
     }
 

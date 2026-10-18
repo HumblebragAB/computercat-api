@@ -12,6 +12,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AppStoreFakes as A;
 use Tests\Support\AssertsNoHttpInTransaction;
 use Tests\Support\CreatesReleases;
@@ -102,7 +104,7 @@ class AppStoreSetupTest extends TestCase
         return [A::API.'/v1/betaGroups/'.A::GROUP.'/betaTesters?*' => Http::response(A::many(...array_map(fn ($e) => A::betaTester($e, 'm-'.md5($e)), $emails)))];
     }
 
-    private function testers_step($game): ReleaseSetupStep
+    private function findTestersStep($game): ReleaseSetupStep
     {
         return ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_testflight_testers')->firstOrFail();
     }
@@ -116,7 +118,7 @@ class AppStoreSetupTest extends TestCase
 
         $this->assertSame([], app(AppStoreSetup::class)->run($game->fresh()));
         Http::assertNothingSent();
-        $this->assertSame('open', $this->testersStep($game)->status);
+        $this->assertSame('open', $this->findTestersStep($game)->status);
     }
 
     public function test_testers_are_created_in_the_group_after_a_valid_build(): void
@@ -134,7 +136,7 @@ class AppStoreSetupTest extends TestCase
             && $r->data()['data']['relationships']['betaGroups']['data'] === [['type' => 'betaGroups', 'id' => A::GROUP]]);
         // Den länkade vägen (POST relationships/betaTesters med en teamövergripande testare) används aldrig.
         Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/relationships/betaTesters'));
-        $this->assertSame('done', $this->testersStep($game)->status);
+        $this->assertSame('done', $this->findTestersStep($game)->status);
         // R18: inga e-postadresser i loggen, varken råa eller URL-kodade.
         foreach (['notice', 'info', 'warning', 'error'] as $level) {
             Log::shouldNotHaveReceived($level, fn (...$args) => preg_match('/example\.test|%40example/', json_encode($args)) === 1);
@@ -154,7 +156,7 @@ class AppStoreSetupTest extends TestCase
         Http::assertSentCount(5); // erik: user + medlemmar; mattias: user + medlemmar + create
         Http::assertSent(fn (Request $r) => $r->method() === 'POST' && ($r->data()['data']['attributes']['email'] ?? null) === 'mattias@example.test');
         Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && ($r->data()['data']['attributes']['email'] ?? null) === 'erik@example.test');
-        $this->assertSame('done', $this->testersStep($game)->status);
+        $this->assertSame('done', $this->findTestersStep($game)->status);
     }
 
     public function test_tester_without_access_to_the_app_gets_an_actionable_error_and_the_others_are_added(): void
@@ -177,11 +179,99 @@ class AppStoreSetupTest extends TestCase
 
         Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && ($r->data()['data']['attributes']['email'] ?? null) === 'erik@example.test');
         Http::assertSent(fn (Request $r) => $r->method() === 'POST' && ($r->data()['data']['attributes']['email'] ?? null) === 'mattias@example.test');
-        $step = $this->testersStep($game);
+        $step = $this->findTestersStep($game);
         $this->assertSame('open', $step->status);
         $this->assertStringContainsString($erik, $step->last_error);
         $this->assertStringNotContainsString('example.test', $step->last_error);
         $this->assertSame([$mattias], $game->fresh()->app_store_ids['testers_added']);
+    }
+
+    public function test_a_4xx_on_one_tester_does_not_block_the_next(): void
+    {
+        $game = $this->gameWithValidBuild();
+        [$erik, $mattias] = A::TESTER_IDS;
+        Http::fake($this->members() + [
+            A::API.'/v1/users/'.$erik.'?*' => Http::response(A::error(404, 'NOT_FOUND', 'There is no resource of type users with id'), 404),
+            A::API.'/v1/users/'.$mattias.'?*' => Http::response(A::one(A::user($mattias, 'mattias@example.test'))),
+            A::API.'/v1/betaTesters' => Http::response(A::one(A::betaTester('mattias@example.test', 't-2')), 201),
+        ]);
+
+        try {
+            app(AppStoreSetup::class)->run($game);
+            $this->fail('Felet kastades inte.');
+        } catch (AppStoreSetupFailed $e) {
+            $this->assertStringContainsString("App Store Connect svarade 404 för användaren {$erik}", $e->getMessage());
+        }
+        $this->assertSame([$mattias], $game->fresh()->app_store_ids['testers_added']);
+        Http::assertSent(fn (Request $r) => $r->method() === 'POST' && ($r->data()['data']['attributes']['email'] ?? null) === 'mattias@example.test');
+    }
+
+    public function test_a_4xx_on_create_does_not_block_the_next(): void
+    {
+        $game = $this->gameWithValidBuild();
+        [$erik, $mattias] = A::TESTER_IDS;
+        Http::fake($this->users() + $this->members() + [
+            A::API.'/v1/betaTesters' => Http::sequence()
+                ->push(A::error(422, 'ENTITY_ERROR', 'invalid'), 422)
+                ->push(A::one(A::betaTester('mattias@example.test', 't-2')), 201),
+        ]);
+
+        try {
+            app(AppStoreSetup::class)->run($game);
+            $this->fail('Felet kastades inte.');
+        } catch (AppStoreSetupFailed $e) {
+            $this->assertStringContainsString("svarade 422 för användaren {$erik}", $e->getMessage());
+            $this->assertStringNotContainsString('example.test', $e->getMessage());
+        }
+        $this->assertSame([$mattias], $game->fresh()->app_store_ids['testers_added']);
+    }
+
+    public static function sharedFailures(): array
+    {
+        return ['500' => [500], '429' => [429], '401' => [401]];
+    }
+
+    #[DataProvider('sharedFailures')]
+    public function test_server_errors_and_rate_limits_stop_the_whole_step(int $status): void
+    {
+        $game = $this->gameWithValidBuild();
+        Http::fake([A::API.'/v1/users/*' => Http::response(A::error($status, 'ERR', 'x'), $status)]);
+
+        try {
+            app(AppStoreSetup::class)->runOne($game);
+            $this->fail("{$status} kastades inte vidare.");
+        } catch (ExternalApiException $e) {
+            $this->assertSame($status, $e->status);
+        }
+        Http::assertSentCount(1); // nästa testare prövas inte
+        $this->assertSame([], (array) ($game->fresh()->app_store_ids['tester_failed'] ?? []));
+        $this->assertNotNull($this->findTestersStep($game)->retry_at);
+    }
+
+    public function test_the_combined_error_names_only_testers_still_configured(): void
+    {
+        $game = $this->gameWithValidBuild();
+        $erik = A::TESTER_IDS[0];
+        config(['releases.app_store.tester_user_ids' => [$erik]]);
+        $game->forceFill(['app_store_ids' => $game->app_store_ids + ['tester_failed' => ['00000000-0000-4000-8000-0000000000ff' => 'Användaren borttagen föll.']]])->save();
+        Http::fake($this->members() + [A::API.'/v1/users/'.$erik.'?*' => Http::response(A::error(404, 'NOT_FOUND', 'x'), 404)]);
+
+        try {
+            app(AppStoreSetup::class)->run($game->fresh());
+            $this->fail('Felet kastades inte.');
+        } catch (AppStoreSetupFailed $e) {
+            $this->assertStringContainsString($erik, $e->getMessage());
+            $this->assertStringNotContainsString('borttagen', $e->getMessage());
+        }
+    }
+
+    public function test_the_migration_can_run_again_after_a_partial_failure(): void
+    {
+        $migration = require database_path('migrations/2026_10_18_100001_add_backoff_and_testers_step_to_release_setup_steps.php');
+
+        $migration->up(); // kolumnerna finns redan (RefreshDatabase): inget fel
+
+        $this->assertTrue(Schema::hasColumns('release_setup_steps', ['failed_attempts', 'retry_at']));
     }
 
     public function test_tester_with_the_app_among_visible_apps_is_created(): void
@@ -232,7 +322,7 @@ class AppStoreSetupTest extends TestCase
         }
         Http::assertSentCount(5);
         $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => $pair[0]->method() === 'POST'));
-        $this->assertSame('open', $this->testersStep($game)->status);
+        $this->assertSame('open', $this->findTestersStep($game)->status);
     }
 
     public function test_a_failed_tester_is_tried_again_on_the_next_run(): void
@@ -253,7 +343,7 @@ class AppStoreSetupTest extends TestCase
         }
         // Erik ger åtkomst; nästa körning försöker igen.
         $this->assertSame(['appstore_testflight_testers'], app(AppStoreSetup::class)->run($game->fresh()));
-        $step = $this->testersStep($game);
+        $step = $this->findTestersStep($game);
         $this->assertNull($step->last_error);
         $this->assertSame(0, $step->failed_attempts);
         $this->assertNull($step->retry_at);

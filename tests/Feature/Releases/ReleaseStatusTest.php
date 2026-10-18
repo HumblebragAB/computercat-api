@@ -80,6 +80,18 @@ class ReleaseStatusTest extends TestCase
         $this->assertNull(collect($target['setup_steps'])->firstWhere('key', 'appstore_bundle_id')['last_error']);
     }
 
+    public function test_a_passed_retry_time_is_not_shown_as_next_attempt(): void
+    {
+        $game = $this->testFlightGame();
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_testflight_testers')
+            ->update(['status' => 'open', 'last_error' => 'fel', 'retry_at' => now()->subMinute()]);
+
+        $step = collect($this->statusOf($game)['targets']['app_store']['setup_steps'])->firstWhere('key', 'appstore_testflight_testers');
+
+        $this->assertNull($step['next_attempt_at']);
+        $this->assertSame('fel', $step['last_error']);
+    }
+
     public function test_no_demo_build_yet(): void
     {
         $game = $this->releasableGame();

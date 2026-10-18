@@ -17,9 +17,14 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Idempotent: MySQL kör DDL utan transaktion, så en migration som föll halvvägs körs om utan fel.
         Schema::table('release_setup_steps', function (Blueprint $table) {
-            $table->unsignedSmallInteger('failed_attempts')->default(0)->after('last_error');
-            $table->timestamp('retry_at')->nullable()->after('failed_attempts');
+            if (! Schema::hasColumn('release_setup_steps', 'failed_attempts')) {
+                $table->unsignedSmallInteger('failed_attempts')->default(0)->after('last_error');
+            }
+            if (! Schema::hasColumn('release_setup_steps', 'retry_at')) {
+                $table->timestamp('retry_at')->nullable()->after('failed_attempts');
+            }
         });
 
         $this->syncAppStoreSteps();
