@@ -19,7 +19,8 @@ final class SetupSteps
             'appstore_bundle_id' => 'Computercat registrerar bundle-id {bundle_id} i App Store Connect via API.',
             'appstore_profile' => 'Computercat skapar App Store-profilen för {bundle_id} via API.',
             'appstore_create_app' => 'Erik skapar appen i App Store Connect (Appar, +, Ny app): plattform iOS, namn {name}, primärspråk svenska, bundle-id {bundle_id}, SKU {sku}, användaråtkomst full åtkomst. Är namnet upptaget väljer Erik ett annat. Computercat ser själv när appen finns.',
-            'appstore_testflight_group' => 'Computercat skapar den interna TestFlight-gruppen ComputerCat intern och lägger till testarna via API.',
+            'appstore_testflight_group' => 'Computercat skapar den interna TestFlight-gruppen ComputerCat intern via API.',
+            'appstore_testflight_testers' => 'Computercat lägger till testarna i TestFlight-gruppen via API efter första giltiga TestFlight-bygget. Stoppar inget släpp; ett fel syns här och försöks igen.',
             'appstore_privacy_and_age' => 'Erik fyller i appens integritetsuppgifter och åldersgräns i App Store Connect. Krävs före App Store, inte före TestFlight.',
         ],
         'play_store' => [
@@ -30,13 +31,13 @@ final class SetupSteps
     ];
 
     /** Steg som Computercat själv gör (etapp 2). De kan inte bockas av för hand i Filament. */
-    public const AUTOMATIC = ['appstore_bundle_id', 'appstore_profile', 'appstore_testflight_group'];
+    public const AUTOMATIC = ['appstore_bundle_id', 'appstore_profile', 'appstore_testflight_group', 'appstore_testflight_testers'];
 
     /** Eriks steg som Computercat kontrollerar mot Apple innan de räknas som klara (R8). */
     public const VERIFIED = ['appstore_create_app'];
 
-    /** Steg som bara stoppar vissa steg (R6). Ett steg som saknas här stoppar alla målets steg. */
-    public const BLOCKS = ['appstore_privacy_and_age' => ['app_store']];
+    /** Steg som bara stoppar vissa steg (R6). Ett steg som saknas här stoppar alla målets steg; testarna stoppar inget. */
+    public const BLOCKS = ['appstore_privacy_and_age' => ['app_store'], 'appstore_testflight_testers' => []];
 
     public static function render(string $template, Game $game): string
     {

@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Releases;
 
+use App\Jobs\RunAppStoreSetup;
 use App\Models\Game;
 use App\Models\Release;
+use App\Models\ReleaseSetupStep;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use App\Releases\TestFlight\ReleaseFailed;
@@ -365,6 +367,49 @@ class TestFlightBuilderTest extends TestCase
         $this->assertSame(['1.2.0', 5, 4711], [$this->fresh()->marketing_version, $this->fresh()->build_number, $this->fresh()->external['github_run_id']]);
         $this->assertSame('build-uuid-1', $this->fresh()->external['apple_build_id']);
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/relationships/builds') && $r->data() === ['data' => [['type' => 'builds', 'id' => 'build-uuid-1']]]);
+    }
+
+    public function test_first_valid_build_queues_the_testers_step(): void
+    {
+        Queue::fake();
+        ReleaseSetupStep::where('game_id', $this->game->id)->where('key', 'appstore_testflight_testers')->update(['status' => ReleaseSetupStep::OPEN]);
+        $this->processing();
+        $this->fake([A::API.'/v1/builds?*' => Http::response(A::many(A::build('build-uuid-1', 5, 'VALID')))]);
+
+        $this->assertNull($this->advance());
+
+        $this->assertSame(Release::SUCCEEDED, $this->fresh()->status);
+        Queue::assertPushed(RunAppStoreSetup::class, fn ($job) => $job->gameId === $this->game->id);
+    }
+
+    public function test_tester_problems_never_fail_the_release(): void
+    {
+        ReleaseSetupStep::where('game_id', $this->game->id)->where('key', 'appstore_testflight_testers')->update(['status' => ReleaseSetupStep::OPEN]);
+        $this->processing();
+        $this->fake([
+            A::API.'/v1/builds?*' => Http::response(A::many(A::build('build-uuid-1', 5, 'VALID'))),
+            A::API.'/v1/users/*' => Http::response(A::error(403, 'FORBIDDEN_ERROR', 'not allowed'), 403),
+        ]);
+
+        $this->assertNull($this->advance()); // kön är sync i testerna: testarjobbet körs här och faller
+
+        $this->assertSame(Release::SUCCEEDED, $this->fresh()->status);
+        $this->assertNull($this->fresh()->last_error);
+        $step = ReleaseSetupStep::where('game_id', $this->game->id)->where('key', 'appstore_testflight_testers')->first();
+        $this->assertSame('open', $step->status);
+        $this->assertStringContainsString('403', $step->last_error);
+        $this->assertNotNull($step->retry_at);
+    }
+
+    public function test_no_testers_job_when_the_testers_step_is_done(): void
+    {
+        Queue::fake();
+        $this->processing();
+        $this->fake([A::API.'/v1/builds?*' => Http::response(A::many(A::build('build-uuid-1', 5, 'VALID')))]);
+
+        $this->advance();
+
+        Queue::assertNotPushed(RunAppStoreSetup::class);
     }
 
     public function test_full_path_from_requested_to_succeeded(): void // Invariant 3

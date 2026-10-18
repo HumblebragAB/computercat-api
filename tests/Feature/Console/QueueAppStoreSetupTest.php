@@ -3,6 +3,7 @@
 namespace Tests\Feature\Console;
 
 use App\Jobs\RunAppStoreSetup;
+use App\Models\Release;
 use App\Models\ReleaseSetupStep;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -70,6 +71,45 @@ class QueueAppStoreSetupTest extends TestCase
         $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
 
         Queue::assertNothingPushed();
+    }
+
+    public function test_a_step_in_backoff_is_not_queued_until_it_is_due(): void
+    {
+        $game = $this->testFlightGame('kattsvep');
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_profile')
+            ->update(['status' => ReleaseSetupStep::OPEN, 'last_error' => 'App Store Connect returned 409', 'failed_attempts' => 2, 'retry_at' => now()->addMinutes(20)]);
+
+        $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
+        Queue::assertNothingPushed();
+
+        $this->travel(21)->minutes();
+        $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
+        Queue::assertPushed(RunAppStoreSetup::class, fn ($job) => $job->gameId === $game->id);
+    }
+
+    public function test_a_later_step_does_not_bypass_the_backoff_of_the_step_that_runs_first(): void
+    {
+        $game = $this->testFlightGame('kattsvep');
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_bundle_id')
+            ->update(['status' => ReleaseSetupStep::OPEN, 'failed_attempts' => 1, 'retry_at' => now()->addMinutes(10)]);
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_create_app')->update(['status' => ReleaseSetupStep::OPEN]);
+
+        $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_testers_are_queued_only_after_a_valid_build(): void
+    {
+        $game = $this->testFlightGame('kattsvep');
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_testflight_testers')->update(['status' => ReleaseSetupStep::OPEN]);
+
+        $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
+        Queue::assertNothingPushed();
+
+        $this->release($game, ['target' => 'app_store', 'stage' => 'testflight', 'status' => Release::SUCCEEDED, 'marketing_version' => '1.0.0', 'build_number' => 1]);
+        $this->artisan('computercat:queue-app-store-setup')->assertSuccessful();
+        Queue::assertPushed(RunAppStoreSetup::class, fn ($job) => $job->gameId === $game->id);
     }
 
     public function test_nothing_is_queued_when_app_store_connect_is_not_configured(): void

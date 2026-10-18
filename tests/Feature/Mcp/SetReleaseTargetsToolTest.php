@@ -163,7 +163,19 @@ class SetReleaseTargetsToolTest extends McpTestCase
         $result = $this->set('web,app_store');
 
         $keys = array_column(json_decode($result['text'], true)['open_setup_steps'], 'key');
-        $this->assertSame(['web_public_address', 'appstore_bundle_id', 'appstore_profile', 'appstore_create_app', 'appstore_testflight_group', 'appstore_privacy_and_age'], $keys);
+        $this->assertSame(['web_public_address', 'appstore_bundle_id', 'appstore_profile', 'appstore_create_app', 'appstore_testflight_group', 'appstore_testflight_testers', 'appstore_privacy_and_age'], $keys);
+    }
+
+    public function test_open_steps_show_their_last_error(): void
+    {
+        $this->game->forceFill(['release_targets' => ['app_store']])->save();
+        ReleaseSetupStep::create(['game_id' => $this->game->id, 'target' => 'app_store', 'key' => 'appstore_bundle_id', 'status' => ReleaseSetupStep::OPEN, 'instruction' => 'x', 'last_error' => 'App Store Connect returned 409.']);
+        Queue::fake();
+
+        $steps = collect(json_decode($this->set('app_store')['text'], true)['open_setup_steps']);
+
+        $this->assertSame('App Store Connect returned 409.', $steps->firstWhere('key', 'appstore_bundle_id')['last_error']);
+        $this->assertNull($steps->firstWhere('key', 'appstore_profile')['last_error']);
     }
 
     public function test_an_error_after_saving_rolls_back_and_queues_nothing(): void

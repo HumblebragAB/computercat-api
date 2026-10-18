@@ -3,7 +3,9 @@
 namespace App\Releases\AppStore;
 
 use App\Models\Game;
+use App\Models\Release;
 use App\Models\ReleaseSetupStep;
+use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\SafeMessage;
 use App\Releases\SetupSteps;
 use Illuminate\Support\Facades\Log;
@@ -13,11 +15,23 @@ use Throwable;
 // per runOne(), så att jobbet håller sig under köns retry_after. Varje steg letar först och skapar
 // sedan, så att en omkörning aldrig skapar dubbletter. Ett klart steg utan sitt id öppnas igen (R17).
 // Testare är användar-id; e-post hämtas per testare och loggas aldrig (R18). Inga HTTP-anrop i transaktioner.
+//
+// Eriks beslut 2026-10-18: gruppen räcker för första bygget. Testarna läggs till i ett eget steg
+// (TESTERS) först när spelet har ett giltigt TestFlight-bygge, eftersom den enda bevisade vägen
+// (spike B9) hade ett VALID bygge i gruppen; steget stoppar inget släpp. Ett steg som faller får
+// last_error och väntar allt längre mellan försöken (failed_attempts, retry_at; QueueAppStoreSetup).
 final class AppStoreSetup
 {
     public const PROGRESS = 'progress';
 
     public const IDLE = 'idle';
+
+    public const TESTERS = 'appstore_testflight_testers';
+
+    /** Väntetid efter första felet; den dubblas per fel upp till ett dygn. */
+    public const BACKOFF_FIRST_MINUTES = 10;
+
+    public const BACKOFF_MAX_MINUTES = 1440;
 
     /** Steg => id:t som steget ger Computercat. */
     public const STEP_IDS = [
@@ -28,6 +42,38 @@ final class AppStoreSetup
     ];
 
     public function __construct(private AppStoreConnectApi $asc) {}
+
+    /** Steg som Computercat själv gör eller kontrollerar mot Apple. @return list<string> */
+    public static function automaticKeys(): array
+    {
+        return [...array_keys(self::STEP_IDS), self::TESTERS];
+    }
+
+    public static function backoffMinutes(int $failedAttempts): int
+    {
+        return (int) min(self::BACKOFF_MAX_MINUTES, self::BACKOFF_FIRST_MINUTES * 2 ** max(0, min($failedAttempts - 1, 20)));
+    }
+
+    /** Ett giltigt bygge finns när ett TestFlight-släpp lyckats (bygget VALID och i gruppen, TestFlightBuilder). */
+    public static function hasValidBuild(Game $game): bool
+    {
+        return Release::where('game_id', $game->id)->where('target', 'app_store')->where('stage', 'testflight')
+            ->where('status', Release::SUCCEEDED)->exists();
+    }
+
+    /**
+     * Ska schemat köa spelet? Bara databasen. Steget som runOne skulle göra först avgör: väntar det
+     * på backoff, eller är det testarna utan giltigt bygge, köas inget (inga anrop var tionde minut).
+     */
+    public static function isDue(Game $game): bool
+    {
+        $step = SetupSteps::open($game, 'app_store')->first(fn (ReleaseSetupStep $s) => in_array($s->key, self::automaticKeys(), true));
+        if ($step === null || ($step->retry_at !== null && $step->retry_at->isFuture())) {
+            return false;
+        }
+
+        return $step->key !== self::TESTERS || self::hasValidBuild($game) || self::pendingTesters($game) === [];
+    }
 
     /** Kör enheter tills inget mer går att göra (tester och Filament). @return list<string> steg som blev klara */
     public function run(Game $game, int $maxUnits = 50): array
@@ -56,7 +102,7 @@ final class AppStoreSetup
 
         foreach (array_keys(SetupSteps::DEFINITIONS['app_store']) as $key) {
             $step = ReleaseSetupStep::where('game_id', $game->id)->where('target', 'app_store')->where('key', $key)->first();
-            if ($step === null || $step->status === ReleaseSetupStep::DONE || ! isset(self::STEP_IDS[$key])) {
+            if ($step === null || $step->status === ReleaseSetupStep::DONE || ! in_array($key, self::automaticKeys(), true)) {
                 continue; // klart, eller Eriks steg som inte kan kontrolleras via API (integritet, åldersgräns)
             }
 
@@ -66,20 +112,27 @@ final class AppStoreSetup
                     'appstore_profile' => $this->profile($game),
                     'appstore_create_app' => $this->detectApp($game),
                     'appstore_testflight_group' => $this->group($game),
+                    self::TESTERS => $this->testers($game),
                 };
             } catch (Throwable $e) {
-                $step->update(['last_error' => $e instanceof SafeMessage ? $e->getMessage() : 'Internal error ('.class_basename($e).').']);
+                // Backoff i stället för ett nytt försök var tionde minut med samma fel (schemat läser retry_at).
+                $attempts = (int) $step->failed_attempts + 1;
+                $step->update([
+                    'last_error' => $e instanceof SafeMessage ? $e->getMessage() : 'Internal error ('.class_basename($e).').',
+                    'failed_attempts' => $attempts,
+                    'retry_at' => now()->addMinutes(self::backoffMinutes($attempts)),
+                ]);
                 throw $e;
             }
 
             if ($result === 'wait') {
-                return [self::IDLE, null]; // appen finns inte än; gruppen kräver den
+                return [self::IDLE, null]; // appen finns inte än (gruppen kräver den), eller inget giltigt bygge än (testarna)
             }
             if ($result === 'more') {
                 return [self::PROGRESS, null];
             }
 
-            $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => null, 'done_at' => now(), 'last_error' => null]);
+            $step->update(['status' => ReleaseSetupStep::DONE, 'done_by' => null, 'done_at' => now(), 'last_error' => null, 'failed_attempts' => 0, 'retry_at' => null]);
             Log::notice('Engångssteg klart via App Store Connect', ['game' => $game->slug, 'step' => $key]);
 
             return [self::PROGRESS, $key];
@@ -144,39 +197,105 @@ final class AppStoreSetup
         return 'done';
     }
 
-    // Enheter: (1) hitta eller skapa gruppen, (2) en testare per enhet (högst fyra anrop), (3) klart.
+    // Gruppen är det enda TestFlightBuilder behöver (beta_group_id). Finns id:t är steget klart utan anrop;
+    // det gäller också spel där steget stod öppet och fastnade på testarna före 2026-10-18.
     private function group(Game $game): string
     {
         $appId = $game->appStoreId('app_id') ?? throw new AppStoreSetupFailed('The app does not exist in App Store Connect yet.');
 
-        $groupId = $game->appStoreId('beta_group_id');
-        if ($groupId === null) {
-            $group = $this->asc->findBetaGroup($appId, AppStoreConfig::betaGroup())
-                ?? $this->asc->createInternalBetaGroup($appId, AppStoreConfig::betaGroup());
-            $this->remember($game, ['beta_group_id' => $group['id']]);
-
-            return 'more';
+        if ($game->appStoreId('beta_group_id') !== null) {
+            return 'done';
         }
 
+        $group = $this->asc->findBetaGroup($appId, AppStoreConfig::betaGroup())
+            ?? $this->asc->createInternalBetaGroup($appId, AppStoreConfig::betaGroup());
+        // En ny grupp har inga av de gamla testarna: testarsteget börjar om.
+        $this->remember($game, ['beta_group_id' => $group['id'], 'testers_added' => [], 'tester_conflict' => [], 'tester_failed' => []]);
+        ReleaseSetupStep::where('game_id', $game->id)->where('target', 'app_store')->where('key', self::TESTERS)
+            ->where('status', ReleaseSetupStep::DONE)->update(['status' => ReleaseSetupStep::OPEN, 'done_by' => null, 'done_at' => null, 'updated_at' => now()]);
+
+        return 'done';
+    }
+
+    /** @return list<string> testare i konfigen som inte är tillagda */
+    private static function pendingTesters(Game $game): array
+    {
         $added = (array) (($game->app_store_ids ?? [])['testers_added'] ?? []);
-        foreach (AppStoreConfig::testerUserIds() as $userId) {
-            if (in_array($userId, $added, true)) {
+
+        return array_values(array_filter(AppStoreConfig::testerUserIds(), fn (string $id) => ! in_array($id, $added, true)));
+    }
+
+    // En testare per enhet, högst fyra anrop: användaren (e-post, allAppsVisible), gruppens medlemmar,
+    // visibleApps (bara för begränsad åtkomst) och skapandet. Ett 409 läses tillbaka i nästa enhet:
+    // finns testaren i gruppen är hen klar, annars fail loud. En testare som inte går att lägga till
+    // stoppar inte de andra; när alla är prövade kastas ett samlat fel (backoff) och nästa körning
+    // försöker igen med dem som föll.
+    private function testers(Game $game): string
+    {
+        $pending = self::pendingTesters($game);
+        if ($pending === []) {
+            return 'done';
+        }
+        if (! self::hasValidBuild($game)) {
+            return 'wait';
+        }
+        $appId = $game->appStoreId('app_id') ?? throw new AppStoreSetupFailed('The app does not exist in App Store Connect yet.');
+        $groupId = $game->appStoreId('beta_group_id') ?? throw new AppStoreSetupFailed('The TestFlight group does not exist yet.');
+
+        $ids = $game->app_store_ids ?? [];
+        $added = (array) ($ids['testers_added'] ?? []);
+        $conflict = (array) ($ids['tester_conflict'] ?? []);
+        $failed = (array) ($ids['tester_failed'] ?? []);
+
+        foreach ($pending as $userId) {
+            if (array_key_exists($userId, $failed)) {
                 continue;
             }
-            $email = $this->asc->userEmail($userId); // registreras hos Redactor (R18)
-            if ($this->asc->findBetaTester($email, $groupId) === null) {
-                $existing = $this->asc->findBetaTester($email);
-                $existing !== null
-                    ? $this->asc->addTestersToGroup($groupId, [$existing['id']])
-                    : $this->asc->createBetaTester($email, $groupId);
+            $user = $this->asc->user($userId); // e-posten registreras hos Redactor (R18)
+            $withoutConflict = array_values(array_diff($conflict, [$userId]));
+
+            if ($this->asc->betaGroupHasTester($groupId, $user['email'])) {
+                $this->remember($game, ['testers_added' => [...$added, $userId], 'tester_conflict' => $withoutConflict]);
+                Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
+
+                return 'more';
             }
-            $this->remember($game, ['testers_added' => array_values(array_merge($added, [$userId]))]);
+
+            if (in_array($userId, $conflict, true)) {
+                $failed[$userId] = "App Store Connect vägrar lägga användaren {$userId} i TestFlight-gruppen (409) och hen finns inte i gruppen; kontrollera att hen har tillgång till appen och en roll som får testa internt, eller ta bort hen ur releases.app_store.tester_user_ids.";
+                $this->remember($game, ['tester_conflict' => $withoutConflict, 'tester_failed' => $failed]);
+
+                return 'more';
+            }
+
+            if (! $user['all_apps_visible'] && ! $this->asc->userCanSeeApp($userId, $appId)) {
+                $failed[$userId] = "Användaren {$userId} har inte tillgång till appen i App Store Connect; ge åtkomst eller ta bort hen ur releases.app_store.tester_user_ids.";
+                $this->remember($game, ['tester_failed' => $failed]);
+
+                return 'more';
+            }
+
+            try {
+                $this->asc->createBetaTester($user['email'], $groupId);
+            } catch (ExternalApiException $e) {
+                if ($e->status !== 409) {
+                    throw $e;
+                }
+                // Apple dokumenterar inte vad 409 betyder här; medlemslistan avgör i nästa enhet.
+                $this->remember($game, ['tester_conflict' => [...$withoutConflict, $userId]]);
+                Log::warning('TestFlight-testare: 409, läses tillbaka', ['game' => $game->slug, 'user_id' => $userId]);
+
+                return 'more';
+            }
+            $this->remember($game, ['testers_added' => [...$added, $userId], 'tester_conflict' => $withoutConflict]);
             Log::notice('TestFlight-testare i gruppen', ['game' => $game->slug, 'user_id' => $userId]);
 
             return 'more';
         }
 
-        return 'done';
+        // Alla prövade. De som föll prövas igen vid nästa körning (efter backoff).
+        $this->remember($game, ['tester_failed' => []]);
+        throw new AppStoreSetupFailed(implode(' ', $failed));
     }
 
     private function remember(Game $game, array $ids): void

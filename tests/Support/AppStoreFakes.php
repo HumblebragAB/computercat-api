@@ -94,10 +94,10 @@ final class AppStoreFakes
         return ['type' => 'betaGroups', 'id' => $id, 'attributes' => ['name' => $name, 'isInternalGroup' => $internal, 'hasAccessToAllBuilds' => true]];
     }
 
-    /** GET /v1/users/{id} (User: username är inloggningens e-postadress). */
-    public static function user(string $id, string $email): array
+    /** GET /v1/users/{id} (User: username är inloggningens e-postadress; allAppsVisible enligt User.Attributes). */
+    public static function user(string $id, string $email, bool $allAppsVisible = true): array
     {
-        return ['type' => 'users', 'id' => $id, 'attributes' => ['username' => $email, 'firstName' => 'Test', 'lastName' => 'Testare', 'roles' => ['APP_MANAGER']]];
+        return ['type' => 'users', 'id' => $id, 'attributes' => ['username' => $email, 'firstName' => 'Test', 'lastName' => 'Testare', 'roles' => ['APP_MANAGER'], 'allAppsVisible' => $allAppsVisible]];
     }
 
     public static function betaTester(string $email, string $id): array

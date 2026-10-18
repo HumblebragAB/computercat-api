@@ -151,35 +151,63 @@ final class AppStoreConnectApi
 
     // R18: e-postadressen läses bara här och registreras som hemlighet innan den används i något
     // anrop, så att den maskeras i loggade URL:er, kroppar och fel (rå och URL-kodad).
-    public function userEmail(string $userId): string
+    // allAppsVisible (boolean) enligt User.Attributes; saknas fältet räknas användaren som begränsad,
+    // så att åtkomsten kontrolleras mot visibleApps i stället för att antas.
+    // https://developer.apple.com/documentation/appstoreconnectapi/get-v1-users-_id_
+    // https://developer.apple.com/documentation/appstoreconnectapi/user/attributes-data.dictionary
+    /** @return array{email: string, all_apps_visible: bool} */
+    public function user(string $userId): array
     {
-        $json = $this->get('/v1/users/'.$this->pathId($userId), ['fields[users]' => 'username']);
-        $email = $json['data']['attributes']['username'] ?? null;
+        $json = $this->get('/v1/users/'.$this->pathId($userId), ['fields[users]' => 'username,allAppsVisible']);
+        $attributes = $json['data']['attributes'] ?? [];
+        $email = $attributes['username'] ?? null;
         if (! is_string($email) || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
             throw new ExternalApiException($this->serviceName(), 'GET', '/v1/users/{id}', 200, 'user without a valid username');
         }
         self::protect($email);
 
-        return $email;
+        return ['email' => $email, 'all_apps_visible' => ($attributes['allAppsVisible'] ?? false) === true];
     }
 
-    /** @return array{id: string}|null */
-    public function findBetaTester(string $email, ?string $groupId = null): ?array
+    // GET /v1/users/{id}/visibleApps (limit högst 200). Hittas appen inte och fler sidor finns kan
+    // Computercat inte avgöra åtkomsten: fail loud i stället för att gissa.
+    // https://developer.apple.com/documentation/appstoreconnectapi/get-v1-users-_id_-visibleapps
+    public function userCanSeeApp(string $userId, string $appId): bool
     {
-        self::protect($email);
-        $query = ['filter[email]' => $email, 'fields[betaTesters]' => 'email', 'limit' => 10];
-        if ($groupId !== null) {
-            $query['filter[betaGroups]'] = $this->pathId($groupId);
-        }
-        foreach ($this->list('/v1/betaTesters', $query) as $row) {
-            if (strcasecmp((string) ($row['attributes']['email'] ?? ''), $email) === 0) {
-                return ['id' => $this->id($row)];
+        [$rows, $more] = $this->page('/v1/users/'.$this->pathId($userId).'/visibleApps', ['fields[apps]' => 'bundleId', 'limit' => 200]);
+        foreach ($rows as $row) {
+            if (($row['id'] ?? null) === $appId) {
+                return true;
             }
         }
+        if ($more) {
+            throw new AppStoreSetupFailed("Användaren {$userId} ser fler än 200 appar; Computercat kan inte kontrollera åtkomsten till appen. Ge hen åtkomst till alla appar eller ta bort hen ur releases.app_store.tester_user_ids.");
+        }
 
-        return null;
+        return false;
     }
 
+    // Gruppens egna medlemmar är sanningen (också testare som Erik lagt till för hand), inte en
+    // e-postsökning bland teamets testare. fields[betaTesters]=email, limit högst 200.
+    // https://developer.apple.com/documentation/appstoreconnectapi/get-v1-betagroups-_id_-betatesters
+    public function betaGroupHasTester(string $groupId, string $email): bool
+    {
+        self::protect($email);
+        [$rows, $more] = $this->page('/v1/betaGroups/'.$this->pathId($groupId).'/betaTesters', ['fields[betaTesters]' => 'email', 'limit' => 200]);
+        foreach ($rows as $row) {
+            if (strcasecmp((string) ($row['attributes']['email'] ?? ''), $email) === 0) {
+                return true;
+            }
+        }
+        if ($more) {
+            throw new AppStoreSetupFailed('TestFlight-gruppen har fler än 200 testare; Computercat kan inte läsa hela gruppen.');
+        }
+
+        return false;
+    }
+
+    // Spike B9: POST /v1/betaTesters med relationen betaGroups (bevisad med ett giltigt bygge i gruppen).
+    // https://developer.apple.com/documentation/appstoreconnectapi/post-v1-betatesters
     /** @return array{id: string} */
     public function createBetaTester(string $email, string $groupId): array
     {
@@ -197,14 +225,6 @@ final class AppStoreConnectApi
     {
         Redactor::registerSecret($email);
         Redactor::registerSecret(rawurlencode($email));
-    }
-
-    /** @param list<string> $testerIds */
-    public function addTestersToGroup(string $groupId, array $testerIds): void
-    {
-        $this->send('POST', '/v1/betaGroups/'.$this->pathId($groupId).'/relationships/betaTesters', [
-            'data' => array_map(fn (string $id) => ['type' => 'betaTesters', 'id' => $this->pathId($id)], array_values($testerIds)),
-        ]);
     }
 
     /** @return array{id: string, state: string, version: string, expired: bool}|null */
@@ -244,12 +264,19 @@ final class AppStoreConnectApi
     /** @return list<array> */
     private function list(string $path, array $query): array
     {
-        $data = $this->get($path, $query)['data'] ?? null;
+        return $this->page($path, $query)[0];
+    }
+
+    /** @return array{0: list<array>, 1: bool} raderna och om fler sidor finns (links.next) */
+    private function page(string $path, array $query): array
+    {
+        $json = $this->get($path, $query);
+        $data = $json['data'] ?? null;
         if (! is_array($data)) {
             throw new ExternalApiException($this->serviceName(), 'GET', $path, 200, 'response lacks a data list');
         }
 
-        return array_values(array_filter($data, 'is_array'));
+        return [array_values(array_filter($data, 'is_array')), is_string($json['links']['next'] ?? null)];
     }
 
     private function create(string $path, array $data): array

@@ -12,11 +12,11 @@ class ReleaseSetupStep extends Model
 
     public const DONE = 'done';
 
-    protected $fillable = ['game_id', 'target', 'key', 'status', 'done_by', 'done_at', 'instruction', 'last_error'];
+    protected $fillable = ['game_id', 'target', 'key', 'status', 'done_by', 'done_at', 'instruction', 'last_error', 'failed_attempts', 'retry_at'];
 
     protected function casts(): array
     {
-        return ['done_at' => 'datetime'];
+        return ['done_at' => 'datetime', 'retry_at' => 'datetime', 'failed_attempts' => 'integer'];
     }
 
     protected static function booted(): void

@@ -2,12 +2,16 @@
 
 namespace App\Releases\TestFlight;
 
+use App\Jobs\RunAppStoreSetup;
+use App\Models\Game;
 use App\Models\Release;
+use App\Models\ReleaseSetupStep;
 use App\Provisioning\Clients\GitHubAppClient;
 use App\Provisioning\Http\ExternalApiException;
 use App\Provisioning\SafeMessage;
 use App\Releases\AppStore\AppStoreConnectApi;
 use App\Releases\AppStore\AppStoreNotConfigured;
+use App\Releases\AppStore\AppStoreSetup;
 use App\Releases\MarketingVersion;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
@@ -499,8 +503,24 @@ final class TestFlightBuilder
             'release' => $release->uuid, 'game' => $game->slug, 'commit' => $release->commit_sha,
             'version' => $release->marketing_version, 'build' => $release->build_number, 'workflow_sha' => $external['workflow_sha'] ?? null,
         ]);
+        $this->queueTesters($game);
 
         return null;
+    }
+
+    // Eriks beslut 2026-10-18: testarna läggs till efter första giltiga bygget (AppStoreSetup::TESTERS).
+    // Släppet är redan klart: ett fel här får aldrig fälla det. Testarsteget visar sina egna fel.
+    private function queueTesters(Game $game): void
+    {
+        try {
+            $open = ReleaseSetupStep::where('game_id', $game->id)->where('target', 'app_store')
+                ->where('key', AppStoreSetup::TESTERS)->where('status', ReleaseSetupStep::OPEN)->exists();
+            if ($open) {
+                RunAppStoreSetup::dispatch($game->id);
+            }
+        } catch (Throwable $e) {
+            Log::warning('Kunde inte köa testarsteget efter TestFlight-bygget', ['game' => $game->slug, 'exception' => get_class($e)]);
+        }
     }
 
     /** @return array{id: int, html_url: string}|null */

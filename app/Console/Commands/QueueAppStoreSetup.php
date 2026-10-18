@@ -13,7 +13,8 @@ use Illuminate\Console\Command;
 // spel med målet app_store och ett öppet steg som Computercat gör eller kontrollerar mot Apple.
 // Kommandot anropar inte Apple; jobbet gör en enhet per körning, och för ett spel som väntar på
 // app-posten är det ett enda findApp. Jobbet är unikt per spel, så en körning som pågår köas inte igen.
-// Ett fel larmar högst en gång per dygn och spel (SlackAlert).
+// Ett fel larmar högst en gång per dygn och spel (SlackAlert). Ett steg som föll köas först när dess
+// retry_at passerat (backoff, AppStoreSetup::isDue), och testarna först när ett giltigt bygge finns.
 class QueueAppStoreSetup extends Command
 {
     protected $signature = 'computercat:queue-app-store-setup';
@@ -30,11 +31,11 @@ class QueueAppStoreSetup extends Command
         }
 
         $gameIds = ReleaseSetupStep::where('target', 'app_store')->where('status', ReleaseSetupStep::OPEN)
-            ->whereIn('key', array_keys(AppStoreSetup::STEP_IDS))->distinct()->pluck('game_id');
+            ->whereIn('key', AppStoreSetup::automaticKeys())->distinct()->pluck('game_id');
 
         $queued = 0;
         foreach (Game::whereKey($gameIds)->where('is_active', true)->whereNotNull('bundle_id')->orderBy('id')->get() as $game) {
-            if (! in_array('app_store', $game->releaseTargets(), true)) {
+            if (! in_array('app_store', $game->releaseTargets(), true) || ! AppStoreSetup::isDue($game)) {
                 continue;
             }
             RunAppStoreSetup::dispatch($game->id);

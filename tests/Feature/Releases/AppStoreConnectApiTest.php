@@ -5,6 +5,7 @@ namespace Tests\Feature\Releases;
 use App\Provisioning\Http\ExternalApiException;
 use App\Releases\AppStore\AppStoreConnectApi;
 use App\Releases\AppStore\AppStoreNotConfigured;
+use App\Releases\AppStore\AppStoreSetupFailed;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -140,21 +141,20 @@ class AppStoreConnectApiTest extends TestCase
         ]]);
     }
 
-    public function test_user_email_is_read_by_id_and_never_reaches_a_log(): void // R18
+    public function test_user_is_read_by_id_with_visibility_and_the_email_never_reaches_a_log(): void // R18
     {
         Log::spy();
         $id = A::TESTER_IDS[0];
         Http::fake([
-            A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(A::user($id, 'erik@example.test'))),
-            A::API.'/v1/betaTesters?*' => Http::response(A::error(500, 'UNEXPECTED_ERROR', 'erik@example.test failed'), 500),
+            A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(A::user($id, 'erik@example.test', allAppsVisible: false))),
+            A::API.'/v1/betaGroups/'.A::GROUP.'/betaTesters?*' => Http::response(A::error(500, 'UNEXPECTED_ERROR', 'erik@example.test failed'), 500),
         ]);
 
-        $email = $this->api()->userEmail($id);
-        $this->assertSame('erik@example.test', $email);
-        Http::assertSent(fn (Request $r) => str_contains(urldecode($r->url()), 'fields[users]=username'));
+        $this->assertSame(['email' => 'erik@example.test', 'all_apps_visible' => false], $this->api()->user($id));
+        Http::assertSent(fn (Request $r) => str_contains(urldecode($r->url()), 'fields[users]=username,allAppsVisible'));
 
         try {
-            $this->api()->findBetaTester($email);
+            $this->api()->betaGroupHasTester(A::GROUP, 'erik@example.test');
             $this->fail('500 kastades inte.');
         } catch (ExternalApiException $e) {
             $this->assertStringNotContainsString('erik@example.test', $e->getMessage());
@@ -169,25 +169,57 @@ class AppStoreConnectApiTest extends TestCase
         Http::fake([A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(['type' => 'users', 'id' => $id, 'attributes' => []]))]);
 
         $this->expectException(ExternalApiException::class);
-        $this->api()->userEmail($id);
+        $this->api()->user($id);
     }
 
-    public function test_beta_tester_is_created_in_the_group_and_existing_ones_are_linked(): void
+    public function test_user_without_all_apps_visible_counts_as_limited(): void
     {
-        Http::fake([
-            A::API.'/v1/betaTesters' => Http::response(A::one(A::betaTester('erik@example.test', 'tester-1')), 201),
-            A::API.'/v1/betaGroups/'.A::GROUP.'/relationships/betaTesters' => Http::response('', 204),
-        ]);
+        $id = A::TESTER_IDS[0];
+        Http::fake([A::API.'/v1/users/'.$id.'?*' => Http::response(A::one(['type' => 'users', 'id' => $id, 'attributes' => ['username' => 'erik@example.test']]))]);
+
+        $this->assertFalse($this->api()->user($id)['all_apps_visible']);
+    }
+
+    public function test_group_membership_is_read_from_the_group_case_insensitively(): void
+    {
+        Http::fake([A::API.'/v1/betaGroups/'.A::GROUP.'/betaTesters?*' => Http::response(A::many(A::betaTester('Erik@Example.TEST', 't-1')))]);
+
+        $this->assertTrue($this->api()->betaGroupHasTester(A::GROUP, 'erik@example.test'));
+        $this->assertFalse($this->api()->betaGroupHasTester(A::GROUP, 'mattias@example.test'));
+        Http::assertSent(fn (Request $r) => $r->method() === 'GET'
+            && urldecode($r->url()) === A::API.'/v1/betaGroups/'.A::GROUP.'/betaTesters?fields[betaTesters]=email&limit=200');
+    }
+
+    public function test_group_membership_with_more_pages_fails_loud_when_not_found(): void
+    {
+        Http::fake([A::API.'/v1/betaGroups/'.A::GROUP.'/betaTesters?*' => Http::response(['data' => [], 'links' => ['self' => 'x', 'next' => A::API.'/v1/next']])]);
+
+        $this->expectException(AppStoreSetupFailed::class);
+        $this->api()->betaGroupHasTester(A::GROUP, 'erik@example.test');
+    }
+
+    public function test_visible_apps_are_read_for_the_user(): void
+    {
+        $id = A::TESTER_IDS[0];
+        Http::fake([A::API.'/v1/users/'.$id.'/visibleApps?*' => Http::response(A::many(A::app('se.computercat.annat', '111'), A::app('se.computercat.kattsvep')))]);
+
+        $this->assertTrue($this->api()->userCanSeeApp($id, A::APP));
+        $this->assertFalse($this->api()->userCanSeeApp($id, '222'));
+        Http::assertSent(fn (Request $r) => urldecode($r->url()) === A::API.'/v1/users/'.$id.'/visibleApps?fields[apps]=bundleId&limit=200');
+    }
+
+    public function test_beta_tester_is_created_in_the_group(): void
+    {
+        Http::fake([A::API.'/v1/betaTesters' => Http::response(A::one(A::betaTester('erik@example.test', 'tester-1')), 201)]);
 
         $this->assertSame('tester-1', $this->api()->createBetaTester('erik@example.test', A::GROUP)['id']);
-        $this->api()->addTestersToGroup(A::GROUP, ['tester-2']);
 
         Http::assertSent(fn (Request $r) => $r->url() === A::API.'/v1/betaTesters' && $r->data() === ['data' => [
             'type' => 'betaTesters',
             'attributes' => ['email' => 'erik@example.test'],
             'relationships' => ['betaGroups' => ['data' => [['type' => 'betaGroups', 'id' => A::GROUP]]]],
         ]]);
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/relationships/betaTesters') && $r->data() === ['data' => [['type' => 'betaTesters', 'id' => 'tester-2']]]);
+        $this->assertFalse(method_exists(AppStoreConnectApi::class, 'addTestersToGroup')); // den obevisade länkvägen är borta
     }
 
     public function test_find_build_filters_on_app_version_and_build_number(): void
