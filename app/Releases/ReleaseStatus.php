@@ -74,7 +74,12 @@ final class ReleaseStatus
         return [
             'state' => $state,
             'next' => ReleaseNext::for($state, $vars),
-            'setup_steps' => $steps->map(fn (ReleaseSetupStep $s) => ['key' => $s->key, 'status' => $s->status, 'instruction' => $s->instruction])->values()->all(),
+            // last_error är redan redigerat (ReleaseSetupStep::saving); next_attempt_at är backoffen för ett fallet steg.
+            'setup_steps' => $steps->map(fn (ReleaseSetupStep $s) => [
+                'key' => $s->key, 'status' => $s->status, 'instruction' => $s->instruction,
+                'last_error' => $s->status === ReleaseSetupStep::OPEN ? $s->last_error : null,
+                'next_attempt_at' => $s->status === ReleaseSetupStep::OPEN ? $s->retry_at?->toIso8601String() : null,
+            ])->values()->all(),
             'stages' => $stages,
         ] + ($target === 'app_store' ? ['ios' => [
             'bundle_id' => $game->bundle_id,

@@ -63,6 +63,23 @@ class ReleaseStatusTest extends TestCase
         $this->assertSame('open', collect($target['setup_steps'])->firstWhere('key', 'appstore_create_app')['status']);
     }
 
+    public function test_setup_step_errors_are_visible_and_the_testers_step_does_not_block_testflight(): void
+    {
+        $game = $this->testFlightGame();
+        ReleaseSetupStep::where('game_id', $game->id)->where('key', 'appstore_testflight_testers')
+            ->update(['status' => 'open', 'last_error' => 'Användaren u-1 har inte tillgång till appen i App Store Connect.', 'retry_at' => now()->addMinutes(10)]);
+        $this->demoBuild($game);
+
+        $target = $this->statusOf($game)['targets']['app_store'];
+
+        $this->assertSame('ready_for_testflight', $target['state']);
+        $step = collect($target['setup_steps'])->firstWhere('key', 'appstore_testflight_testers');
+        $this->assertSame('open', $step['status']);
+        $this->assertSame('Användaren u-1 har inte tillgång till appen i App Store Connect.', $step['last_error']);
+        $this->assertNotNull($step['next_attempt_at']);
+        $this->assertNull(collect($target['setup_steps'])->firstWhere('key', 'appstore_bundle_id')['last_error']);
+    }
+
     public function test_no_demo_build_yet(): void
     {
         $game = $this->releasableGame();

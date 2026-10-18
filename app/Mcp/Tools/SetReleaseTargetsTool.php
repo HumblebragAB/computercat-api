@@ -69,7 +69,7 @@ class SetReleaseTargetsTool extends GameTool
         $open = [];
         foreach ($targets as $target) {
             foreach (SetupSteps::open($game, $target) as $step) { // samma ordning som spärren och get_release_status
-                $open[] = ['target' => $step->target, 'key' => $step->key, 'instruction' => $step->instruction];
+                $open[] = ['target' => $step->target, 'key' => $step->key, 'instruction' => $step->instruction, 'last_error' => $step->last_error];
             }
         }
 
