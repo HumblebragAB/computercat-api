@@ -8,7 +8,7 @@ GitHub Actions gratiskvot räcker inte för Humblebrags appar, och vi har fått 
 
 ## Beslut
 
-**ComputerCats iOS-bygge stannar i GitHub Actions**, i släpprepot `HumblebragAB/computercat-release` (`release-ios.yml`) enligt `2026-10-14-slappflode-design.md`, Del 2. Ingenting i faktabanken, byggguiden eller release-texterna ändras.
+**ComputerCats iOS-bygge stannar i GitHub Actions**, i släpprepot `HumblebragAB/computercat-release` (`release-ios.yml`) enligt `2026-10-14-slappflode-design.md`, Del 2. Faktabankens, byggguidens och release-texternas beskrivning av iOS-bygget ändras inte. (Samma dag lades regeln att pusha varje färdigt steg till Demo till, i `process-pusha-varje-steg` och MCP-serverns instruktioner.)
 
 **Släppflödet startas bara med `workflow_dispatch` från Computercat, när ett spel släpps.** Det får aldrig köras på push, pull request eller schema. Ett macOS-jobb som körs på varje push är precis den kostnad vi ville bort från, så lägg inte till en sådan trigger, inte heller som kontroll.
 
