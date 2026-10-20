@@ -163,6 +163,72 @@ class ForwardRecorder
         return [['status' => 'pending'] + $attributes, $sale->status === 'sent'];
     }
 
+    /**
+     * Anropas av SendPejlForward när $sent blivit sent. Ett köp släpper sina väntande
+     * återbetalningar (köpets kurs och procentsatser, taket prövas om), en återbetalning
+     * släpper nästa väntande återkallelse.
+     */
+    public function releaseDependents(PejlForward $sent): void
+    {
+        $sent->loadMissing('game');
+        $game = $sent->game;
+
+        if ($sent->kind === 'sale') {
+            foreach ($this->forwards($game, $sent->store, $sent->transaction_id, 'refund')->where('status', 'pending')->orderBy('id')->get() as $refund) {
+                $this->releaseRefund($sent, $refund);
+            }
+        }
+
+        if (in_array($sent->kind, ['sale', 'refund'], true)) {
+            $this->releaseReversals($game, $sent->store, $sent->transaction_id);
+        }
+    }
+
+    private function releaseRefund(PejlForward $sale, PejlForward $refund): void
+    {
+        $terms = ['amount' => $refund->amount ?? $sale->amount] + $this->purchaseTerms($sale);
+        $earlier = $this->netRefunded($sale->game, $sale->store, $sale->transaction_id, $refund->id);
+        if ($terms['amount'] === null || $earlier + (float) $terms['amount'] > (float) $sale->amount + 0.0001) {
+            $error = "Återbetalningen ({$terms['amount']} {$sale->currency}, tidigare återbetalt netto {$earlier}) blir större än köpet ({$sale->amount} {$sale->currency})";
+            $this->failPending($refund, $error);
+
+            return;
+        }
+
+        if (PejlForward::whereKey($refund->id)->where('status', 'pending')->update($terms) === 1) {
+            SendPejlForward::dispatch($refund->id)->afterCommit();
+        }
+    }
+
+    // Väntande återkallelser utan belopp paras i ordning med skickade återbetalningar.
+    private function releaseReversals(Game $game, string $store, string $transactionId): void
+    {
+        $sale = $this->forwards($game, $store, $transactionId, 'sale')->first();
+        $waiting = $this->forwards($game, $store, $transactionId, 'refund_reversed')->where('status', 'pending')->whereNull('amount')->orderBy('id')->get();
+
+        foreach ($waiting as $reversal) {
+            $before = $this->forwards($game, $store, $transactionId, 'refund_reversed')->whereNotIn('status', ['skipped', 'failed'])->where('id', '<', $reversal->id)->count();
+            $refund = $this->forwards($game, $store, $transactionId, 'refund')->where('status', 'sent')->orderBy('id')->skip($before)->first();
+            if (! $refund || ! $sale) {
+                return;
+            }
+
+            $terms = ['amount' => $refund->amount] + $this->purchaseTerms($sale);
+            if (PejlForward::whereKey($reversal->id)->where('status', 'pending')->update($terms) === 1) {
+                SendPejlForward::dispatch($reversal->id)->afterCommit();
+            }
+        }
+    }
+
+    private function failPending(PejlForward $forward, string $error): void
+    {
+        if (PejlForward::whereKey($forward->id)->where('status', 'pending')->update(['status' => 'failed', 'last_error' => $error]) !== 1) {
+            return;
+        }
+        Log::error('Pejl: vidarebefordran skickas inte', ['forward_id' => $forward->id, 'reference' => $forward->external_reference, 'error' => $error]);
+        app(SlackAlert::class)->send("pejl-forward-{$forward->id}", SlackAlert::escape("Pejl: {$forward->external_reference} skickas inte. {$error}"));
+    }
+
     /** @return array{0: array<string, mixed>, 1: bool} */
     private function reversalAttributes(Game $game, string $store, string $transactionId): array
     {
@@ -196,10 +262,13 @@ class ForwardRecorder
         ];
     }
 
-    // Återbetalt netto hittills: återbetalningar minus återkallelser, utom skippade och fallerade.
-    private function netRefunded(Game $game, string $store, string $transactionId): float
+    // Återbetalt netto hittills: återbetalningar minus återkallelser, utom skippade och fallerade (bara rader före $before).
+    private function netRefunded(Game $game, string $store, string $transactionId, ?int $before = null): float
     {
-        $sum = fn (string $kind) => (float) $this->forwards($game, $store, $transactionId, $kind)->whereNotIn('status', ['skipped', 'failed'])->sum('amount');
+        $sum = fn (string $kind) => (float) $this->forwards($game, $store, $transactionId, $kind)
+            ->whereNotIn('status', ['skipped', 'failed'])
+            ->when($before, fn ($q) => $q->where('id', '<', $before))
+            ->sum('amount');
 
         return $sum('refund') - $sum('refund_reversed');
     }
