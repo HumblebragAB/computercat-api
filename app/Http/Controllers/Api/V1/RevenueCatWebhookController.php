@@ -7,7 +7,9 @@ use App\Models\Game;
 use App\Models\Purchase;
 use App\Models\RevokedStoreTransaction;
 use App\Models\User;
+use App\Services\Pejl\ForwardRecorder;
 use App\Services\RevenueCat\RefundRule;
+use App\Support\SlackAlert;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -89,6 +91,11 @@ class RevenueCatWebhookController extends Controller
             return response()->json(['message' => 'OK']);
         }
 
+        // Vidarebefordran till Pejl sker före användaruppslaget, så att anonyma
+        // köp (Glosis) också kommer med. Den får aldrig ändra svaret eller
+        // behörigheten nedan.
+        $this->forwardToPejl($game, $event);
+
         $appUserId = $event['app_user_id'] ?? null;
         $productId = $event['product_id'] ?? null;
         $transactionId = $event['transaction_id'] ?? null;
@@ -141,6 +148,25 @@ class RevenueCatWebhookController extends Controller
         $this->processGrant($user, $game, $productId, $transactionId, $store, $event);
 
         return response()->json(['message' => 'OK']);
+    }
+
+    /**
+     * Ett fel i vidarebefordringen loggas och larmar, men når aldrig RevenueCat.
+     */
+    private function forwardToPejl(Game $game, array $event): void
+    {
+        try {
+            app(ForwardRecorder::class)->record($game, $event);
+        } catch (\Throwable $e) {
+            $eventId = is_scalar($event['id'] ?? null) ? (string) $event['id'] : 'okänd';
+            Log::error('Pejl: vidarebefordran kunde inte registreras', ['game' => $game->slug, 'event_id' => $eventId, 'error' => $e->getMessage()]);
+
+            try {
+                app(SlackAlert::class)->send("pejl-forward-record-{$eventId}", SlackAlert::escape("Pejl: händelse {$eventId} för {$game->slug} kunde inte registreras: {$e->getMessage()}"));
+            } catch (\Throwable) {
+                // Larmet är bästa försök; loggen ovan finns.
+            }
+        }
     }
 
     /**
