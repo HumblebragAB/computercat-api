@@ -7,6 +7,7 @@ use App\Models\Game;
 use App\Models\Purchase;
 use App\Models\RevokedStoreTransaction;
 use App\Models\User;
+use App\Services\RevenueCat\RefundRule;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -211,10 +212,7 @@ class RevenueCatWebhookController extends Controller
         // så en CANCELLATION betyder att köpet är makulerat oavsett skäl.
         $isOneTime = ! isset($event['expiration_at_ms']);
 
-        $revoke = $type === 'CANCELLATION'
-            && ($reason === 'CUSTOMER_SUPPORT' || $isOneTime);
-
-        if ($revoke) {
+        if (RefundRule::isRevocation($type, $event)) {
             $this->recordRevocation($game, $transactionId, $event);
             $updated = (clone $query)->update(['status' => 'refunded']);
             Log::info('RevenueCat purchase revoked', [
