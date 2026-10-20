@@ -52,6 +52,11 @@ class FactBankContentTest extends TestCase
             'rapportera achievements' => 'practice-achievements', 'unknown rejected upplåsning' => 'practice-achievements',
             'ios-projekt capacitor' => 'process-ios-capacitor', 'ios-setup' => 'process-ios-capacitor',
             'tvåspelarmatch' => 'practice-matcher', 'matcher stale' => 'practice-matcher',
+            // Butiksresurser (Pawtender 2026-10-20: ingen vägledning om ikon, startbild och skärmdumpar).
+            'ikon' => 'process-butiksresurser', 'appikon' => 'process-butiksresurser', 'app icon' => 'process-butiksresurser',
+            'splash' => 'process-butiksresurser', 'startbild' => 'process-butiksresurser', 'skärmdumpar' => 'process-butiksresurser',
+            'screenshots' => 'process-butiksresurser', 'favicon' => 'process-butiksresurser',
+            'skärmdumpar app store' => 'process-butiksresurser', 'byta appikon' => 'process-butiksresurser',
         ] as $query => $id) {
             $this->assertSame($id, $bank->search($query)[0]['id'] ?? null, $query);
         }
@@ -73,6 +78,7 @@ class FactBankContentTest extends TestCase
         $this->assertContains('practice-achievements', $ids);
         $this->assertContains('process-ios-capacitor', $ids);
         $this->assertContains('practice-matcher', $ids);
+        $this->assertContains('process-butiksresurser', $ids);
         $this->assertNotContains('practice-achievements', array_column($bank->all(null, 'v2'), 'id'));
     }
 }

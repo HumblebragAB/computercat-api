@@ -9,6 +9,7 @@ use App\Releases\ReleaseNotifier;
 use App\Releases\ReleaseRefused;
 use App\Releases\ReleaseService;
 use App\Releases\ReleaseStatus;
+use App\Releases\TestFlight\StoreAssetCheck;
 use App\Support\SlackAlert;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Facades\Validator;
@@ -21,7 +22,7 @@ class PromoteReleaseTool extends GameTool
 {
     protected string $name = 'promote_release';
 
-    protected string $description = 'Promote an exact commit to the next release stage. testflight (app_store) builds the iOS app and needs build guide v3 or later (iOS support). A push without a raised version never builds the app; only promote_release after a version bump does. Steps: raise "version" in package.json (MAJOR.MINOR.PATCH, higher than the latest TestFlight release and not used before), push to main, wait for the green Demo build, then call this; Computercat tags v<version>, picks the build number, builds in GitHub Actions and puts the build in the TestFlight group "ComputerCat intern". play_internal is registered but not built yet. Production stages need an explicit commit_sha that succeeded in the test stage, and the first production release per game and target must be approved by Erik in Filament; production stages that are not built yet are refused. Test stages default to the latest commit with a successful Demo build. Only the game owner. Check get_release_status first; follow it after promoting.';
+    protected string $description = 'Promote an exact commit to the next release stage. testflight (app_store) builds the iOS app and needs build guide v3 or later (iOS support). A push without a raised version never builds the app; only promote_release after a version bump does. Steps: raise "version" in package.json (MAJOR.MINOR.PATCH, higher than the latest TestFlight release and not used before), push to main, wait for the green Demo build, then call this; Computercat tags v<version>, picks the build number, builds in GitHub Actions and puts the build in the TestFlight group "ComputerCat intern". The testflight answer has store_assets: warnings when the app icon or launch screen is still the Capacitor default (never a refusal; fix them before the next version, get_fact process-butiksresurser). play_internal is registered but not built yet. Production stages need an explicit commit_sha that succeeded in the test stage, and the first production release per game and target must be approved by Erik in Filament; production stages that are not built yet are refused. Test stages default to the latest commit with a successful Demo build. Only the game owner. Check get_release_status first; follow it after promoting.';
 
     public function schema(JsonSchema $schema): array
     {
@@ -74,6 +75,18 @@ class PromoteReleaseTool extends GameTool
         }
         $notified = $notification === null || in_array($notification, [SlackAlert::SENT, SlackAlert::DUPLICATE], true);
 
+        // Butiksresurser (ikon, startbild) stoppar aldrig TestFlight; ett fel i kontrollen får inte fälla
+        // ett redan sparat släpp, men syns i svaret i stället för att tystas.
+        $storeAssets = null;
+        if ($release->stage === 'testflight' && $release->commit_sha !== null) {
+            try {
+                $storeAssets = app(StoreAssetCheck::class)->warnings($game, $release->commit_sha);
+            } catch (\Throwable $e) {
+                report($e);
+                $storeAssets = ['Could not check the app icon and launch screen. Check them yourself as get_fact process-butiksresurser says.'];
+            }
+        }
+
         return $this->json([
             'release' => $release->uuid,
             'target' => $release->target,
@@ -86,7 +99,7 @@ class PromoteReleaseTool extends GameTool
             'next' => $described['next'],
             // Visar om Erik fick Slack-beskedet (sent, duplicate, failed, not_configured); null för teststeg.
             'notification' => $notification,
-        ] + ($notified ? [] : [
+        ] + ($storeAssets === null ? [] : ['store_assets' => $storeAssets]) + ($notified ? [] : [
             'warning' => 'The release is saved, but Erik was NOT notified in Slack ('.$notification.'). Tell Erik directly that it is waiting.',
         ]));
     }

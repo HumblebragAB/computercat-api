@@ -3,8 +3,8 @@ id: process-ios-capacitor
 title: iOS-projektet skapas med ios-setup och Capacitor
 topic: process
 tags: [ios, capacitor, ios-setup, check-ios, xcode, spm]
-summary: Spelets iOS-projekt skapas en gång med node scripts/ios-setup.mjs och bundle-id:t från get_release_status. Ändra inte ios/ för hand; versionen står bara i package.json.
-updated: "2026-10-16"
+summary: Spelets iOS-projekt skapas en gång med node scripts/ios-setup.mjs och bundle-id:t från get_release_status. Ändra inte ios/ för hand utom bilderna; versionen står bara i package.json.
+updated: "2026-10-20"
 build_guide: [v3]
 ---
 
@@ -23,7 +23,8 @@ Computercat bygger appen i släpprepot och kontrollerar att `appId` och `PRODUCT
 3. `node scripts/ios-setup.mjs <bundle_id> "<name>"`. Skriptet skriver `capacitor.config.ts`, kör `cap add ios --packagemanager SPM` och lägger in `ITSAppUsesNonExemptEncryption` = `false`. Det vägrar om `ios/` redan finns.
 4. `npm run check` ska sluta med `check-ios: OK`. Faller `check-ios`: läs felraden; den säger vilken fil och vilket värde.
 5. Committa `capacitor.config.ts` och `ios/` och pusha. Coolify bygger Demo som vanligt; `ios/` påverkar inte webbygget.
-6. Inga certifikat, nycklar, profiler, `ExportOptions.plist` eller byggflöden i repot. Skicka sedan till TestFlight enligt `process-slappflode`.
+6. Inga certifikat, nycklar, profiler, `ExportOptions.plist` eller byggflöden i repot.
+7. Byt Capacitors appikon och startbild mot spelets egna enligt `process-butiksresurser` (bildfilerna får bytas, projektfilerna inte). Skicka sedan till TestFlight enligt `process-slappflode`.
 
 ## Källa
 
