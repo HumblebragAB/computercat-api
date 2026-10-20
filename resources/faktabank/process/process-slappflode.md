@@ -4,7 +4,7 @@ title: Släppflödet från Demo till telefon och produktion
 topic: process
 tags: [process, slapp, promote_release, get_release_status, testflight, version, package.json, byggnummer]
 summary: "TestFlight byggs bara när version i package.json höjs: höj, pusha, vänta på grönt Demo, anropa promote_release. get_release_status säger nästa steg. Erik godkänner första produktionssläppet."
-updated: "2026-10-16"
+updated: "2026-10-20"
 ---
 
 ## Regel
@@ -30,6 +30,8 @@ Ett iOS-bygge tar en macOS-maskin i GitHub Actions och ett byggnummer hos Apple,
 Ordagrant samma text som `next` i `get_release_status` och som spelets `CLAUDE.md`:
 
 Skicka till TestFlight (kräver byggguide v3 eller senare i spelet, den med iOS-stöd). En push utan höjd version bygger aldrig appen; bara promote_release efter en versionshöjning gör det. 1. Höj version i package.json (MAJOR.MINOR.PATCH): högre än den senast släppta till TestFlight och inte använd förut. 2. Kör npm run check, committa och pusha till main. 3. Vänta tills Demo-bygget för commiten är grönt (get_provisioning_status visar demo.state live). 4. Anropa promote_release(target: app_store, stage: testflight, commit_sha: <commiten>). 5. Följ get_release_status tills släppet är klart. Computercat sätter taggen v<version>, väljer byggnummer, bygger appen och lägger den i TestFlight-gruppen ComputerCat intern.
+
+Svaret från `promote_release` för TestFlight har `store_assets`, en lista med varningar när appikonen eller startbilden fortfarande är Capacitors standardbild. Listan stoppar inte släppet; byt bilderna enligt `process-butiksresurser` före nästa version.
 
 Svarar `promote_release` att versionen är för låg eller att taggen redan finns: höj `version` som svaret säger och börja om från steg 1. Svarar det att byggguiden inte kan byggas för iOS: uppgradera spelet till v3 enligt avsnittet "Uppgradera ett v2-spel till v3" i v3:s `CLAUDE.md` och skapa iOS-projektet (`process-ios-capacitor`).
 

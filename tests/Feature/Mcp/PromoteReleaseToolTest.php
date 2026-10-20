@@ -7,6 +7,7 @@ use App\Models\Game;
 use App\Models\McpAuditLog;
 use App\Models\Release;
 use App\Models\User;
+use App\Releases\TestFlight\StoreAssetCheck;
 use App\Support\SlackAlert;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -47,15 +48,71 @@ class PromoteReleaseToolTest extends McpTestCase
         return $this->callTool($user ?? $this->owner, 'promote_release', ['game' => 'kattsvep'] + $args);
     }
 
-    private function fakeGameRepo(string $slug, string $version): void
+    private function fakeGameRepo(string $slug, string $version, string $icon = 'eget-ikon-sha', string $splash = 'egen-startbild-sha', int $assetStatus = 200): void
     {
         $base = ProvisioningFakes::GITHUB."/repos/HumblebragAB/{$slug}";
+        $dir = fn (array $files) => $assetStatus === 200
+            ? Http::response(array_map(fn (string $name, string $sha) => ['type' => 'file', 'name' => $name, 'path' => $name, 'sha' => $sha], array_keys($files), $files))
+            : Http::response(['message' => 'Server Error'], $assetStatus);
         Http::fake([
             ProvisioningFakes::GITHUB.'/app/installations/4242/access_tokens' => Http::response(ProvisioningFakes::githubToken(), 201),
             $base.'/contents/package.json?ref=*' => Http::response(ProvisioningFakes::githubContent(json_encode(['version' => $version]))),
             $base.'/contents/CLAUDE.md?ref=*' => Http::response(ProvisioningFakes::githubContent("Byggguide: **v3**.\n")),
             $base.'/git/ref/tags/*' => Http::response([], 404),
+            $base.'/contents/'.StoreAssetCheck::ICON_DIR.'?ref=*' => $dir(['AppIcon-512@2x.png' => $icon, 'Contents.json' => 'contents-sha']),
+            $base.'/contents/'.StoreAssetCheck::SPLASH_DIR.'?ref=*' => $dir(['Contents.json' => 'contents-sha', 'splash-2732x2732.png' => $splash, 'splash-2732x2732-1.png' => $splash, 'splash-2732x2732-2.png' => $splash]),
         ]);
+    }
+
+    private function promoteTestFlight(string $icon = 'eget-ikon-sha', string $splash = 'egen-startbild-sha', int $assetStatus = 200): array
+    {
+        Queue::fake();
+        $this->iosGuides('v3');
+        $game = $this->testFlightGame('tinker-isle');
+        $this->demoBuild($game, $this->sha('d'));
+        $this->fakeGameRepo('tinker-isle', '0.2.0', $icon, $splash, $assetStatus);
+
+        return json_decode($this->callTool($this->ownerOf($game), 'promote_release', ['game' => 'tinker-isle', 'target' => 'app_store', 'stage' => 'testflight'])['text'], true);
+    }
+
+    public function test_testflight_answer_has_no_store_asset_warnings_for_the_games_own_images(): void
+    {
+        $json = $this->promoteTestFlight();
+
+        $this->assertSame([], $json['store_assets']);
+        Http::assertSent(fn ($r) => str_contains($r->url(), '/contents/'.StoreAssetCheck::ICON_DIR.'?ref='.$this->sha('d')));
+    }
+
+    public function test_testflight_warns_but_does_not_refuse_when_icon_and_splash_are_capacitor_defaults(): void
+    {
+        $json = $this->promoteTestFlight(StoreAssetCheck::DEFAULT_ICON, StoreAssetCheck::DEFAULT_SPLASH);
+
+        $this->assertSame('requested', $json['status']);
+        $this->assertCount(2, $json['store_assets']);
+        $short = substr($this->sha('d'), 0, 7);
+        $this->assertStringContainsString("app icon at commit {$short} is still Capacitor's default", $json['store_assets'][0]);
+        $this->assertStringContainsString("launch screen at commit {$short} still shows Capacitor's logo", $json['store_assets'][1]);
+        foreach ($json['store_assets'] as $warning) {
+            $this->assertStringContainsString('get_fact process-butiksresurser', $warning);
+        }
+    }
+
+    public function test_testflight_warns_only_for_the_default_that_is_left(): void
+    {
+        $json = $this->promoteTestFlight(splash: StoreAssetCheck::DEFAULT_SPLASH);
+
+        $this->assertCount(1, $json['store_assets']);
+        $this->assertStringContainsString('launch screen', $json['store_assets'][0]);
+    }
+
+    public function test_a_github_error_in_the_asset_check_is_shown_and_keeps_the_release(): void
+    {
+        $json = $this->promoteTestFlight(assetStatus: 500);
+
+        $this->assertSame('requested', $json['status']);
+        $this->assertCount(1, $json['store_assets']);
+        $this->assertStringContainsString('Could not check the app icon and launch screen', $json['store_assets'][0]);
+        $this->assertSame(1, Release::where('stage', 'testflight')->count());
     }
 
     public function test_description_states_that_a_push_alone_never_builds(): void

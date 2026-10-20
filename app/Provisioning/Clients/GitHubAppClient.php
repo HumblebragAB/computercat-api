@@ -183,6 +183,34 @@ class GitHubAppClient
         return ['sha' => $sha, 'text' => $text];
     }
 
+    /**
+     * Innehållet i en katalog vid en commit (GET /repos/{o}/{r}/contents/{path}: för en katalog är svaret
+     * en lista med en post per fil). sha är git-blobbens sha1, så en fil kan jämföras utan att laddas ned.
+     *
+     * @return list<array{name: string, type: string, sha: string}>|null null om katalogen inte finns
+     */
+    public function listDirectory(string $name, string $path, string $ref): ?array
+    {
+        $apiPath = '/repos/'.$this->owner().'/'.$this->repoName($name).'/contents/'.$this->filePath($path).'?ref='.$this->commit($ref);
+        $response = $this->github('GET', $apiPath, null, [404]);
+        if ($response->status() === 404) {
+            return null;
+        }
+
+        $items = $response->json();
+        if (! is_array($items) || ! array_is_list($items)) {
+            throw new ExternalApiException('GitHub', 'GET', $apiPath, $response->status(), 'unexpected contents response (expected a directory listing)');
+        }
+
+        return array_map(function (mixed $item) use ($apiPath, $response) {
+            if (! is_array($item) || ! is_string($item['name'] ?? null) || ! is_string($item['type'] ?? null) || ! is_string($item['sha'] ?? null)) {
+                throw new ExternalApiException('GitHub', 'GET', $apiPath, $response->status(), 'unexpected directory entry (expected name, type, sha)');
+            }
+
+            return ['name' => $item['name'], 'type' => $item['type'], 'sha' => strtolower($item['sha'])];
+        }, $items);
+    }
+
     // sha krävs för att skriva över en befintlig fil och utelämnas för en ny (spike S11).
     public function putFile(string $name, string $path, string $text, ?string $sha, string $message): void
     {
