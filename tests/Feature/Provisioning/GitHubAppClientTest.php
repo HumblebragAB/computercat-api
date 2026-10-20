@@ -170,6 +170,38 @@ class GitHubAppClientTest extends ProvisioningTestCase
         $this->assertNull($this->client()->getFile('kattsvep', 'README.md'));
     }
 
+    // Katalogens innehåll vid en commit: GitHub svarar med en lista, en post per fil.
+    public function test_list_directory_returns_name_type_and_blob_sha(): void
+    {
+        $sha = str_repeat('a', 40);
+        Http::fake([
+            self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/kattsvep/contents/ios/App/App/Assets.xcassets/AppIcon.appiconset?ref='.$sha => Http::response([
+                ['type' => 'file', 'name' => 'AppIcon-512@2x.png', 'path' => 'ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png', 'sha' => 'ADF6BA01', 'size' => 110522],
+                ['type' => 'file', 'name' => 'Contents.json', 'path' => 'x', 'sha' => '9b7d382d', 'size' => 200],
+            ]),
+        ]);
+
+        $this->assertSame([
+            ['name' => 'AppIcon-512@2x.png', 'type' => 'file', 'sha' => 'adf6ba01'],
+            ['name' => 'Contents.json', 'type' => 'file', 'sha' => '9b7d382d'],
+        ], $this->client()->listDirectory('kattsvep', 'ios/App/App/Assets.xcassets/AppIcon.appiconset', $sha));
+    }
+
+    public function test_list_directory_returns_null_on_404_and_refuses_a_file_response(): void
+    {
+        $sha = str_repeat('b', 40);
+        Http::fake([
+            self::TOKEN_URL => Http::response(ProvisioningFakes::githubToken(), 201),
+            'api.github.com/repos/HumblebragAB/kattsvep/contents/saknas?ref=*' => Http::response(['message' => 'Not Found'], 404),
+            'api.github.com/repos/HumblebragAB/kattsvep/contents/README.md?ref=*' => Http::response(ProvisioningFakes::githubContent('# Hej')),
+        ]);
+
+        $this->assertNull($this->client()->listDirectory('kattsvep', 'saknas', $sha));
+        $this->expectException(ExternalApiException::class);
+        $this->client()->listDirectory('kattsvep', 'README.md', $sha);
+    }
+
     public function test_archive_patches_archived_true(): void
     {
         Http::fake([
