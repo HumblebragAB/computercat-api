@@ -452,4 +452,81 @@ class SendPejlForwardTest extends TestCase
         $this->assertSame(79.2, $data['amount_ex_vat']);
         $this->assertSame('sent', $reversal->refresh()->status);
     }
+
+    public function test_pending_usd_refund_without_rate_takes_the_sales_terms(): void
+    {
+        $this->fakePejl(riksbank: [['date' => '2026-10-19', 'value' => 9.00]]);
+        $this->usdSale(['status' => 'sent', 'sent_at' => now(), 'fx_rate' => 10.5, 'fx_date' => '2026-10-16']);
+        $refund = $this->usdSale([
+            'kind' => 'refund',
+            'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r1',
+            'tax_percentage' => null,
+            'commission_percentage' => null,
+        ]);
+
+        $this->handle($refund);
+
+        $data = $this->pejlRequests()[0]->data();
+        $this->assertSame(84.0, $data['amount_ex_vat']);
+        $this->assertSame(15.75, $data['cost']);
+        $refund->refresh();
+        $this->assertSame('sent', $refund->status);
+        $this->assertSame('10.500000', $refund->fx_rate);
+        $this->assertSame('2026-10-16', $refund->fx_date->toDateString());
+    }
+
+    public function test_retry_failed_keeps_a_cap_failed_refund_unposted(): void
+    {
+        $this->fakePejl();
+        $this->forward(['status' => 'sent', 'sent_at' => now()]);
+        $this->forward(['kind' => 'refund', 'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r1', 'amount' => 60.0, 'status' => 'sent', 'sent_at' => now()]);
+        $second = $this->forward(['kind' => 'refund', 'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r2', 'amount' => 60.0, 'status' => 'failed', 'last_error' => 'Återbetalningen blir större än köpet']);
+
+        $this->artisan('pejl:check-forwards', ['--retry-failed' => true])->assertSuccessful();
+        $this->handle($second);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $this->assertSame('failed', $second->refresh()->status);
+        $this->assertStringContainsString('större än köpet', $second->last_error);
+        $this->assertSame("pejl-forward-{$second->id}", $this->alerts->sent[0][0]);
+    }
+
+    public function test_retry_failed_keeps_a_row_with_bad_percentage_unposted(): void
+    {
+        $this->fakePejl();
+        $forward = $this->forward(['commission_percentage' => 1.5, 'status' => 'failed', 'last_error' => 'Orimlig commission_percentage från RevenueCat: 1.5']);
+
+        $this->artisan('pejl:check-forwards', ['--retry-failed' => true])->assertSuccessful();
+        $this->handle($forward);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $this->assertSame('failed', $forward->refresh()->status);
+        $this->assertStringContainsString('commission_percentage', $forward->last_error);
+        $this->assertCount(1, $this->alerts->sent);
+    }
+
+    public function test_retry_failed_keeps_a_row_without_amount_unposted(): void
+    {
+        $this->fakePejl();
+        $forward = $this->forward(['amount' => null, 'status' => 'failed', 'last_error' => 'Saknar fält från RevenueCat: price_in_purchased_currency']);
+
+        $this->artisan('pejl:check-forwards', ['--retry-failed' => true])->assertSuccessful();
+        $this->handle($forward);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $this->assertSame('failed', $forward->refresh()->status);
+    }
+
+    public function test_retry_failed_reposts_a_row_failed_for_401(): void
+    {
+        $this->fakePejl();
+        $forward = $this->forward(['status' => 'failed', 'attempts' => 1, 'last_error' => 'HTTP 401: Unauthenticated']);
+
+        $this->artisan('pejl:check-forwards', ['--retry-failed' => true])->assertSuccessful();
+        Queue::assertPushed(SendPejlForward::class, fn ($job) => $job->forwardId === $forward->id);
+        $this->handle($forward);
+
+        $this->assertCount(1, $this->pejlRequests());
+        $this->assertSame('sent', $forward->refresh()->status);
+    }
 }

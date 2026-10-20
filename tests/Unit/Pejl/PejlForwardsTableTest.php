@@ -29,10 +29,12 @@ class PejlForwardsTableTest extends TestCase
         $this->assertSame(0, $row->fresh()->attempts);
     }
 
-    public function test_external_reference_is_unique(): void
+    public function test_external_reference_is_unique_per_game(): void
     {
         $game = Game::create(['slug' => 'pejltest', 'name' => 'Pejltest', 'is_active' => true, 'settings' => []]);
+        $other = Game::create(['slug' => 'pejltest2', 'name' => 'Pejltest 2', 'is_active' => true, 'settings' => []]);
         $this->row($game, 'rc:e1');
+        $this->row($other, 'rc:e1');
 
         $this->expectException(QueryException::class);
         $this->row($game, 'rc:e1');

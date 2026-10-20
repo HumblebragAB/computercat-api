@@ -343,6 +343,7 @@ class PejlForwardWebhookTest extends TestCase
         $row = PejlForward::where('kind', 'refund_reversed')->sole();
         $this->assertSame('pending', $row->status);
         $this->assertSame('APP_STORE:2000000123456789:refund-reversed:evt-rev-1', $row->external_reference);
+        $this->assertSame('Återkallad återbetalning: Guldstjärnan 2026/27 · App Store · SE', $row->description);
         $this->assertSame('49.5000', $row->amount);
         $this->assertSame('SEK', $row->currency);
         $this->assertSame($sale->tax_percentage, $row->tax_percentage);
@@ -407,11 +408,56 @@ class PejlForwardWebhookTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    public function test_stripe_is_not_forwarded(): void
+    public function test_paid_sale_from_unforwarded_store_alerts_without_row(): void
     {
+        $this->expectAlert('STRIPE');
+
         $this->postEvent($this->sale(['store' => 'STRIPE']))->assertOk();
 
         $this->assertSame(0, PejlForward::count());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_free_sale_from_unforwarded_store_is_quiet(): void
+    {
+        $this->mock(SlackAlert::class)->shouldNotReceive('send');
+
+        $this->postEvent($this->sale(['store' => 'PROMOTIONAL', 'price_in_purchased_currency' => 0, 'price' => 0]))->assertOk();
+
+        $this->assertSame(0, PejlForward::count());
+    }
+
+    public function test_sale_after_skipped_refund_alerts_with_the_transaction(): void
+    {
+        $this->postEvent($this->refund())->assertOk();
+        $this->assertSame('skipped', PejlForward::sole()->status);
+        $this->expectAlert('APP_STORE:2000000123456789');
+
+        $this->postEvent($this->sale())->assertOk();
+
+        $this->assertSame('pending', PejlForward::where('kind', 'sale')->sole()->status);
+    }
+
+    public function test_sale_without_skipped_refund_does_not_alert(): void
+    {
+        $this->mock(SlackAlert::class)->shouldNotReceive('send');
+
+        $this->postEvent($this->sale())->assertOk();
+    }
+
+    public function test_same_reference_in_two_games_gives_two_rows(): void
+    {
+        $other = Game::create(['slug' => 'pejlannat', 'name' => 'Pejlannat', 'is_active' => true, 'settings' => []]);
+        $event = $this->sale(['id' => 'evt-same']);
+
+        $first = app(ForwardRecorder::class)->record($this->glosis, $event);
+        $second = app(ForwardRecorder::class)->record($other, $event);
+        $again = app(ForwardRecorder::class)->record($other, $event);
+
+        $this->assertNotSame($first->id, $second->id);
+        $this->assertSame($second->id, $again->id);
+        $this->assertSame([$this->glosis->id, $other->id], PejlForward::orderBy('id')->pluck('game_id')->all());
+        $this->assertSame(2, PejlForward::where('external_reference', 'APP_STORE:2000000123456789')->count());
     }
 
     public function test_play_store_description_and_reference(): void

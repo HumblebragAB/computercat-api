@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('kind', 20);
             $table->string('store', 40)->nullable();
             $table->string('transaction_id')->nullable();
-            $table->string('external_reference')->unique();
+            $table->string('external_reference');
             $table->timestamp('occurred_at')->nullable();
             $table->string('description')->nullable();
             $table->decimal('amount', 12, 4)->nullable();
@@ -36,6 +36,7 @@ return new class extends Migration
             $table->timestamp('sent_at')->nullable();
             $table->timestamps();
 
+            $table->unique(['game_id', 'external_reference']);
             $table->index(['store', 'transaction_id']);
             $table->index('status');
         });

@@ -21,6 +21,7 @@ use Throwable;
 // Ingen $tries: retryUntil() sätter gränsen i tid, eftersom varje release() räknas som ett försök
 // och en ej publicerad dagskurs kan vänta över en helg. Pejl 4xx/5xx/onåbar kastar för omförsök med
 // backoff; 401/403/422 (fel nyckel, saknat scope, fel i data eller konfiguration) och saknad PEJL_API_URL/KEY fäller raden direkt.
+// Före varje post prövas registreringens kontroller om (ForwardRecorder::postingError), eftersom --retry-failed sätter tillbaka alla failed-rader.
 // failed() fäller raden och larmar. Unikt per rad, så att samma rad aldrig postas av två jobb.
 class SendPejlForward implements ShouldBeUnique, ShouldQueue
 {
@@ -56,14 +57,18 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        if ($forward->kind !== 'sale') {
+            $recorder->completeTerms($forward, $this->sentSale($forward));
+        }
+
         if ($missing = $client->missingConfig()) {
             $this->markFailed($forward, implode(', ', $missing).' saknas i miljön; inget skickat till Pejl');
 
             return;
         }
 
-        if (array_filter([$forward->amount, $forward->currency, $forward->tax_percentage, $forward->commission_percentage, $forward->occurred_at], fn ($v) => $v === null)) {
-            $this->markFailed($forward, 'Raden saknar belopp, valuta, procentsats eller tidpunkt');
+        if ($error = $recorder->postingError($forward)) {
+            $this->markFailed($forward, $error);
 
             return;
         }
@@ -148,14 +153,17 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
             return true;
         }
 
-        $saleSent = PejlForward::where('game_id', $forward->game_id)
+        return $this->sentSale($forward) !== null && $forward->amount !== null;
+    }
+
+    private function sentSale(PejlForward $forward): ?PejlForward
+    {
+        return PejlForward::where('game_id', $forward->game_id)
             ->where('store', $forward->store)
             ->where('transaction_id', $forward->transaction_id)
             ->where('kind', 'sale')
             ->where('status', 'sent')
-            ->exists();
-
-        return $saleSent && $forward->amount !== null;
+            ->first();
     }
 
     // SEK per enhet. Köpet sparar sin kurs (villkorligt, en gång); återbetalningar har köpets kurs.
