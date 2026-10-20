@@ -10,7 +10,7 @@ updated: "2026-10-14"
 ## Regel
 
 1. `create_game` skapar repo, Demo-adress, CORS och en SiteOps-post; övervakningen startar först när Demo lever. Vänta tills `get_provisioning_status` visar `succeeded`.
-2. I spelrepot: följ `CLAUDE.md` steg 1 (grundkoden), sedan spelet. Varje push till main bygger Demo.
+2. I spelrepot: följ `CLAUDE.md` steg 1 (grundkoden), sedan spelet. Varje push till main bygger Demo. Pusha varje färdigt steg direkt, se `process-pusha-varje-steg`.
 3. Följ upp med `get_provisioning_status` tills `demo.state` är `live`, och kontrollera Demo-adressen med basic auth.
 4. När spelet är klart för riktiga spelare: fråga `get_release_status`, som säger vad som gäller och vad nästa steg är. Produktion kan ännu inte begäras med `promote_release` i den här versionen. Be Erik om Live med `request_live`, som skickar en förfrågan till honom och inget annat. Erik godkänner det första produktionssläppet per mål; inget går live automatiskt. Se `process-slappflode`.
 

@@ -57,6 +57,7 @@ class FactBankContentTest extends TestCase
         }
         $this->assertSame('security-hemligheter-i-klienten', $bank->search('api-nyckel hemlighet')[0]['id']);
         $this->assertSame('process-ide-till-live', $bank->search('request_live')[0]['id']);
+        $this->assertSame('process-pusha-varje-steg', $bank->search('vänta med att pusha')[0]['id']);
     }
 
     // Byggguide v3: artiklarna som gällde v2 gäller också v3, och de nya gäller bara v3.
