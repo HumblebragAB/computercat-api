@@ -252,6 +252,37 @@ class SendPejlForwardTest extends TestCase
         $this->assertSame("pejl-forward-{$forward->id}", $this->alerts->sent[0][0]);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('authFailures')]
+    public function test_401_and_403_fail_directly_and_alert(int $status): void
+    {
+        $this->fakePejl($status, ['message' => 'Nekad']);
+        $forward = $this->forward();
+
+        $job = $this->handle($forward);
+
+        $job->assertNotReleased();
+        $forward->refresh();
+        $this->assertSame('failed', $forward->status);
+        $this->assertStringContainsString("HTTP {$status}", $forward->last_error);
+        $this->assertCount(1, $this->alerts->sent);
+    }
+
+    public static function authFailures(): array
+    {
+        return [[401], [403]];
+    }
+
+    public function test_unique_lock_expires_after_the_retry_window(): void
+    {
+        $this->assertSame(73 * 3600, (new SendPejlForward(1))->uniqueFor);
+    }
+
+    public function test_job_does_not_shadow_the_queue_fail_method(): void
+    {
+        $this->assertFalse((new \ReflectionMethod(SendPejlForward::class, 'fail'))->isPrivate());
+        $this->assertTrue(method_exists(SendPejlForward::class, 'markFailed'));
+    }
+
     public function test_key_is_never_logged_stored_or_alerted(): void
     {
         $logged = [];

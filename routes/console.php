@@ -45,3 +45,6 @@ Schedule::command('matches:prune --days=7')->dailyAt('05:00');
 
 // Matcher: invarianter över senaste dygnets matcher (seq utan hål, uppspelning = lagrad state, ingen dold state kvar efter slut). Larmar i loggen och med exit 1.
 Schedule::command('matches:check-invariants')->hourly()->withoutOverlapping(30);
+
+// Vidarebefordran till Pejl: fastnade rader (dispatchas om) och avstämning av månadens summor mot Arket.
+Schedule::command('pejl:check-forwards')->dailyAt('06:30')->withoutOverlapping(10);

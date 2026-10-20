@@ -56,6 +56,40 @@ class PejlClient
         return ['ok' => $response->successful(), 'status' => $response->status(), 'body' => $body];
     }
 
+    /**
+     * GET /api/revenue-sources/{source}/{year}/{month}: Pejls summa för källan och månaden.
+     * Kastar (maskat) vid onåbar Pejl eller icke-2xx, så att avstämningen aldrig blir tyst grön.
+     *
+     * @return array{rows: int, price: float, cost: float}
+     */
+    public function summary(string $source, int $year, int $month): array
+    {
+        if ($missing = $this->missingConfig()) {
+            throw new \LogicException('Pejl är inte konfigurerat: '.implode(', ', $missing).' saknas');
+        }
+
+        $url = rtrim($this->url(), '/')."/api/revenue-sources/{$source}/{$year}/{$month}";
+
+        try {
+            $response = Http::withToken($this->key())->acceptJson()->timeout(10)->get($url);
+        } catch (\Throwable $e) {
+            $error = $this->redact(get_class($e).': '.$e->getMessage());
+            Log::warning('Pejl: summeringen misslyckades', ['url' => $url, 'error' => $error]);
+
+            throw new \RuntimeException($error);
+        }
+
+        $body = $this->redact($response->body());
+        $data = $response->json();
+        if (! $response->successful() || ! is_array($data) || ! isset($data['rows'], $data['price'], $data['cost'])) {
+            Log::warning('Pejl svarade HTTP '.$response->status().' på summeringen', ['url' => $url, 'body' => $body]);
+
+            throw new \RuntimeException("Pejl svarade HTTP {$response->status()}: {$body}");
+        }
+
+        return ['rows' => (int) $data['rows'], 'price' => (float) $data['price'], 'cost' => (float) $data['cost']];
+    }
+
     // Nyckeln maskad och texten kapad till 4 KB (utan att dela ett tecken).
     public function redact(string $text): string
     {

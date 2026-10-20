@@ -20,13 +20,16 @@ use Throwable;
 // Postar en PejlForward till Pejls POST /api/revenue-items (specen 2026-10-20-appforsaljning-arket-design.md).
 // Ingen $tries: retryUntil() sätter gränsen i tid, eftersom varje release() räknas som ett försök
 // och en ej publicerad dagskurs kan vänta över en helg. Pejl 4xx/5xx/onåbar kastar för omförsök med
-// backoff; 422 (fel i data eller konfiguration) och saknad PEJL_API_URL/KEY fäller raden direkt.
+// backoff; 401/403/422 (fel nyckel, saknat scope, fel i data eller konfiguration) och saknad PEJL_API_URL/KEY fäller raden direkt.
 // failed() fäller raden och larmar. Unikt per rad, så att samma rad aldrig postas av två jobb.
 class SendPejlForward implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
     public const FX_PENDING_DELAY = 1800;
+
+    // Strax över retryUntil: ett försvunnet jobb ska inte blockera ny dispatch för alltid.
+    public int $uniqueFor = 73 * 3600;
 
     public function __construct(public int $forwardId) {}
 
@@ -54,13 +57,13 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
         }
 
         if ($missing = $client->missingConfig()) {
-            $this->fail($forward, implode(', ', $missing).' saknas i miljön; inget skickat till Pejl');
+            $this->markFailed($forward, implode(', ', $missing).' saknas i miljön; inget skickat till Pejl');
 
             return;
         }
 
         if (array_filter([$forward->amount, $forward->currency, $forward->tax_percentage, $forward->commission_percentage, $forward->occurred_at], fn ($v) => $v === null)) {
-            $this->fail($forward, 'Raden saknar belopp, valuta, procentsats eller tidpunkt');
+            $this->markFailed($forward, 'Raden saknar belopp, valuta, procentsats eller tidpunkt');
 
             return;
         }
@@ -77,7 +80,7 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
 
             throw $e;
         } catch (\UnexpectedValueException $e) {
-            $this->fail($forward, 'Valutakurs: '.$e->getMessage());
+            $this->markFailed($forward, 'Valutakurs: '.$e->getMessage());
 
             return;
         }
@@ -116,8 +119,8 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
         }
 
         $error = "HTTP {$response['status']}: {$response['body']}";
-        if ($response['status'] === 422) {
-            $this->fail($forward, $error, countAttempt: true);
+        if (in_array($response['status'], [401, 403, 422], true)) {
+            $this->markFailed($forward, $error, countAttempt: true);
 
             return;
         }
@@ -135,7 +138,7 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
         }
 
         $error = $forward->last_error ?? app(PejlClient::class)->redact($e?->getMessage() ?? 'Jobbet gav upp');
-        $this->fail($forward, $error);
+        $this->markFailed($forward, $error);
     }
 
     // En återbetalning väntar på att köpet skickats; en återkallelse på sitt belopp.
@@ -179,7 +182,7 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
         $forward->increment('attempts', 1, ['last_error' => app(PejlClient::class)->redact($error)]);
     }
 
-    private function fail(PejlForward $forward, string $error, bool $countAttempt = false): void
+    private function markFailed(PejlForward $forward, string $error, bool $countAttempt = false): void
     {
         $error = app(PejlClient::class)->redact($error);
         $updated = PejlForward::whereKey($forward->id)->where('status', 'pending')->update(array_filter([
