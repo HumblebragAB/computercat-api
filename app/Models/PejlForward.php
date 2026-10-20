@@ -13,7 +13,7 @@ class PejlForward extends Model
 {
     public const KINDS = ['sale', 'refund', 'refund_reversed'];
 
-    public const STATUSES = ['pending', 'sent', 'failed', 'skipped'];
+    public const STATUSES = ['pending', 'sent', 'failed', 'skipped', 'waiting_for_source'];
 
     protected $guarded = [];
 

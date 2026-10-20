@@ -9,6 +9,8 @@ use App\Services\Pejl\PejlClient;
 use App\Support\SlackAlert;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -16,7 +18,11 @@ use Throwable;
  * Daglig kontroll av vidarebefordringarna till Pejl:
  *  1. rader som legat pending eller failed i över ett dygn larmar (antal + äldsta id); pending äldre än
  *     en timme dispatchas om (jobbet är ShouldBeUnique, så en redan köad rad dubbleras inte),
- *  2. för varje spel med sent-rader och innevarande + föregående månad: antal, summa och kostnad mot Pejls
+ *     Återbetalningar och återkallelser som väntar på ett köp i waiting_for_source räknas inte,
+ *  2. spel med waiting_for_source-rader (saknas i Pejls config/revenue_sources.php) larmar en gång per spel
+ *     och dygn (Stockholmsdatum i nyckeln). Raderna sätts sedan till pending och dispatchas: finns källan nu
+ *     går de in, annars blir de waiting_for_source igen utan larm,
+ *  3. för varje spel med sent-rader och innevarande + föregående månad: antal, summa och kostnad mot Pejls
  *     summa. Månaden räknas på occurred_at i config('pejl.timezone'). Återbetalning räknas negativ, som i Pejl.
  *
  * Exit 1 vid larm. Pejl onåbar eller nekar = larm "avstämningen kunde inte köras", aldrig tyst grönt.
@@ -42,7 +48,8 @@ class CheckPejlForwards extends Command
             return self::INVALID;
         }
 
-        $alerts = array_merge($this->stuckRows(), $this->reconcile($client, $months));
+        $waiting = PejlForward::with('game')->where('status', 'waiting_for_source')->orderBy('id')->get();
+        $alerts = array_merge($this->stuckRows(), $this->waitingForSource($waiting), $this->reconcile($client, $months));
 
         foreach ($alerts as $key => $text) {
             $this->error($text);
@@ -54,7 +61,39 @@ class CheckPejlForwards extends Command
             $this->info('Vidarebefordringarna till Pejl stämmer.');
         }
 
+        $this->redispatchWaiting($waiting);
+
         return $alerts === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * @param  Collection<int, PejlForward>  $waiting
+     * @return array<string, string>
+     */
+    private function waitingForSource(Collection $waiting): array
+    {
+        $date = CarbonImmutable::now(config('pejl.timezone'))->toDateString();
+        $alerts = [];
+
+        foreach ($waiting->groupBy(fn (PejlForward $f) => $f->game->slug) as $slug => $rows) {
+            $oldest = $rows->min('occurred_at')?->copy()->setTimezone(config('pejl.timezone'))->format('Y-m-d H:i');
+            $alerts["pejl-check-waiting-source-{$slug}-{$date}"] = sprintf(
+                'Pejl: %s säljer men saknas som källa i Pejl. %d köp väntar (äldsta %s). Lägg till %s i config/revenue_sources.php i Pejl; köpen skickas då av sig själva.',
+                $slug, $rows->count(), $oldest ?? 'okänt', $slug,
+            );
+        }
+
+        return $alerts;
+    }
+
+    /** @param  Collection<int, PejlForward>  $waiting */
+    private function redispatchWaiting(Collection $waiting): void
+    {
+        foreach ($waiting as $forward) {
+            if (PejlForward::whereKey($forward->id)->where('status', 'waiting_for_source')->update(['status' => 'pending']) === 1) {
+                SendPejlForward::dispatch($forward->id);
+            }
+        }
     }
 
     private function retryFailed(): int
@@ -99,13 +138,24 @@ class CheckPejlForwards extends Command
         }
 
         foreach (['pending' => 'väntar', 'failed' => 'fallerade'] as $status => $label) {
-            $old = PejlForward::where('status', $status)->where('created_at', '<', $cutoff)->orderBy('id');
+            $old = PejlForward::where('status', $status)->where('created_at', '<', $cutoff)->whereNot(fn ($q) => $this->waitsOnWaitingSale($q))->orderBy('id');
             if (($count = $old->count()) > 0) {
                 $alerts["pejl-check-stuck-{$status}"] = "Pejl: {$count} vidarebefordringar {$label} sedan över ett dygn (äldsta #{$old->value('id')}).";
             }
         }
 
         return $alerts;
+    }
+
+    // Återbetalning eller återkallelse vars köp väntar på att spelet läggs till som källa i Pejl.
+    private function waitsOnWaitingSale(Builder $query): void
+    {
+        $query->where('kind', '!=', 'sale')->whereExists(fn ($sale) => $sale->from('pejl_forwards as sale')
+            ->whereColumn('sale.game_id', 'pejl_forwards.game_id')
+            ->whereColumn('sale.store', 'pejl_forwards.store')
+            ->whereColumn('sale.transaction_id', 'pejl_forwards.transaction_id')
+            ->where('sale.kind', 'sale')
+            ->where('sale.status', 'waiting_for_source'));
     }
 
     /**

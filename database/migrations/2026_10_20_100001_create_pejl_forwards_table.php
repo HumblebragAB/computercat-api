@@ -30,7 +30,7 @@ return new class extends Migration
             $table->date('fx_date')->nullable();
             $table->decimal('amount_ex_vat_sek', 12, 2)->nullable();
             $table->decimal('cost_sek', 12, 2)->nullable();
-            $table->string('status', 16)->default('pending');
+            $table->string('status', 20)->default('pending');
             $table->text('last_error')->nullable();
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamp('sent_at')->nullable();

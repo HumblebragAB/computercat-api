@@ -252,6 +252,74 @@ class SendPejlForwardTest extends TestCase
         $this->assertSame("pejl-forward-{$forward->id}", $this->alerts->sent[0][0]);
     }
 
+    public function test_422_unknown_source_waits_for_the_source_without_alert(): void
+    {
+        $this->fakePejl(422, ['message' => 'Okänd källa.', 'errors' => ['source' => ['Okänd källa.']]]);
+        $forward = $this->forward();
+
+        $job = $this->handle($forward);
+
+        $job->assertNotReleased();
+        $forward->refresh();
+        $this->assertSame('waiting_for_source', $forward->status);
+        $this->assertSame('Spelet glosis saknas som källa i Pejl', $forward->last_error);
+        $this->assertSame(1, $forward->attempts);
+        $this->assertNull($forward->sent_at);
+        $this->assertSame([], $this->alerts->sent);
+    }
+
+    public function test_422_with_another_source_error_fails_and_alerts(): void
+    {
+        $this->fakePejl(422, ['message' => 'Projektet Glosis finns inte under Computer Cat.', 'errors' => ['source' => ['Projektet Glosis finns inte under Computer Cat.']]]);
+        $forward = $this->forward();
+
+        $this->handle($forward);
+
+        $this->assertSame('failed', $forward->refresh()->status);
+        $this->assertStringContainsString('Projektet Glosis', $forward->last_error);
+        $this->assertCount(1, $this->alerts->sent);
+    }
+
+    public function test_waiting_row_is_left_alone_by_the_job(): void
+    {
+        $this->fakePejl();
+        $forward = $this->forward(['status' => 'waiting_for_source']);
+
+        $this->handle($forward);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $this->assertSame('waiting_for_source', $forward->refresh()->status);
+    }
+
+    public function test_refund_of_a_waiting_sale_stays_pending(): void
+    {
+        $this->fakePejl();
+        $this->forward(['status' => 'waiting_for_source']);
+        $refund = $this->forward(['kind' => 'refund', 'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r1']);
+
+        $this->handle($refund);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $refund->refresh();
+        $this->assertSame('pending', $refund->status);
+        $this->assertSame(0, $refund->attempts);
+        $this->assertSame([], $this->alerts->sent);
+    }
+
+    public function test_waiting_refund_counts_against_the_cap_like_a_pending_one(): void
+    {
+        $this->fakePejl();
+        $this->forward(['status' => 'sent']);
+        $this->forward(['kind' => 'refund', 'status' => 'waiting_for_source', 'amount' => 60.0, 'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r1']);
+        $second = $this->forward(['kind' => 'refund', 'amount' => 60.0, 'external_reference' => 'APP_STORE:2000000123456789:refund:evt-r2']);
+
+        $this->handle($second);
+
+        $this->assertCount(0, $this->pejlRequests());
+        $this->assertSame('failed', $second->refresh()->status);
+        $this->assertStringContainsString('större än köpet', $second->last_error);
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('authFailures')]
     public function test_401_and_403_fail_directly_and_alert(int $status): void
     {

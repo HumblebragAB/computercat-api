@@ -245,4 +245,129 @@ class CheckPejlForwardsTest extends TestCase
         Queue::assertPushed(SendPejlForward::class, 2);
         Http::assertNothingSent();
     }
+
+    private function runPushedJobs(): void
+    {
+        foreach (Queue::pushed(SendPejlForward::class) as $job) {
+            app()->call([$job->withFakeQueueInteractions(), 'handle']);
+        }
+        Queue::fake();
+    }
+
+    private function fakeRevenuePost(int $status, array $body): void
+    {
+        Http::fake([
+            'pejl.test/api/revenue-items' => Http::response($body, $status),
+            'pejl.test/api/revenue-sources/*' => Http::response(['message' => 'Okänd källa.'], 404),
+            'hooks.slack.test/*' => Http::response('ok'),
+        ]);
+    }
+
+    private const UNKNOWN = ['message' => 'Okänd källa.', 'errors' => ['source' => ['Okänd källa.']]];
+
+    public function test_waiting_rows_alert_once_per_game_and_are_redispatched(): void
+    {
+        $kattspel = Game::create(['slug' => 'kattspel', 'name' => 'Kattspel', 'is_active' => true, 'settings' => []]);
+        $oldest = $this->forward(['status' => 'waiting_for_source', 'occurred_at' => CarbonImmutable::parse('2026-10-17 08:15', 'Europe/Stockholm')->utc()]);
+        $oldest->forceFill(['created_at' => now()->subHours(30)])->save();
+        $second = $this->forward(['status' => 'waiting_for_source']);
+        $other = $this->forward(['game_id' => $kattspel->id, 'status' => 'waiting_for_source']);
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+
+        $this->assertSame(['pejl-check-waiting-source-glosis-2026-10-20', 'pejl-check-waiting-source-kattspel-2026-10-20'], array_column($this->alerts->sent, 0));
+        $text = $this->alerts->sent[0][1];
+        $this->assertStringContainsString('2 köp', $text);
+        $this->assertStringContainsString('2026-10-17 08:15', $text);
+        $this->assertStringContainsString('Lägg till glosis i config/revenue_sources.php i Pejl', $text);
+        $this->assertStringContainsString('1 köp', $this->alerts->sent[1][1]);
+        foreach ([$oldest, $second, $other] as $forward) {
+            $this->assertSame('pending', $forward->refresh()->status);
+            Queue::assertPushed(SendPejlForward::class, fn ($j) => $j->forwardId === $forward->id);
+        }
+        Queue::assertPushed(SendPejlForward::class, 3);
+        Http::assertNothingSent();
+    }
+
+    public function test_refund_waiting_on_a_waiting_sale_is_not_stuck(): void
+    {
+        $sale = $this->forward(['status' => 'waiting_for_source']);
+        $refund = $this->forward(['kind' => 'refund', 'status' => 'pending', 'transaction_id' => $sale->transaction_id, 'external_reference' => "{$sale->external_reference}:refund:r1"]);
+        $refund->forceFill(['created_at' => now()->subHours(30)])->save();
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+
+        $this->assertSame(['pejl-check-waiting-source-glosis-2026-10-20'], array_column($this->alerts->sent, 0));
+    }
+
+    public function test_still_unknown_rows_return_silently_and_the_alert_is_sent_once_a_day(): void
+    {
+        config(['provisioning.slack_webhook_url' => 'https://hooks.slack.test/fake']);
+        $this->app->instance(SlackAlert::class, new SlackAlert);
+        $this->fakeRevenuePost(422, self::UNKNOWN);
+        $forward = $this->forward(['status' => 'waiting_for_source']);
+        $slackPosts = fn () => Http::recorded(fn (Request $r) => str_starts_with($r->url(), 'https://hooks.slack.test'))->count();
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+        $this->runPushedJobs();
+        $this->assertSame('waiting_for_source', $forward->refresh()->status);
+        $this->assertSame(1, $slackPosts());
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+        $this->runPushedJobs();
+        $this->assertSame('waiting_for_source', $forward->refresh()->status);
+        $this->assertSame(1, $slackPosts());
+
+        $this->travel(1)->day();
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+        $this->assertSame(2, $slackPosts());
+    }
+
+    public function test_waiting_rows_are_sent_once_the_source_exists(): void
+    {
+        $this->fakeRevenuePost(201, ['revenue_item_id' => 1]);
+        $forward = $this->forward(['status' => 'waiting_for_source', 'amount_ex_vat_sek' => null, 'cost_sek' => null]);
+
+        $this->artisan('pejl:check-forwards');
+        $this->runPushedJobs();
+
+        $forward->refresh();
+        $this->assertSame('sent', $forward->status);
+        $this->assertNull($forward->last_error);
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://pejl.test/api/revenue-items' && $r['source'] === 'glosis');
+    }
+
+    public function test_reconciliation_skips_a_game_with_only_waiting_rows(): void
+    {
+        $this->forward(['status' => 'waiting_for_source']);
+        $this->fakeSummaries([], 404);
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+
+        $this->assertSame(['pejl-check-waiting-source-glosis-2026-10-20'], array_column($this->alerts->sent, 0));
+        Http::assertNothingSent();
+    }
+
+    public function test_404_for_a_game_with_sent_rows_still_alerts(): void
+    {
+        $this->forward();
+        $this->forward(['status' => 'waiting_for_source']);
+        $this->fakeSummaries([], 404);
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+
+        $keys = array_column($this->alerts->sent, 0);
+        $this->assertContains('pejl-check-error-glosis', $keys);
+        $this->assertStringContainsString('404', $this->alerts->sent[array_search('pejl-check-error-glosis', $keys)][1]);
+    }
+
+    public function test_retry_failed_leaves_waiting_rows_alone(): void
+    {
+        $waiting = $this->forward(['status' => 'waiting_for_source']);
+
+        $this->artisan('pejl:check-forwards', ['--retry-failed' => true])->assertExitCode(0);
+
+        $this->assertSame('waiting_for_source', $waiting->refresh()->status);
+        Queue::assertNothingPushed();
+    }
 }

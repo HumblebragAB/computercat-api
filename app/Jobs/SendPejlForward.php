@@ -21,6 +21,7 @@ use Throwable;
 // Ingen $tries: retryUntil() sätter gränsen i tid, eftersom varje release() räknas som ett försök
 // och en ej publicerad dagskurs kan vänta över en helg. Pejl 4xx/5xx/onåbar kastar för omförsök med
 // backoff; 401/403/422 (fel nyckel, saknat scope, fel i data eller konfiguration) och saknad PEJL_API_URL/KEY fäller raden direkt.
+// Undantag: 422 "Okänd källa." (spelet saknas i Pejls config/revenue_sources.php) ger waiting_for_source utan larm.
 // Före varje post prövas registreringens kontroller om (ForwardRecorder::postingError), eftersom --retry-failed sätter tillbaka alla failed-rader.
 // failed() fäller raden och larmar. Unikt per rad, så att samma rad aldrig postas av två jobb.
 class SendPejlForward implements ShouldBeUnique, ShouldQueue
@@ -28,6 +29,8 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable;
 
     public const FX_PENDING_DELAY = 1800;
+
+    public const UNKNOWN_SOURCE = 'Okänd källa.';
 
     // Strax över retryUntil: ett försvunnet jobb ska inte blockera ny dispatch för alltid.
     public int $uniqueFor = 73 * 3600;
@@ -123,6 +126,12 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        if ($response['status'] === 422 && $this->unknownSource($response['body'])) {
+            $this->markWaitingForSource($forward);
+
+            return;
+        }
+
         $error = "HTTP {$response['status']}: {$response['body']}";
         if (in_array($response['status'], [401, 403, 422], true)) {
             $this->markFailed($forward, $error, countAttempt: true);
@@ -188,6 +197,27 @@ class SendPejlForward implements ShouldBeUnique, ShouldQueue
     private function recordError(PejlForward $forward, string $error): void
     {
         $forward->increment('attempts', 1, ['last_error' => app(PejlClient::class)->redact($error)]);
+    }
+
+    // Pejls svar när spelet saknas i config/revenue_sources.php (RecordSourceRevenueRequest, source.in).
+    private function unknownSource(?string $body): bool
+    {
+        $errors = json_decode((string) $body, true)['errors']['source'] ?? null;
+
+        return is_array($errors) && in_array(self::UNKNOWN_SOURCE, $errors, true);
+    }
+
+    // Inget larm per köp: pejl:check-forwards larmar en gång per spel och dygn och skickar raderna igen.
+    private function markWaitingForSource(PejlForward $forward): void
+    {
+        $updated = PejlForward::whereKey($forward->id)->where('status', 'pending')->update([
+            'status' => 'waiting_for_source',
+            'last_error' => "Spelet {$forward->game->slug} saknas som källa i Pejl",
+            'attempts' => $forward->attempts + 1,
+        ]);
+        if ($updated === 1) {
+            Log::warning('Pejl: spelet saknas som källa, raden väntar', ['forward_id' => $forward->id, 'game' => $forward->game->slug]);
+        }
     }
 
     private function markFailed(PejlForward $forward, string $error, bool $countAttempt = false): void
