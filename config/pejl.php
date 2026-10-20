@@ -10,7 +10,7 @@ return [
     // 429 efter fem anrop i minuten. value = SEK per en enhet valuta.
     'riksbank' => [
         'base_url' => env('PEJL_RIKSBANK_BASE_URL', 'https://api.riksbank.se/swea/v1'),
-        // ASSUMED — verify against SWEA /Series (seriekoden är inte verifierad mot live-API:t)
+        // Verifierad mot SWEA /Series 2026-10-20: SEKUSDPMI, US dollar, SEK per 1 USD.
         'series' => ['USD' => 'SEKUSDPMI'],
         'lookback_days' => 7,
         'bounds' => ['USD' => [6.0, 16.0]],
