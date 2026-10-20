@@ -22,6 +22,8 @@ class CheckPejlForwardsTest extends TestCase
 
     private const KEY = 'fake-pejl-key-in-tests';
 
+    private const UNKNOWN = ['message' => 'Okänd källa.', 'errors' => ['source' => ['Okänd källa.']]];
+
     private Game $glosis;
 
     private object $alerts;
@@ -248,10 +250,11 @@ class CheckPejlForwardsTest extends TestCase
 
     private function runPushedJobs(): void
     {
-        foreach (Queue::pushed(SendPejlForward::class) as $job) {
+        $jobs = Queue::pushed(SendPejlForward::class);
+        Queue::fake();
+        foreach ($jobs as $job) {
             app()->call([$job->withFakeQueueInteractions(), 'handle']);
         }
-        Queue::fake();
     }
 
     private function fakeRevenuePost(int $status, array $body): void
@@ -262,8 +265,6 @@ class CheckPejlForwardsTest extends TestCase
             'hooks.slack.test/*' => Http::response('ok'),
         ]);
     }
-
-    private const UNKNOWN = ['message' => 'Okänd källa.', 'errors' => ['source' => ['Okänd källa.']]];
 
     public function test_waiting_rows_alert_once_per_game_and_are_redispatched(): void
     {
@@ -369,5 +370,35 @@ class CheckPejlForwardsTest extends TestCase
 
         $this->assertSame('waiting_for_source', $waiting->refresh()->status);
         Queue::assertNothingPushed();
+    }
+
+    public function test_failed_refund_on_a_waiting_sale_still_alerts_as_stuck(): void
+    {
+        $sale = $this->forward(['status' => 'waiting_for_source']);
+        $refund = $this->forward(['kind' => 'refund', 'status' => 'failed', 'last_error' => 'Återbetalningen blir större än köpet', 'transaction_id' => $sale->transaction_id, 'external_reference' => "{$sale->external_reference}:refund:r1"]);
+        $refund->forceFill(['created_at' => now()->subHours(30)])->save();
+
+        $this->artisan('pejl:check-forwards')->assertExitCode(1);
+
+        $this->assertContains('pejl-check-stuck-failed', array_column($this->alerts->sent, 0));
+        $this->assertStringContainsString("#{$refund->id}", $this->alerts->sent[array_search('pejl-check-stuck-failed', array_column($this->alerts->sent, 0))][1]);
+    }
+
+    public function test_waiting_sale_and_its_refund_are_sent_once_the_source_exists(): void
+    {
+        $this->fakeRevenuePost(201, ['revenue_item_id' => 1]);
+        $sale = $this->forward(['status' => 'waiting_for_source', 'amount_ex_vat_sek' => null, 'cost_sek' => null]);
+        $refund = $this->forward(['kind' => 'refund', 'status' => 'pending', 'amount' => 40.0, 'amount_ex_vat_sek' => null, 'cost_sek' => null, 'transaction_id' => $sale->transaction_id, 'external_reference' => "{$sale->external_reference}:refund:r1"]);
+
+        $this->artisan('pejl:check-forwards');
+        $this->runPushedJobs();
+        $this->assertSame('sent', $sale->refresh()->status);
+        $this->assertSame('pending', $refund->refresh()->status);
+
+        $this->runPushedJobs();
+
+        $this->assertSame('sent', $refund->refresh()->status);
+        $posted = Http::recorded(fn (Request $r) => $r->url() === 'https://pejl.test/api/revenue-items')->map(fn ($p) => $p[0]['type'])->values()->all();
+        $this->assertSame(['sale', 'refund'], $posted);
     }
 }

@@ -138,7 +138,8 @@ class CheckPejlForwards extends Command
         }
 
         foreach (['pending' => 'väntar', 'failed' => 'fallerade'] as $status => $label) {
-            $old = PejlForward::where('status', $status)->where('created_at', '<', $cutoff)->whereNot(fn ($q) => $this->waitsOnWaitingSale($q))->orderBy('id');
+            $old = PejlForward::where('status', $status)->where('created_at', '<', $cutoff)
+                ->when($status === 'pending', fn ($q) => $q->whereNot(fn ($q) => $this->waitsOnWaitingSale($q)))->orderBy('id');
             if (($count = $old->count()) > 0) {
                 $alerts["pejl-check-stuck-{$status}"] = "Pejl: {$count} vidarebefordringar {$label} sedan över ett dygn (äldsta #{$old->value('id')}).";
             }
