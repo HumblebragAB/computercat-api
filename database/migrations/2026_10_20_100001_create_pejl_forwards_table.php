@@ -21,6 +21,8 @@ return new class extends Migration
             $table->timestamp('occurred_at')->nullable();
             $table->string('description')->nullable();
             $table->decimal('amount', 12, 4)->nullable();
+            $table->decimal('original_amount', 12, 4)->nullable();
+            $table->string('original_currency', 3)->nullable();
             $table->string('currency', 3)->nullable();
             $table->decimal('tax_percentage', 8, 6)->nullable();
             $table->decimal('commission_percentage', 8, 6)->nullable();

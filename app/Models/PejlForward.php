@@ -24,6 +24,7 @@ class PejlForward extends Model
             'sent_at' => 'datetime',
             'fx_date' => 'date',
             'amount' => 'decimal:4',
+            'original_amount' => 'decimal:4',
             'tax_percentage' => 'decimal:6',
             'commission_percentage' => 'decimal:6',
             'fx_rate' => 'decimal:6',

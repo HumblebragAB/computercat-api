@@ -94,6 +94,11 @@ class PejlForwardWebhookTest extends TestCase
         return $this->event('CANCELLATION', array_merge(['cancel_reason' => 'CUSTOMER_SUPPORT', 'price_in_purchased_currency' => -99.0, 'price' => -9.12], $overrides));
     }
 
+    private function expectAlert(string $contains): void
+    {
+        $this->mock(SlackAlert::class)->shouldReceive('send')->once()->withArgs(fn ($key, $text) => str_contains($text, $contains))->andReturn(SlackAlert::SENT);
+    }
+
     private function markSaleSent(): PejlForward
     {
         $sale = PejlForward::where('kind', 'sale')->sole();
@@ -236,6 +241,7 @@ class PejlForwardWebhookTest extends TestCase
     {
         $this->postEvent($this->sale())->assertOk();
         $this->markSaleSent();
+        $this->expectAlert('större än köpet');
 
         $this->postEvent($this->refund(['price_in_purchased_currency' => -150.0]))->assertOk();
 
@@ -417,5 +423,171 @@ class PejlForwardWebhookTest extends TestCase
         $row = PejlForward::sole();
         $this->assertSame('PLAY_STORE:GPA.1234-5678', $row->external_reference);
         $this->assertSame('glosis_guld_2026_27 · Google Play · NO', $row->description);
+    }
+
+    public function test_refunds_together_larger_than_purchase_fail(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $this->markSaleSent();
+        $this->expectAlert('större än köpet');
+
+        $this->postEvent($this->refund(['id' => 'evt-r1', 'price_in_purchased_currency' => -60.0]))->assertOk();
+        $this->postEvent($this->refund(['id' => 'evt-r2', 'price_in_purchased_currency' => -60.0]))->assertOk();
+
+        $this->assertSame(['pending', 'failed'], PejlForward::where('kind', 'refund')->orderBy('id')->pluck('status')->all());
+        Queue::assertPushed(SendPejlForward::class, 2);
+    }
+
+    public function test_partial_refunds_summing_to_purchase_are_sent(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $this->markSaleSent();
+
+        $this->postEvent($this->refund(['id' => 'evt-r1', 'price_in_purchased_currency' => -49.5]))->assertOk();
+        $this->postEvent($this->refund(['id' => 'evt-r2', 'price_in_purchased_currency' => -49.5]))->assertOk();
+
+        $this->assertSame(['pending', 'pending'], PejlForward::where('kind', 'refund')->orderBy('id')->pluck('status')->all());
+        Queue::assertPushed(SendPejlForward::class, 3);
+    }
+
+    public function test_failed_reversal_does_not_counter_a_refund(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $sale = $this->markSaleSent();
+        $this->postEvent($this->refund(['price_in_purchased_currency' => -49.5]))->assertOk();
+        PejlForward::where('kind', 'refund')->update(['status' => 'sent']);
+        PejlForward::create(['game_id' => $this->glosis->id, 'event_id' => 'evt-old', 'kind' => 'refund_reversed', 'store' => 'APP_STORE', 'transaction_id' => $sale->transaction_id, 'external_reference' => 'APP_STORE:2000000123456789:refund-reversed:evt-old', 'status' => 'failed']);
+        Queue::fake();
+
+        $this->postEvent($this->event('REFUND_REVERSED', ['id' => 'evt-rev-2']))->assertOk();
+
+        $row = PejlForward::where('event_id', 'evt-rev-2')->sole();
+        $this->assertSame('49.5000', $row->amount);
+        Queue::assertPushed(SendPejlForward::class, fn ($job) => $job->forwardId === $row->id);
+    }
+
+    public function test_sale_keeps_original_price_and_currency(): void
+    {
+        $this->postEvent($this->sale(['currency' => 'JPY', 'price_in_purchased_currency' => 1500, 'price' => 10.25]))->assertOk();
+
+        $row = PejlForward::sole();
+        $this->assertSame('1500.0000', $row->original_amount);
+        $this->assertSame('JPY', $row->original_currency);
+    }
+
+    public function test_full_jpy_refund_takes_out_purchase_exactly(): void
+    {
+        $this->postEvent($this->sale(['currency' => 'JPY', 'price_in_purchased_currency' => 1500, 'price' => 10.25]))->assertOk();
+        $this->markSaleSent();
+
+        $this->postEvent($this->refund(['currency' => 'JPY', 'price_in_purchased_currency' => -1500, 'price' => -10.80]))->assertOk();
+
+        $row = PejlForward::where('kind', 'refund')->sole();
+        $this->assertSame('pending', $row->status);
+        $this->assertSame('10.2500', $row->amount);
+        $this->assertSame('USD', $row->currency);
+    }
+
+    public function test_half_jpy_refund_takes_half_the_purchase(): void
+    {
+        $this->postEvent($this->sale(['currency' => 'JPY', 'price_in_purchased_currency' => 1500, 'price' => 10.25]))->assertOk();
+        $this->markSaleSent();
+
+        $this->postEvent($this->refund(['currency' => 'JPY', 'price_in_purchased_currency' => -750, 'price' => -5.60]))->assertOk();
+
+        $this->assertSame('5.1250', PejlForward::where('kind', 'refund')->sole()->amount);
+    }
+
+    public function test_refund_with_zero_price_is_not_forwarded(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $this->markSaleSent();
+
+        $this->postEvent($this->refund(['price_in_purchased_currency' => 0, 'price' => 0]))->assertOk();
+
+        $this->assertSame(0, PejlForward::where('kind', 'refund')->count());
+        Queue::assertPushed(SendPejlForward::class, 1);
+    }
+
+    public function test_refund_in_other_currency_than_purchase_fails(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $this->markSaleSent();
+        $this->expectAlert('stämmer inte');
+
+        $this->postEvent($this->refund(['currency' => 'USD', 'price_in_purchased_currency' => -9.12]))->assertOk();
+
+        $this->assertSame('failed', PejlForward::where('kind', 'refund')->sole()->status);
+    }
+
+    public function test_refund_missing_field_names_the_field(): void
+    {
+        $this->postEvent($this->sale())->assertOk();
+        $this->markSaleSent();
+
+        $withoutCurrency = $this->refund(['id' => 'evt-r1']);
+        unset($withoutCurrency['currency']);
+        $this->postEvent($withoutCurrency)->assertOk();
+        $withoutPpc = $this->refund(['id' => 'evt-r2']);
+        unset($withoutPpc['price_in_purchased_currency']);
+        $this->postEvent($withoutPpc)->assertOk();
+
+        $this->assertSame([
+            'Återbetalningen saknar fält från RevenueCat: currency',
+            'Återbetalningen saknar fält från RevenueCat: price_in_purchased_currency',
+        ], PejlForward::where('kind', 'refund')->orderBy('id')->pluck('last_error')->all());
+    }
+
+    public function test_percentage_outside_range_fails(): void
+    {
+        $this->expectAlert('tax_percentage');
+
+        $this->postEvent($this->sale(['tax_percentage' => 1.2]))->assertOk();
+
+        $this->assertSame('failed', PejlForward::sole()->status);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_missing_timestamp_fails(): void
+    {
+        $this->expectAlert('purchased_at_ms');
+        $sale = $this->sale();
+        unset($sale['purchased_at_ms']);
+
+        $this->postEvent($sale)->assertOk();
+
+        $this->assertSame('failed', PejlForward::sole()->status);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_missing_id_alerts_without_row(): void
+    {
+        $this->mock(SlackAlert::class)->shouldReceive('send')->once()->withArgs(fn ($key, $text) => $key === 'pejl-forward-record-okänd' && str_contains($text, 'saknar id'))->andReturn(SlackAlert::SENT);
+        $sale = $this->sale();
+        unset($sale['id']);
+
+        $this->postEvent($sale)->assertOk();
+
+        $this->assertSame(0, PejlForward::count());
+    }
+
+    public function test_missing_transaction_id_alerts_without_row_and_keeps_response(): void
+    {
+        $this->mock(SlackAlert::class)->shouldReceive('send')->once()->withArgs(fn ($key, $text) => $key === 'pejl-forward-record-evt-no-txn' && str_contains($text, 'saknar transaction_id'))->andReturn(SlackAlert::SENT);
+        $sale = $this->sale(['id' => 'evt-no-txn']);
+        unset($sale['transaction_id']);
+
+        $this->postEvent($sale)->assertStatus(422);
+
+        $this->assertSame(0, PejlForward::count());
+    }
+
+    public function test_mac_app_store_is_described_as_app_store(): void
+    {
+        $this->postEvent($this->sale(['store' => 'MAC_APP_STORE']))->assertOk();
+
+        $row = PejlForward::sole();
+        $this->assertSame('MAC_APP_STORE:2000000123456789', $row->external_reference);
+        $this->assertSame('Guldstjärnan 2026/27 · App Store · SE', $row->description);
     }
 }

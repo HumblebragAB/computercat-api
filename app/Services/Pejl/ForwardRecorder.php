@@ -36,8 +36,8 @@ class ForwardRecorder
             return null;
         }
 
-        // Gratis provperiod: inget att bokföra.
-        if ($kind === 'sale' && is_numeric($event['price_in_purchased_currency'] ?? null) && (float) $event['price_in_purchased_currency'] === 0.0) {
+        // Gratis provperiod eller återbetalning av noll: inget att bokföra.
+        if ($kind !== 'refund_reversed' && is_numeric($event['price_in_purchased_currency'] ?? null) && (float) $event['price_in_purchased_currency'] === 0.0) {
             return null;
         }
 
@@ -121,6 +121,8 @@ class ForwardRecorder
         $attributes = [
             'amount' => is_numeric($price) ? abs((float) $price) : null,
             'currency' => $currency ? ($sek ? 'SEK' : 'USD') : null,
+            'original_amount' => is_numeric($event['price_in_purchased_currency'] ?? null) ? abs((float) $event['price_in_purchased_currency']) : null,
+            'original_currency' => $currency,
             'tax_percentage' => is_numeric($event['tax_percentage'] ?? null) ? (float) $event['tax_percentage'] : null,
             'commission_percentage' => is_numeric($event['commission_percentage'] ?? null) ? (float) $event['commission_percentage'] : null,
         ];
@@ -147,14 +149,15 @@ class ForwardRecorder
         }
 
         $attributes = $this->purchaseTerms($sale);
-        $price = $this->priceInSaleCurrency($sale, $event);
-        if ($price === false) {
-            return [['status' => 'failed', 'last_error' => "Återbetalningens valuta ({$this->describeCurrency($event)}) stämmer inte med köpets ({$sale->currency})"] + $attributes, false];
+        [$amount, $error] = $this->refundAmount($sale, $event);
+        if ($error !== null) {
+            return [['status' => 'failed', 'last_error' => $error] + $attributes, false];
         }
 
-        $attributes['amount'] = $price ?? ($sale->amount === null ? null : (float) $sale->amount);
-        if ($attributes['amount'] !== null && $sale->amount !== null && $attributes['amount'] > (float) $sale->amount) {
-            return [['status' => 'failed', 'last_error' => "Återbetalningen ({$attributes['amount']} {$sale->currency}) är större än köpet ({$sale->amount} {$sale->currency})"] + $attributes, false];
+        $attributes['amount'] = $amount;
+        $earlier = $this->netRefunded($game, $store, $transactionId);
+        if ($amount !== null && $sale->amount !== null && $earlier + $amount > (float) $sale->amount + 0.0001) {
+            return [['status' => 'failed', 'last_error' => "Återbetalningen ({$amount} {$sale->currency}, tidigare återbetalt netto {$earlier}) blir större än köpet ({$sale->amount} {$sale->currency})"] + $attributes, false];
         }
 
         return [['status' => 'pending'] + $attributes, $sale->status === 'sent'];
@@ -169,7 +172,7 @@ class ForwardRecorder
         }
 
         // Varje återkallelse motverkar en skickad återbetalning, i ordning.
-        $countered = $this->forwards($game, $store, $transactionId, 'refund_reversed')->where('status', '!=', 'skipped')->count();
+        $countered = $this->forwards($game, $store, $transactionId, 'refund_reversed')->whereNotIn('status', ['skipped', 'failed'])->count();
         $refund = $this->forwards($game, $store, $transactionId, 'refund')->where('status', 'sent')->orderBy('id')->skip($countered)->first();
 
         $attributes = $this->purchaseTerms($sale);
@@ -193,28 +196,50 @@ class ForwardRecorder
         ];
     }
 
-    // Händelsens pris i köpets valuta (samma valutaregel som köpet); null om händelsen saknar
-    // pris, false om den har ett pris i en valuta som inte går ihop med köpets.
-    private function priceInSaleCurrency(PejlForward $sale, array $event): float|false|null
+    // Återbetalt netto hittills: återbetalningar minus återkallelser, utom skippade och fallerade.
+    private function netRefunded(Game $game, string $store, string $transactionId): float
+    {
+        $sum = fn (string $kind) => (float) $this->forwards($game, $store, $transactionId, $kind)->whereNotIn('status', ['skipped', 'failed'])->sum('amount');
+
+        return $sum('refund') - $sum('refund_reversed');
+    }
+
+    /**
+     * Återbetalningens belopp i köpets valuta: [belopp, fel]. Är återbetalningen i köpets
+     * ursprungsvaluta tas samma andel av köpets belopp, så att en hel återbetalning tar ut
+     * köpet exakt även om RevenueCats USD-kurs ändrats. Saknar händelsen pris: köpets belopp.
+     *
+     * @return array{0: ?float, 1: ?string}
+     */
+    private function refundAmount(PejlForward $sale, array $event): array
     {
         $ppc = $event['price_in_purchased_currency'] ?? null;
         $usd = $event['price'] ?? null;
+        $currency = is_string($event['currency'] ?? null) && $event['currency'] !== '' ? $event['currency'] : null;
+        $saleAmount = $sale->amount === null ? null : (float) $sale->amount;
+
         if (! is_numeric($ppc) && ! is_numeric($usd)) {
-            return null;
+            return [$saleAmount, null];
         }
 
-        $currency = $event['currency'] ?? null;
+        if ($currency === null) {
+            return [null, 'Återbetalningen saknar fält från RevenueCat: currency'];
+        }
 
-        return match (true) {
-            $sale->currency === 'SEK' && $currency === 'SEK' && is_numeric($ppc) => abs((float) $ppc),
-            $sale->currency === 'USD' && is_string($currency) && $currency !== '' && $currency !== 'SEK' && is_numeric($usd) => abs((float) $usd),
-            default => false,
-        };
-    }
+        if (is_numeric($ppc) && $saleAmount !== null && $currency === $sale->original_currency && (float) $sale->original_amount > 0) {
+            return [round($saleAmount * abs((float) $ppc) / (float) $sale->original_amount, 4), null];
+        }
 
-    private function describeCurrency(array $event): string
-    {
-        return is_string($event['currency'] ?? null) ? $event['currency'] : 'saknas';
+        if (($currency === 'SEK') !== ($sale->currency === 'SEK')) {
+            return [null, "Återbetalningens valuta ({$currency}) stämmer inte med köpets ({$sale->original_currency})"];
+        }
+
+        $field = $sale->currency === 'SEK' ? 'price_in_purchased_currency' : 'price';
+        $price = $event[$field] ?? null;
+
+        return is_numeric($price)
+            ? [abs((float) $price), null]
+            : [null, "Återbetalningen saknar fält från RevenueCat: {$field}"];
     }
 
     private function forwards(Game $game, string $store, string $transactionId, string $kind)
